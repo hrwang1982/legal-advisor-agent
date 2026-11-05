@@ -587,3 +587,171 @@ if _HAS_FASTAPI:
         if not ok:
             raise HTTPException(status_code=400, detail=msg)
         return {"status": "ok", "message": msg}
+
+    # ————————————————————————————————————————————————
+    # P3 升级：对标「AI法盾」文档上传、知识图谱离线构建、官方新旧法对照与时效同步
+    # ————————————————————————————————————————————————
+    from app.counterparts import batch_import_official_counterparts
+    from app.crawler import flk_monitor
+    from app.graph_builder import (
+        apply_cross_references_to_config,
+        batch_build_law_graph,
+        extract_article_cross_references,
+        extract_interpretation_and_application_relations,
+    )
+
+    class AdvancedDocUploadReq(BaseModel):
+        filename: str
+        raw_text: Optional[str] = ""
+        law_name: Optional[str] = ""
+        kb_type: Optional[str] = "外规知识库/法律法规"
+        department: Optional[str] = "法律合规部"
+        uploader: Optional[str] = "系统管理员"
+        split_mode: Optional[str] = "article"  # auto / article / hierarchical
+        validity_option: Optional[str] = "permanent"  # permanent / custom
+        valid_until: Optional[str] = ""
+        hierarchy: Optional[str] = "法律"
+        effective_date: Optional[str] = ""
+        promulgation_date: Optional[str] = ""
+        host_law: Optional[str] = ""
+
+    @app.post("/kb/documents/upload-advanced")
+    def upload_advanced_document_api(req: AdvancedDocUploadReq):
+        """对标「AI法盾」知识库文档两步上传与三模式切分入库接口"""
+        if not req.raw_text and not req.filename:
+            raise HTTPException(status_code=400, detail="请提供文档文本或文件内容")
+        res = kb_store.import_advanced_document(
+            filename=req.filename,
+            raw_text=req.raw_text,
+            law_name=req.law_name or req.filename.rsplit(".", 1)[0],
+            kb_type=req.kb_type or "外规知识库/法律法规",
+            department=req.department or "法律合规部",
+            uploader=req.uploader or "系统管理员",
+            split_mode=req.split_mode or "article",
+            validity_option=req.validity_option or "permanent",
+            valid_until=req.valid_until or "",
+            hierarchy=req.hierarchy or "法律",
+            effective_date=req.effective_date or "",
+            promulgation_date=req.promulgation_date or "",
+            host_law=req.host_law or "",
+        )
+        invalidate_cache()
+        return {"status": "ok", "result": res}
+
+    class CreateTreeNodeReq(BaseModel):
+        name: str
+        parent_id: Optional[str] = ""
+        node_type: Optional[str] = "folder"
+        description: Optional[str] = ""
+
+    class RenameTreeNodeReq(BaseModel):
+        new_name: str
+
+    @app.get("/kb/tree")
+    def get_kb_tree_api():
+        """获取完整的层级知识库与目录树结构"""
+        return {"tree": kb_store.get_kb_tree()}
+
+    @app.post("/kb/tree/node")
+    def create_kb_tree_node_api(req: CreateTreeNodeReq):
+        """创建知识库（顶层）或层级子目录"""
+        try:
+            node = kb_store.create_kb_tree_node(
+                name=req.name,
+                parent_id=req.parent_id or "",
+                node_type=req.node_type or "folder",
+                description=req.description or "",
+            )
+            return {"status": "ok", "node": node}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @app.put("/kb/tree/node/{node_id}")
+    def rename_kb_tree_node_api(node_id: str, req: RenameTreeNodeReq):
+        """改名知识库或层级目录"""
+        try:
+            kb_store.rename_kb_tree_node(node_id, req.new_name)
+            return {"status": "ok", "message": f"重命名为 [{req.new_name}] 成功"}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @app.delete("/kb/tree/node/{node_id}")
+    def delete_kb_tree_node_api(node_id: str):
+        """删除知识库或层级目录（递归删除子目录与关联文档）"""
+        try:
+            kb_store.delete_kb_tree_node(node_id)
+            invalidate_cache()
+            return {"status": "ok", "message": f"节点 {node_id} 及其下文档已删除"}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @app.get("/kb/documents/advanced")
+    def list_advanced_documents_api(kb_type: Optional[str] = None, limit: int = 50):
+        """获取法规文档列表（支持所属知识库与层级目录路径筛选）"""
+        return {"documents": kb_store.list_law_documents(kb_type=kb_type, limit=limit)}
+
+    @app.delete("/kb/documents/advanced/{doc_id}")
+    def delete_advanced_document_api(doc_id: str):
+        """删除指定法规文档及所有分块"""
+        kb_store.delete_law_document(doc_id)
+        invalidate_cache()
+        return {"status": "ok", "message": f"文档 {doc_id} 已成功删除"}
+
+    class GraphBuildReq(BaseModel):
+        law_name: str
+        article: Optional[str] = "第1条"
+        content: str
+        auto_propose: Optional[bool] = True
+
+    @app.post("/graph-builder/extract")
+    def extract_graph_api(req: GraphBuildReq):
+        """离线大模型批处理：抽取引致条款关系"""
+        refs = extract_article_cross_references(req.law_name, req.article or "第1条", req.content)
+        if req.auto_propose and refs:
+            batch_build_law_graph([{"law_name": req.law_name, "article": req.article, "content": req.content}])
+        return {"status": "ok", "references": refs}
+
+    class InterpExtractReq(BaseModel):
+        interpretation_name: str
+        article: str
+        text_content: str
+
+    @app.post("/graph-builder/extract-interpretation")
+    def extract_interpretation_api(req: InterpExtractReq):
+        """司法解释「理解与适用」引申关系抽取"""
+        refs = extract_interpretation_and_application_relations(
+            req.interpretation_name, req.article, req.text_content
+        )
+        return {"status": "ok", "relations": refs}
+
+    @app.post("/graph-builder/apply-to-config")
+    def apply_graph_to_config_api(references: List[Dict[str, Any]]):
+        """将抽检通过的引致关系合入知识中心热生效"""
+        cnt = apply_cross_references_to_config(references)
+        return {"status": "ok", "applied_count": cnt}
+
+    @app.post("/counterparts/batch-import")
+    def batch_import_counterparts_api(counterparts: Optional[List[Dict[str, Any]]] = None):
+        """法工委权威《新旧法律条文对照表》数字化批量录入"""
+        res = batch_import_official_counterparts(counterparts)
+        invalidate_cache()
+        return res
+
+    class CrawlerSyncReq(BaseModel):
+        mock_bulletins: Optional[List[Dict[str, Any]]] = None
+
+    @app.post("/crawler/sync-flk")
+    def sync_flk_api(req: Optional[CrawlerSyncReq] = None):
+        """国家法律法规数据库（flk.npc.gov.cn）公告监听与自动时效同步"""
+        bulletins = req.mock_bulletins if req else None
+        res = flk_monitor.check_and_sync_announcements(bulletins)
+        return res
+
+    @app.get("/crawler/revision-logs")
+    def list_revision_logs_api(law_name: Optional[str] = None, article: Optional[str] = None):
+        """获取条款项级修改与生命周期追踪日志"""
+        logs = kb_store.list_article_revisions(law_name=law_name, article=article)
+        return {"revision_logs": logs}
+else:
+    app = None
+

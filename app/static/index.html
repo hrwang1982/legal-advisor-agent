@@ -561,47 +561,154 @@
       width: 100%;
     }
     .kb-tree-sidebar {
-      width: 170px;
+      width: 220px;
       background: #ffffff;
       border-right: 1px solid var(--border-color);
       display: flex;
       flex-direction: column;
       justify-content: space-between;
-      padding: 16px 12px;
+      padding: 16px 8px 16px 12px;
+      flex-shrink: 0;
+      user-select: none;
+    }
+    .kb-tree-scroll {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding-right: 4px;
+    }
+    /* 树形层级节点 */
+    .tree-node-wrapper {
+      margin-bottom: 2px;
+    }
+    .tree-node-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13.5px;
+      color: #333333;
+      transition: background 0.15s, color 0.15s;
+      position: relative;
+    }
+    .tree-node-item:hover {
+      background: #f7f8fa;
+    }
+    .tree-node-item.selected {
+      color: #d32029 !important;
+      font-weight: 600;
+      background: #fff5f5;
+    }
+    .tree-node-item.selected .tree-node-title {
+      color: #d32029 !important;
+      font-weight: 600;
+    }
+    .tree-node-left {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+    }
+    .tree-arrow {
+      width: 14px;
+      font-size: 10px;
+      color: #8c8c8c;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.15s;
       flex-shrink: 0;
     }
+    .tree-arrow.expanded {
+      transform: rotate(90deg);
+    }
+    .tree-arrow.empty {
+      visibility: hidden;
+    }
+    .tree-node-actions {
+      display: none;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+    .tree-node-item:hover .tree-node-actions {
+      display: flex;
+    }
+    .tree-action-btn {
+      padding: 1px 5px;
+      font-size: 11px;
+      border: 1px solid #e8e8e8;
+      background: #fafafa;
+      border-radius: 3px;
+      cursor: pointer;
+      color: #555;
+      line-height: 1.2;
+      transition: all 0.15s;
+    }
+    .tree-action-btn:hover {
+      background: #ffffff;
+      color: #d32029;
+      border-color: #d32029;
+    }
+    .tree-action-btn.danger:hover {
+      background: #fff1f0;
+      color: #d32029;
+      border-color: #d32029;
+    }
+    .tree-children-box {
+      padding-left: 14px;
+    }
+    .tree-badge-count {
+      font-size: 11px;
+      color: #999;
+      margin-left: 4px;
+      font-weight: normal;
+    }
+    /* 药丸形红框白底【新增知识库】按钮 (精准对标截图) */
+    .btn-pill-create-kb {
+      width: 100%;
+      max-width: 150px;
+      height: 32px;
+      background: #ffffff;
+      color: #d32029;
+      border: 1px solid #d32029;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      transition: all 0.2s ease;
+      box-shadow: 0 1px 2px rgba(211, 32, 41, 0.05);
+    }
+    .btn-pill-create-kb:hover {
+      background: #fffafa;
+      border-color: #b3161e;
+      color: #b3161e;
+      box-shadow: 0 2px 4px rgba(211, 32, 41, 0.12);
+    }
+
     .kb-nav-item {
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 10px 14px;
+      padding: 8px 10px;
       border-radius: var(--radius);
-      font-size: 14px;
+      font-size: 13px;
       color: var(--text-body);
       cursor: pointer;
       transition: all 0.2s;
+      margin-bottom: 6px;
     }
     .kb-nav-item:hover { background: #f7f8fa; color: var(--primary); }
-    .kb-nav-item.active { background: var(--primary-bg); color: var(--primary); font-weight: 600; }
-
-    .btn-create-kb {
-      width: 100%;
-      background: #fff;
-      color: var(--primary);
-      border: 1px solid var(--primary);
-      border-radius: var(--radius-full);
-      padding: 10px;
-      font-size: 13px;
-      font-weight: 600;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      transition: all 0.2s;
-    }
-    .btn-create-kb:hover { background: var(--primary); color: #fff; }
-    .btn-create-kb:disabled { opacity: 0.5; cursor: not-allowed; border-color: #d9d9d9; color: #999; }
+    .kb-nav-item.active { background: #fff5f5; color: #d32029; font-weight: 600; }
 
     .kb-content {
       flex: 1;
@@ -706,6 +813,188 @@
       white-space: nowrap;
     }
     .custom-table tr:hover td { background-color: #fafbfc; }
+
+    /* ======================= AI法盾 两步上传向导专属组件 ======================= */
+    .step-wizard {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 30px;
+      margin: 10px 0 24px;
+      position: relative;
+    }
+    .step-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13.5px;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+    .step-item.active {
+      color: var(--primary);
+      font-weight: 600;
+    }
+    .step-badge {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #f0f0f0;
+      color: #999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+    }
+    .step-item.active .step-badge {
+      background: var(--primary);
+      color: #fff;
+    }
+    .step-line {
+      width: 60px;
+      height: 2px;
+      background: var(--border-color);
+    }
+    .step-line.active {
+      background: var(--primary);
+    }
+
+    .card-choice-group {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+      margin-top: 8px;
+    }
+    .choice-card {
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      cursor: pointer;
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      transition: all 0.2s;
+      position: relative;
+    }
+    .choice-card:hover {
+      border-color: var(--primary);
+    }
+    .choice-card.selected {
+      border-color: var(--primary);
+      background: #fffafa;
+    }
+    .choice-icon {
+      font-size: 24px;
+      line-height: 1;
+    }
+    .choice-tag {
+      position: absolute;
+      top: 6px;
+      right: 8px;
+      background: #52c41a;
+      color: #fff;
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 4px;
+    }
+    .choice-title {
+      font-weight: 600;
+      font-size: 14px;
+      color: var(--text-title);
+      margin-bottom: 4px;
+    }
+    .choice-desc {
+      font-size: 12px;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+
+    .dropzone-box {
+      border: 1.5px dashed #d9d9d9;
+      border-radius: var(--radius);
+      background: #fafafa;
+      padding: 36px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-top: 8px;
+    }
+    .dropzone-box:hover {
+      border-color: var(--primary);
+      background: #fffafa;
+    }
+    .dropzone-icon {
+      font-size: 38px;
+      color: #bfbfbf;
+      margin-bottom: 8px;
+    }
+    .dropzone-text {
+      font-size: 14px;
+      color: var(--text-title);
+      font-weight: 500;
+      margin-bottom: 6px;
+    }
+    .dropzone-hint {
+      font-size: 12px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    .split-mode-card {
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      cursor: pointer;
+      margin-bottom: 12px;
+      transition: all 0.2s;
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+    }
+    .split-mode-card:hover {
+      border-color: var(--primary);
+    }
+    .split-mode-card.selected {
+      border-color: var(--primary);
+      background: #fffafa;
+    }
+    .radio-circle {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 2px solid #d9d9d9;
+      margin-top: 2px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .split-mode-card.selected .radio-circle,
+    .radio-item.selected .radio-circle {
+      border-color: var(--primary);
+    }
+    .split-mode-card.selected .radio-circle::after,
+    .radio-item.selected .radio-circle::after {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--primary);
+    }
+
+    .radio-row {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      margin-top: 8px;
+    }
+    .radio-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      font-size: 13px;
+    }
 
     /* 通用宽屏卡片与表单样式 (所有配置页面统一使用) */
     .full-width-card {
@@ -1004,67 +1293,136 @@
     </section>
 
     <!-- =========================================================================
-         VIEW 2: 知识库管理视图 (占满右侧空间)
+         VIEW 2: 知识库管理视图 (对标「AI法盾」标准版)
          ========================================================================= -->
     <section class="page-view" id="kbView">
       <div class="kb-layout">
+        <!-- 左侧知识库分类树 -->
         <div class="kb-tree-sidebar">
-          <div class="kb-tree-nav">
-            <div class="kb-nav-item active" id="kbNav-all" onclick="filterKbCategory('all')">
-              <span>全部知识库</span>
-            </div>
-            <div class="kb-nav-item" id="kbNav-internal" onclick="filterKbCategory('internal')">
-              <span>内规知识库</span>
-            </div>
-            <div class="kb-nav-item" id="kbNav-external" onclick="filterKbCategory('external')">
-              <span>外规知识库</span>
-            </div>
+          <div class="kb-nav-item" id="kbNav-all" onclick="selectAllKb()" style="margin-bottom:8px;">
+            <span>📁 全部知识库</span>
           </div>
-          <button class="btn-create-kb" id="btnCreateKb" onclick="openImportModal()">+ 新增法规入库</button>
+          <!-- 动态层级树容器 -->
+          <div class="kb-tree-scroll" id="kbTreeContainer"></div>
+
+          <!-- 底部居中药丸形【新增知识库】按钮 (精准对标截图) -->
+          <div style="padding-top:12px; display:flex; justify-content:center; border-top:1px solid #f0f0f0;">
+            <button class="btn-pill-create-kb" onclick="openCreateKbModal()">新增知识库</button>
+          </div>
         </div>
 
+        <!-- 右侧主内容区 -->
         <div class="kb-content">
           <div id="kbPermBanner" style="display:none; background:#fffbe6; border:1px solid #ffe58f; padding:8px 14px; border-radius:6px; font-size:12.5px; color:#d46b08;"></div>
 
+          <!-- 顶部筛选栏 -->
           <div class="kb-filter-card">
-            <div class="filter-grid">
-              <div class="filter-item">
+            <div class="filter-grid" style="grid-template-columns: repeat(4, 1fr);">
+              <div>
                 <input type="text" class="filter-input" id="filterKbDocName" placeholder="请输入文档名称" />
               </div>
-              <div class="filter-item">
-                <select class="filter-select" id="filterKbCategory">
-                  <option value="all">全部知识库</option>
-                  <option value="internal">内规知识库</option>
-                  <option value="external">外规知识库</option>
+              <div>
+                <select class="filter-select" id="filterKbCategory" onchange="onFilterCategoryChange(this.value)">
+                  <option value="all">全部</option>
+                </select>
+              </div>
+              <div>
+                <select class="filter-select" id="filterKbStatus">
+                  <option value="">请选择解析状态</option>
+                  <option value="已解析">已解析</option>
+                  <option value="解析中">解析中</option>
+                </select>
+              </div>
+              <div>
+                <select class="filter-select" id="filterKbDocType">
+                  <option value="">请选择文档类型</option>
+                  <option value="TXT">TXT / Markdown</option>
+                  <option value="PDF">PDF 文档</option>
+                  <option value="DOCX">Word 文档</option>
                 </select>
               </div>
             </div>
-            <div class="filter-actions" style="justify-content: flex-end;">
-              <button class="btn-search" onclick="searchKbDocuments()">搜索</button>
-              <button class="btn-reset" onclick="resetKbSearch()">重置</button>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px;">
+              <div style="display:flex; gap:10px; align-items:center;">
+                <input type="text" class="filter-input" style="width:160px;" id="filterKbUploader" placeholder="请选择上传人" />
+                <input type="text" class="filter-input" style="width:160px;" id="filterKbDept" placeholder="请选择部门" />
+                <div style="display:flex; align-items:center; gap:4px; font-size:12px; color:#8c8c8c;">
+                  <input type="date" class="filter-input" style="width:130px; font-size:12px; padding:4px 6px;" id="filterStartDate" />
+                  <span>-</span>
+                  <input type="date" class="filter-input" style="width:130px; font-size:12px; padding:4px 6px;" id="filterEndDate" />
+                </div>
+              </div>
+              <div class="filter-actions">
+                <button class="btn-search" style="background:#d32029; color:#fff; border:none; padding:7px 22px; border-radius:4px; font-weight:500;" onclick="searchKbDocuments()">搜索</button>
+                <button class="btn-reset" onclick="resetKbSearch()">重置</button>
+              </div>
             </div>
           </div>
 
-          <div class="kb-table-toolbar">
-            <button class="btn-tool primary" id="btnImportDoc" onclick="openImportModal()">+ 导入法规文档 (BGE-M3)</button>
-            <button class="btn-tool" onclick="refreshKbTable()">重新解析</button>
+          <!-- 工具栏 -->
+          <div class="kb-table-toolbar" style="display:flex; justify-content:space-between; align-items:center;">
+            <div style="display:flex; gap:10px;">
+              <!-- 截图标志性红色大按钮 -->
+              <button class="btn-tool primary" style="background:#d32029; color:#fff; border:none; padding:8px 18px; border-radius:4px; font-weight:600; cursor:pointer;" id="btnImportDoc" onclick="openImportModal()">上传文档</button>
+              <button class="btn-tool" onclick="openGraphBuilderModal()">🕸️ 知识图谱离线构建</button>
+              <button class="btn-tool" onclick="openCounterpartsModal()">🔄 官方新旧法对照录入</button>
+              <button class="btn-tool" onclick="openFlkCrawlerModal()">🌐 国家法规库同步</button>
+            </div>
+            <div style="display:flex; gap:8px;">
+              <button class="btn-tool" onclick="refreshKbTable()">重新解析</button>
+              <button class="btn-tool" onclick="downloadSelectedDocs()">下载</button>
+              <button class="btn-tool" style="color:var(--error);" onclick="deleteSelectedDocs()">删除</button>
+            </div>
           </div>
 
-          <div style="background:#fff; border-radius:8px; border:1px solid var(--border-color); flex:1; overflow-x:auto;">
+          <!-- 文档表格 (对标截图完整 12 列) -->
+          <div style="background:#fff; border-radius:8px; border:1px solid var(--border-color); flex:1; overflow-x:auto; display:flex; flex-direction:column; justify-content:space-between;">
             <table class="custom-table" id="kbDocTable">
               <thead>
                 <tr>
+                  <th style="width:36px;"><input type="checkbox" id="selectAllDocs" onchange="toggleSelectAllDocs(this.checked)" /></th>
                   <th>文档名称</th>
                   <th>所属知识库</th>
                   <th>部门</th>
-                  <th>生效日期</th>
-                  <th>分段条数</th>
-                  <th>维护权限状态</th>
+                  <th>上传日期</th>
+                  <th>上传人</th>
+                  <th>文档大小</th>
+                  <th>文档格式</th>
+                  <th>分段数</th>
+                  <th>有效状态</th>
+                  <th>文档状态</th>
                   <th>操作</th>
                 </tr>
               </thead>
               <tbody id="kbDocTableBody"></tbody>
             </table>
+
+            <!-- 空数据占位视图 (对标截图 3) -->
+            <div id="kbEmptyPlaceholder" style="display:none; padding:80px 20px; text-align:center; color:#8c8c8c;">
+              <div style="font-size:46px; margin-bottom:12px; opacity:0.5;">🗂️</div>
+              <div style="font-size:14px; color:#595959; margin-bottom:6px;">发生未知错误，请检查网络或者稍后再试。</div>
+              <div style="font-size:12px; color:#8c8c8c;">（当前目录下暂无文档，可点击左上方「上传文档」开始录入）</div>
+            </div>
+
+            <!-- 分页条 (对标截图 3) -->
+            <div style="display:flex; justify-content:flex-end; align-items:center; gap:16px; padding:12px 18px; border-top:1px solid #f0f0f0; font-size:13px; color:#595959;">
+              <span id="kbPaginationTotal">共0条</span>
+              <select class="filter-select" style="width:96px; padding:4px 8px; font-size:12px;" id="kbPageSizeSelect" onchange="changeKbPageSize(this.value)">
+                <option value="10">10条/页</option>
+                <option value="20">20条/页</option>
+                <option value="50">50条/页</option>
+              </select>
+              <div style="display:flex; align-items:center; gap:6px;">
+                <button class="btn-reset" style="padding:2px 8px; font-size:12px; min-width:28px;" onclick="prevKbPage()">&lt;</button>
+                <span style="background:#d32029; color:#fff; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:600;" id="kbCurrentPageBadge">1</span>
+                <button class="btn-reset" style="padding:2px 8px; font-size:12px; min-width:28px;" onclick="nextKbPage()">&gt;</button>
+              </div>
+              <div style="display:flex; align-items:center; gap:4px;">
+                <span>前往</span>
+                <input type="number" min="1" value="1" id="kbJumpPageInput" style="width:46px; text-align:center; padding:3px; border:1px solid #d9d9d9; border-radius:4px; font-size:12px;" onchange="jumpKbPage(this.value)" />
+                <span>页</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -1530,36 +1888,302 @@
     </div>
   </div>
 
-  <!-- ======================== 模态框: 导入外部法规文档 ======================== -->
-  <div class="modal-overlay" id="importModal">
-    <div class="modal-box" style="max-width:680px;">
+  <!-- ======================== 模态框: 新增知识库 (顶层) ======================== -->
+  <div class="modal-overlay" id="createKbModal">
+    <div class="modal-box" style="max-width:500px;">
       <div class="modal-header">
-        <div class="modal-title">导入外部法规 / 规章文档 (BGE-M3 向量化)</div>
+        <div class="modal-title">新增知识库</div>
+        <div class="modal-close" onclick="closeCreateKbModal()">✕</div>
+      </div>
+      <div class="modal-body" style="padding:18px 20px;">
+        <div class="form-group" style="margin-bottom:16px;">
+          <label class="form-label" style="font-weight:600;"><span style="color:var(--error);">*</span> 知识库名称</label>
+          <input type="text" class="filter-input" id="newKbName" placeholder="例如：内规知识库、外规知识库、合规指引库" />
+        </div>
+        <div class="form-group" style="margin-bottom:10px;">
+          <label class="form-label">知识库描述</label>
+          <textarea class="filter-input" id="newKbDesc" style="height:70px; resize:vertical;" placeholder="请输入知识库说明，如：收录国家现行法律法规与司法解释"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer" style="padding:12px 20px; border-top:1px solid var(--border-light); display:flex; justify-content:flex-end; gap:10px;">
+        <button class="btn-reset" onclick="closeCreateKbModal()">取消</button>
+        <button class="btn-search" style="background:#d32029; color:#fff; border:none; padding:7px 22px; border-radius:4px; font-weight:600;" onclick="submitCreateKb()">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================== 模态框: 新增层级子目录 ======================== -->
+  <div class="modal-overlay" id="createFolderModal">
+    <div class="modal-box" style="max-width:500px;">
+      <div class="modal-header">
+        <div class="modal-title">新增层级目录</div>
+        <div class="modal-close" onclick="closeCreateFolderModal()">✕</div>
+      </div>
+      <div class="modal-body" style="padding:18px 20px;">
+        <div class="form-group" style="margin-bottom:14px;">
+          <label class="form-label" style="color:var(--text-muted);">所属父级</label>
+          <input type="text" class="filter-input" id="folderParentPath" readonly style="background:#f5f6f8; color:#595959; cursor:not-allowed;" />
+          <input type="hidden" id="folderParentId" />
+        </div>
+        <div class="form-group" style="margin-bottom:14px;">
+          <label class="form-label" style="font-weight:600;"><span style="color:var(--error);">*</span> 目录名称</label>
+          <input type="text" class="filter-input" id="newFolderName" placeholder="例如：指导性文件、法律法规、其他文件" />
+        </div>
+        <div class="form-group" style="margin-bottom:10px;">
+          <label class="form-label">目录描述</label>
+          <textarea class="filter-input" id="newFolderDesc" style="height:60px; resize:vertical;" placeholder="选填，请输入该目录的归类用途"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer" style="padding:12px 20px; border-top:1px solid var(--border-light); display:flex; justify-content:flex-end; gap:10px;">
+        <button class="btn-reset" onclick="closeCreateFolderModal()">取消</button>
+        <button class="btn-search" style="background:#d32029; color:#fff; border:none; padding:7px 22px; border-radius:4px; font-weight:600;" onclick="submitCreateFolder()">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================== 模态框: 重命名知识库或目录 ======================== -->
+  <div class="modal-overlay" id="renameNodeModal">
+    <div class="modal-box" style="max-width:460px;">
+      <div class="modal-header">
+        <div class="modal-title">重命名</div>
+        <div class="modal-close" onclick="closeRenameNodeModal()">✕</div>
+      </div>
+      <div class="modal-body" style="padding:18px 20px;">
+        <input type="hidden" id="renameNodeId" />
+        <div class="form-group" style="margin-bottom:14px;">
+          <label class="form-label" style="font-weight:600;"><span style="color:var(--error);">*</span> 新名称</label>
+          <input type="text" class="filter-input" id="renameNodeNewName" placeholder="请输入新名称" />
+        </div>
+      </div>
+      <div class="modal-footer" style="padding:12px 20px; border-top:1px solid var(--border-light); display:flex; justify-content:flex-end; gap:10px;">
+        <button class="btn-reset" onclick="closeRenameNodeModal()">取消</button>
+        <button class="btn-search" style="background:#d32029; color:#fff; border:none; padding:7px 22px; border-radius:4px; font-weight:600;" onclick="submitRenameNode()">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================== 模态框: AI法盾两步式文档上传向导 ======================== -->
+  <div class="modal-overlay" id="importModal">
+    <div class="modal-box" style="max-width:720px;">
+      <div class="modal-header">
+        <div class="modal-title">上传文档</div>
         <div class="modal-close" onclick="closeImportModal()">✕</div>
       </div>
-      <div class="modal-body">
-        <div class="filter-grid" style="margin-bottom:12px;">
-          <div>
-            <label style="font-size:12px; color:var(--text-muted);">法规全称（必填）</label>
-            <input type="text" class="filter-input" id="importLawName" placeholder="如：中华人民共和国数据安全法" />
+
+      <!-- 步骤指示器 -->
+      <div class="step-wizard">
+        <div class="step-item active" id="stepIndicator-1">
+          <div class="step-badge">1</div>
+          <span>文档选择</span>
+        </div>
+        <div class="step-line" id="stepLine-1"></div>
+        <div class="step-item" id="stepIndicator-2">
+          <div class="step-badge">2</div>
+          <span>文档配置</span>
+        </div>
+      </div>
+
+      <!-- STEP 1: 文档选择 -->
+      <div id="uploadStep1" style="display:block;">
+        <div style="margin-bottom:16px;">
+          <label style="font-size:13px; font-weight:600; color:var(--text-title); display:flex; align-items:center; gap:4px; margin-bottom:6px;">
+            <span style="color:var(--error);">*</span> 知识库
+          </label>
+          <select class="filter-select" id="wizardKbSelect">
+            <option value="外规知识库/法律法规">外规知识库 / 法律法规</option>
+            <option value="外规知识库/指导性文件">外规知识库 / 指导性文件</option>
+            <option value="外规知识库/其他文件">外规知识库 / 其他文件</option>
+            <option value="内规知识库/规章制度">内规知识库 / 规章制度</option>
+          </select>
+        </div>
+
+        <div style="margin-bottom:16px;">
+          <label style="font-size:13px; font-weight:600; color:var(--text-title); display:flex; align-items:center; gap:4px; margin-bottom:6px;">
+            <span style="color:var(--error);">*</span> 知识类型
+          </label>
+          <div class="card-choice-group">
+            <div class="choice-card selected" id="choiceType-text" onclick="selectKnowledgeType('text')">
+              <div class="choice-icon" style="color:#52c41a;">📄</div>
+              <div>
+                <div class="choice-title">文本知识</div>
+                <div class="choice-desc">支持导入多种格式文件，对导入的文件进行提取和分段切分</div>
+              </div>
+              <div class="choice-tag">DOC</div>
+            </div>
+            <div class="choice-card" id="choiceType-img" onclick="selectKnowledgeType('img')">
+              <div class="choice-icon" style="color:#1890ff;">🖼️</div>
+              <div>
+                <div class="choice-title">图片知识</div>
+                <div class="choice-desc">支持对图片中的文字进行 OCR 解析与法条提取</div>
+              </div>
+            </div>
           </div>
-          <div>
-            <label style="font-size:12px; color:var(--text-muted);">导入的目标知识库</label>
-            <select class="filter-select" id="importCollectionSelect">
-              <option value="default_external_laws">外规知识库 (default_external_laws)</option>
-              <option value="internal_rules">内规知识库 (internal_rules)</option>
-              <option value="industry_standards">行业合规库 (industry_standards)</option>
+        </div>
+
+        <div style="margin-bottom:16px;">
+          <label style="font-size:13px; font-weight:600; color:var(--text-title); display:flex; align-items:center; gap:4px; margin-bottom:6px;">
+            <span style="color:var(--error);">*</span> 选择文件
+          </label>
+          <div class="dropzone-box" onclick="document.getElementById('fileUploadInput').click()" ondragover="event.preventDefault()" ondrop="handleDropFile(event)">
+            <div class="dropzone-icon">☁️</div>
+            <div class="dropzone-text" id="dropzoneMainText">点击上传，或拖动文档到这里</div>
+            <div class="dropzone-hint">
+              支持 pdf, doc, docx, ppt, pptx, xls, xlsx, txt, csv, md 格式文档<br />
+              单次可上传100个文档，最多500个文档，单个文档大小50MB
+            </div>
+          </div>
+          <input type="file" id="fileUploadInput" style="display:none;" multiple accept=".txt,.md,.pdf,.doc,.docx,.xls,.xlsx,.csv,.json" onchange="handleFileSelected(this)" />
+          <div id="selectedFileList" style="margin-top:8px; font-size:12.5px; color:#52c41a;"></div>
+        </div>
+
+        <div style="margin-bottom:12px;">
+          <label style="font-size:12px; color:var(--text-muted); cursor:pointer;" onclick="toggleDirectTextInput()">或直接粘贴条文文本 ▾</label>
+          <textarea id="wizardDirectText" style="display:none; width:100%; height:90px; margin-top:6px; font-size:12px; padding:6px; border:1px solid var(--border-color); border-radius:4px;" placeholder="粘贴法规全文或条文文本..."></textarea>
+        </div>
+
+        <div class="modal-footer" style="padding-top:16px; border-top:1px solid var(--border-light); display:flex; justify-content:flex-end; gap:10px;">
+          <button class="btn-reset" onclick="closeImportModal()">取消</button>
+          <button class="btn-search" style="background:#d32029; color:#fff; border:none; padding:8px 26px; border-radius:4px; font-weight:600;" onclick="goToUploadStep(2)">下一步</button>
+        </div>
+      </div>
+
+      <!-- STEP 2: 文档配置 -->
+      <div id="uploadStep2" style="display:none;">
+        <div style="margin-bottom:16px;">
+          <label style="font-size:13px; font-weight:600; color:var(--text-title); display:flex; align-items:center; gap:4px; margin-bottom:8px;">
+            <span style="color:var(--error);">*</span> 分段方式
+          </label>
+          <!-- 模式 1: 自动分割 -->
+          <div class="split-mode-card selected" id="splitMode-auto" onclick="selectSplitMode('auto')">
+            <div class="radio-circle"></div>
+            <div>
+              <div style="font-weight:600; font-size:13.5px; color:var(--text-title);">自动分割</div>
+              <div style="font-size:12px; color:var(--text-muted); margin-top:2px;">自动设置分段规则与预处理规则（Token与语义标点自适应滑窗）</div>
+            </div>
+          </div>
+          <!-- 模式 2: 法条分割 -->
+          <div class="split-mode-card" id="splitMode-article" onclick="selectSplitMode('article')">
+            <div class="radio-circle"></div>
+            <div>
+              <div style="font-weight:600; font-size:13.5px; color:var(--text-title);">法条分割 (推荐法典使用)</div>
+              <div style="font-size:12px; color:var(--text-muted); margin-top:2px;">严格按编、章、节、条、款层级状态机切分，保留完整法律条文结构</div>
+            </div>
+          </div>
+          <!-- 模式 3: 文档分层分割 -->
+          <div class="split-mode-card" id="splitMode-hierarchical" onclick="selectSplitMode('hierarchical')">
+            <div class="radio-circle"></div>
+            <div>
+              <div style="font-weight:600; font-size:13.5px; color:var(--text-title);">自定义 / 文档分层分割</div>
+              <div style="font-size:12px; color:var(--text-muted); margin-top:2px;">Parent-Child 树状层级索引，小分块用于向量语义高精检索，大父块用于完整法理上下文召回</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-bottom:20px;">
+          <label style="font-size:13px; font-weight:600; color:var(--text-title); display:flex; align-items:center; gap:4px; margin-bottom:8px;">
+            <span style="color:var(--error);">*</span> 有效期
+          </label>
+          <div class="radio-row">
+            <div class="radio-item selected" id="validityOpt-permanent" onclick="selectValidityOption('permanent')">
+              <div class="radio-circle"></div>
+              <span>永久有效</span>
+            </div>
+            <div class="radio-item" id="validityOpt-custom" onclick="selectValidityOption('custom')">
+              <div class="radio-circle"></div>
+              <span>设置截止日期</span>
+            </div>
+          </div>
+          <div id="customDateRow" style="display:none; margin-top:10px;">
+            <input type="date" class="filter-input" style="width:200px;" id="wizardValidUntil" />
+          </div>
+        </div>
+
+        <div class="modal-footer" style="padding-top:16px; border-top:1px solid var(--border-light); display:flex; justify-content:flex-end; gap:10px;">
+          <button class="btn-reset" onclick="goToUploadStep(1)">上一步</button>
+          <button class="btn-search" style="background:#d32029; color:#fff; border:none; padding:8px 26px; border-radius:4px; font-weight:600;" onclick="submitWizardUpload()">确定</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================== 模态框: 知识图谱离线构建 ======================== -->
+  <div class="modal-overlay" id="graphBuilderModal">
+    <div class="modal-box" style="max-width:680px;">
+      <div class="modal-header">
+        <div class="modal-title">🕸️ LLM-Graph Builder 知识图谱离线构建</div>
+        <div class="modal-close" onclick="closeGraphBuilderModal()">✕</div>
+      </div>
+      <div class="modal-body">
+        <div class="card-desc">离线大模型批处理扫描条文，抽取关联、参照、兜底引致关系；或输入最高院司法解释《理解与适用》文本，自动提取法条锚定关系。</div>
+        <div class="form-group" style="margin-bottom:10px;">
+          <label class="form-label">法规 / 司法解释名称</label>
+          <input type="text" class="filter-input" id="graphLawName" placeholder="如：最高人民法院关于适用〈民法典〉合同编通则若干问题的解释" />
+        </div>
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label class="form-label">条号</label>
+            <input type="text" class="filter-input" id="graphArticle" placeholder="如：第65条" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">抽取类型</label>
+            <select class="filter-select" id="graphExtractType">
+              <option value="cross_ref">条文法理引致（明示/实体依赖/特别法）</option>
+              <option value="interpretation">司法解释《理解与适用》法理锚定抽取</option>
             </select>
           </div>
         </div>
-        <div>
-          <label style="font-size:12px; color:var(--text-muted); display:block; margin-bottom:4px;">法规条文全文（自动切分入库）</label>
-          <textarea class="json-editor" id="importRawText" style="height:140px; width:100%; font-family:monospace; padding:8px; border:1px solid var(--border-color); border-radius:6px;" placeholder="粘贴法规全文或条文 JSON 数组..."></textarea>
+        <div class="form-group" style="margin-top:10px;">
+          <label class="form-label">正文或《理解与适用》论述内容</label>
+          <textarea class="filter-input" id="graphContent" style="height:110px; font-size:12.5px;" placeholder="粘贴条文正文或最高法《理解与适用》论述..."></textarea>
         </div>
+        <div id="graphResultBox" style="display:none; background:#f7f8fa; border:1px solid var(--border-color); border-radius:6px; padding:10px; margin-top:10px; font-size:12px; max-height:140px; overflow-y:auto;"></div>
       </div>
       <div class="modal-footer">
-        <button class="btn-reset" onclick="closeImportModal()">取消</button>
-        <button class="btn-search" onclick="submitImportDocument()">立即解析并向量入库</button>
+        <button class="btn-reset" onclick="closeGraphBuilderModal()">取消</button>
+        <button class="btn-search" style="background:#d32029; color:#fff;" onclick="executeGraphExtraction()">开始离线抽取并生成提案</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================== 模态框: 官方新旧法律对照录入 ======================== -->
+  <div class="modal-overlay" id="counterpartsModal">
+    <div class="modal-box" style="max-width:680px;">
+      <div class="modal-header">
+        <div class="modal-title">🔄 官方《新旧法律条文对照表》数字化录入</div>
+        <div class="modal-close" onclick="closeCounterpartsModal()">✕</div>
+      </div>
+      <div class="modal-body">
+        <div class="card-desc">内置全国人大常委会法工委编写的权威《新旧法律条文对照表》（涵盖《公司法新旧对照表》2018 vs 2023、《民法典新旧对照表》等），点击即可一次性批量录入知识中心。</div>
+        <div style="background:#fafbfc; border:1px solid var(--border-color); border-radius:6px; padding:12px; font-size:12.5px; line-height:1.8;">
+          <div>✅ <strong>公司法出资期限新旧对照</strong>：2023版第47条 (5年认缴) ⟷ 2018版第26条 (无期限认缴)</div>
+          <div>✅ <strong>出资加速到期新旧对照</strong>：2023版第54条 ⟷ 2018版第28条</div>
+          <div>✅ <strong>民法典违约责任新旧对照</strong>：民法典第577条 ⟷ 旧合同法第107条</div>
+          <div>✅ <strong>违约金调减规则新旧对照</strong>：民法典第585条 ⟷ 旧合同法第114条</div>
+          <div>✅ <strong>行政处罚首违不罚新旧对照</strong>：2021修订版第33条 ⟷ 1996版第27条</div>
+        </div>
+        <div id="counterpartsStatus" style="margin-top:10px; font-size:12px; color:#52c41a; font-weight:600;"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-reset" onclick="closeCounterpartsModal()">关闭</button>
+        <button class="btn-search" style="background:#d32029; color:#fff;" onclick="executeBatchImportCounterparts()">一键批量录入法工委官方对照表</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================== 模态框: 国家法规库监听同步 ======================== -->
+  <div class="modal-overlay" id="flkCrawlerModal">
+    <div class="modal-box" style="max-width:680px;">
+      <div class="modal-header">
+        <div class="modal-title">🌐 国家法律法规数据库（flk.npc.gov.cn）监听同步</div>
+        <div class="modal-close" onclick="closeFlkCrawlerModal()">✕</div>
+      </div>
+      <div class="modal-body">
+        <div class="card-desc">定时监听国家法律法规数据库的法律废止与修正案公告。发现废止后自动将旧法状态置为「已废止」并推导失效日；发现条款修正案后自动沉淀为条款级修改日志。</div>
+        <button class="btn-search" style="background:var(--primary); color:#fff; border:none; margin-bottom:12px;" onclick="executeFlkSync()">🚀 立即执行差分监听与时效同步</button>
+        <div id="flkSyncLogs" style="background:#1f2329; color:#a6e22e; border-radius:6px; padding:12px; font-family:monospace; font-size:12px; height:160px; overflow-y:auto; white-space:pre-wrap;">等待执行国家法规库公告同步...</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-reset" onclick="closeFlkCrawlerModal()">关闭</button>
       </div>
     </div>
   </div>
@@ -1705,7 +2329,7 @@
 
       renderDynamicSidebar();
 
-      if (viewId === "kbView") loadKbDocuments();
+      if (viewId === "kbView") { loadKbTree(); loadKbDocuments(); }
       if (viewId === "llmView") loadLlmConfig();
       if (viewId === "statsView") loadStatsOverview();
       if (viewId === "auditView") loadAuditTrail();
@@ -2089,105 +2713,713 @@
       ansBody.textContent = fo.answer || "暂无回答生成";
     }
 
-    // 知识库管理
-    async function loadKbDocuments() {
+    // ========================================================
+    // 知识库层级目录树管理与「AI法盾」两步上传向导
+    // ========================================================
+    let KB_TREE_DATA = [];
+    let CURRENT_SELECTED_NODE = {
+      id: "folder_laws",
+      name: "法律法规",
+      path: "外规知识库/法律法规",
+      type: "folder"
+    };
+    let EXPANDED_NODE_IDS = new Set(["kb_external", "kb_internal"]);
+    let KB_PAGINATION = {
+      page: 1,
+      pageSize: 10,
+      total: 0
+    };
+
+    let UPLOAD_WIZARD_STATE = {
+      step: 1,
+      knowledgeType: "text",
+      splitMode: "article",
+      validityOption: "permanent",
+      selectedFiles: [],
+      directText: ""
+    };
+
+    // ----------------- 知识库目录树核心逻辑 -----------------
+    async function loadKbTree(targetNodeId = null) {
       try {
-        const res = await fetch(`/kb/documents?category_type=${RBAC_STATE.kbCategoryFilter}`);
+        const res = await fetch("/kb/tree");
+        const d = await res.json();
+        KB_TREE_DATA = d.tree || [];
+        renderKbTree();
+        populateWizardKbSelect();
+        populateFilterKbCategorySelect();
+
+        if (targetNodeId) {
+          const target = findNodeInTree(KB_TREE_DATA, targetNodeId);
+          if (target) {
+            selectTreeNode(target.node_id, target.path, target.name, target.node_type);
+            return;
+          }
+        }
+        // 如果当前节点存在，同步其 path
+        if (CURRENT_SELECTED_NODE && CURRENT_SELECTED_NODE.id !== "all") {
+          const current = findNodeInTree(KB_TREE_DATA, CURRENT_SELECTED_NODE.id);
+          if (current) {
+            CURRENT_SELECTED_NODE.path = current.path;
+            CURRENT_SELECTED_NODE.name = current.name;
+          }
+        }
+      } catch (err) {
+        console.error("加载知识库目录树失败:", err);
+      }
+    }
+
+    function findNodeInTree(nodes, nodeId) {
+      for (const n of nodes) {
+        if (n.node_id === nodeId) return n;
+        if (n.children && n.children.length > 0) {
+          const sub = findNodeInTree(n.children, nodeId);
+          if (sub) return sub;
+        }
+      }
+      return null;
+    }
+
+    function getAllTreeLeafPaths(nodes, result = []) {
+      for (const n of nodes) {
+        result.push({ path: n.path, name: n.name, id: n.node_id, type: n.node_type });
+        if (n.children && n.children.length > 0) {
+          getAllTreeLeafPaths(n.children, result);
+        }
+      }
+      return result;
+    }
+
+    function renderKbTree() {
+      const container = document.getElementById("kbTreeContainer");
+      if (!container) return;
+      container.innerHTML = "";
+
+      // 顶部全部知识库按钮高亮状态
+      const allItem = document.getElementById("kbNav-all");
+      if (allItem) {
+        allItem.classList.toggle("active", CURRENT_SELECTED_NODE && CURRENT_SELECTED_NODE.id === "all");
+      }
+
+      function buildNodeElement(node, depth = 0) {
+        const hasChildren = node.children && node.children.length > 0;
+        const isExpanded = EXPANDED_NODE_IDS.has(node.node_id);
+        const isSelected = CURRENT_SELECTED_NODE && CURRENT_SELECTED_NODE.id === node.node_id;
+
+        const wrapper = document.createElement("div");
+        wrapper.className = "tree-node-wrapper";
+
+        const item = document.createElement("div");
+        item.className = `tree-node-item ${isSelected ? "selected" : ""}`;
+        item.style.paddingLeft = `${depth * 14 + 6}px`;
+
+        const arrowIcon = hasChildren ? (isExpanded ? "▼" : "▶") : "";
+        const arrowHtml = hasChildren
+          ? `<span class="tree-arrow ${isExpanded ? 'expanded' : ''}" onclick="event.stopPropagation(); toggleNodeExpand('${node.node_id}')">${arrowIcon}</span>`
+          : `<span class="tree-arrow empty">·</span>`;
+
+        const countBadge = (node.doc_count !== undefined && node.doc_count !== null) 
+          ? `<span class="tree-badge-count">(${node.doc_count})</span>` 
+          : "";
+
+        const safePath = (node.path || "").replace(/'/g, "\\'");
+        const safeName = (node.name || "").replace(/'/g, "\\'");
+
+        item.innerHTML = `
+          <div class="tree-node-left" onclick="selectTreeNode('${node.node_id}', '${safePath}', '${safeName}', '${node.node_type}')">
+            ${arrowHtml}
+            <span class="tree-node-title" title="${node.name}">${node.name}</span>
+            ${countBadge}
+          </div>
+          <div class="tree-node-actions" onclick="event.stopPropagation()">
+            <button class="tree-action-btn" title="在「${node.name}」下新建子目录" onclick="openCreateFolderModal('${node.node_id}', '${safePath}')">+</button>
+            <button class="tree-action-btn" title="重命名" onclick="openRenameNodeModal('${node.node_id}', '${safeName}')">✏️</button>
+            <button class="tree-action-btn danger" title="删除" onclick="deleteTreeNode('${node.node_id}', '${safeName}')">🗑️</button>
+          </div>
+        `;
+
+        wrapper.appendChild(item);
+
+        if (hasChildren && isExpanded) {
+          const childBox = document.createElement("div");
+          childBox.className = "tree-children-box";
+          node.children.forEach(ch => {
+            childBox.appendChild(buildNodeElement(ch, depth + 1));
+          });
+          wrapper.appendChild(childBox);
+        }
+
+        return wrapper;
+      }
+
+      KB_TREE_DATA.forEach(root => {
+        container.appendChild(buildNodeElement(root, 0));
+      });
+    }
+
+    function toggleNodeExpand(nodeId) {
+      if (EXPANDED_NODE_IDS.has(nodeId)) {
+        EXPANDED_NODE_IDS.delete(nodeId);
+      } else {
+        EXPANDED_NODE_IDS.add(nodeId);
+      }
+      renderKbTree();
+    }
+
+    function selectTreeNode(nodeId, path, name, type) {
+      CURRENT_SELECTED_NODE = { id: nodeId, path: path, name: name, type: type };
+      EXPANDED_NODE_IDS.add(nodeId);
+      renderKbTree();
+      KB_PAGINATION.page = 1;
+      loadKbDocuments(path);
+    }
+
+    function selectAllKb() {
+      CURRENT_SELECTED_NODE = { id: "all", path: "all", name: "全部知识库", type: "all" };
+      renderKbTree();
+      KB_PAGINATION.page = 1;
+      loadKbDocuments("all");
+    }
+
+    function populateWizardKbSelect() {
+      const select = document.getElementById("wizardKbSelect");
+      if (!select) return;
+      const allNodes = getAllTreeLeafPaths(KB_TREE_DATA);
+      select.innerHTML = "";
+      allNodes.forEach(item => {
+        const opt = document.createElement("option");
+        opt.value = item.path;
+        opt.textContent = item.path;
+        if (CURRENT_SELECTED_NODE && CURRENT_SELECTED_NODE.path === item.path) {
+          opt.selected = true;
+        }
+        select.appendChild(opt);
+      });
+    }
+
+    function populateFilterKbCategorySelect() {
+      const select = document.getElementById("filterKbCategory");
+      if (!select) return;
+      const allNodes = getAllTreeLeafPaths(KB_TREE_DATA);
+      select.innerHTML = '<option value="all">全部</option>';
+      allNodes.forEach(item => {
+        const opt = document.createElement("option");
+        opt.value = item.path;
+        opt.textContent = item.path;
+        if (CURRENT_SELECTED_NODE && CURRENT_SELECTED_NODE.path === item.path) {
+          opt.selected = true;
+        }
+        select.appendChild(opt);
+      });
+    }
+
+    function onFilterCategoryChange(val) {
+      if (val === "all") {
+        selectAllKb();
+      } else {
+        const found = getAllTreeLeafPaths(KB_TREE_DATA).find(n => n.path === val);
+        if (found) {
+          selectTreeNode(found.id, found.path, found.name, found.type);
+        } else {
+          loadKbDocuments(val);
+        }
+      }
+    }
+
+    // ----------------- 新增知识库、子目录、重命名、删除 -----------------
+    function openCreateKbModal() {
+      document.getElementById("newKbName").value = "";
+      document.getElementById("newKbDesc").value = "";
+      document.getElementById("createKbModal").classList.add("open");
+    }
+    function closeCreateKbModal() {
+      document.getElementById("createKbModal").classList.remove("open");
+    }
+    async function submitCreateKb() {
+      const name = document.getElementById("newKbName").value.trim();
+      const desc = document.getElementById("newKbDesc").value.trim();
+      if (!name) { showToast("请输入知识库名称"); return; }
+      try {
+        const res = await fetch("/kb/tree/node", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: name, node_type: "kb", description: desc })
+        });
+        const d = await res.json();
+        if (res.ok) {
+          showToast(`🎉 成功创建知识库 [${name}]`);
+          closeCreateKbModal();
+          await loadKbTree(d.node ? d.node.node_id : null);
+        } else {
+          showToast(d.detail || "创建知识库失败");
+        }
+      } catch (e) {
+        showToast("创建请求异常");
+      }
+    }
+
+    function openCreateFolderModal(parentId, parentPath) {
+      document.getElementById("folderParentId").value = parentId;
+      document.getElementById("folderParentPath").value = parentPath;
+      document.getElementById("newFolderName").value = "";
+      document.getElementById("newFolderDesc").value = "";
+      document.getElementById("createFolderModal").classList.add("open");
+    }
+    function closeCreateFolderModal() {
+      document.getElementById("createFolderModal").classList.remove("open");
+    }
+    async function submitCreateFolder() {
+      const parentId = document.getElementById("folderParentId").value;
+      const name = document.getElementById("newFolderName").value.trim();
+      const desc = document.getElementById("newFolderDesc").value.trim();
+      if (!name) { showToast("请输入目录名称"); return; }
+      try {
+        const res = await fetch("/kb/tree/node", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: name, parent_id: parentId, node_type: "folder", description: desc })
+        });
+        const d = await res.json();
+        if (res.ok) {
+          showToast(`🎉 成功创建层级目录 [${name}]`);
+          closeCreateFolderModal();
+          EXPANDED_NODE_IDS.add(parentId);
+          await loadKbTree(d.node ? d.node.node_id : null);
+        } else {
+          showToast(d.detail || "创建目录失败");
+        }
+      } catch (e) {
+        showToast("创建目录请求异常");
+      }
+    }
+
+    function openRenameNodeModal(nodeId, currentName) {
+      document.getElementById("renameNodeId").value = nodeId;
+      document.getElementById("renameNodeNewName").value = currentName;
+      document.getElementById("renameNodeModal").classList.add("open");
+    }
+    function closeRenameNodeModal() {
+      document.getElementById("renameNodeModal").classList.remove("open");
+    }
+    async function submitRenameNode() {
+      const nodeId = document.getElementById("renameNodeId").value;
+      const newName = document.getElementById("renameNodeNewName").value.trim();
+      if (!newName) { showToast("新名称不能为空"); return; }
+      try {
+        const res = await fetch(`/kb/tree/node/${nodeId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ new_name: newName })
+        });
+        const d = await res.json();
+        if (res.ok) {
+          showToast("重命名成功！");
+          closeRenameNodeModal();
+          await loadKbTree(nodeId);
+          loadKbDocuments();
+        } else {
+          showToast(d.detail || "重命名失败");
+        }
+      } catch (e) {
+        showToast("重命名请求异常");
+      }
+    }
+
+    async function deleteTreeNode(nodeId, name) {
+      if (!confirm(`确定删除「${name}」吗？\n注意：此操作将级联删除其下的所有层级子目录与关联法规文档！`)) return;
+      try {
+        const res = await fetch(`/kb/tree/node/${nodeId}`, { method: "DELETE" });
+        const d = await res.json();
+        if (res.ok) {
+          showToast(`已删除「${name}」`);
+          CURRENT_SELECTED_NODE = { id: "kb_external", path: "外规知识库", name: "外规知识库", type: "kb" };
+          await loadKbTree();
+          loadKbDocuments();
+        } else {
+          showToast(d.detail || "删除失败");
+        }
+      } catch (e) {
+        showToast("删除请求异常");
+      }
+    }
+
+    function selectKnowledgeType(t) {
+      UPLOAD_WIZARD_STATE.knowledgeType = t;
+      document.getElementById("choiceType-text").classList.toggle("selected", t === "text");
+      document.getElementById("choiceType-img").classList.toggle("selected", t === "img");
+    }
+
+    function selectSplitMode(m) {
+      UPLOAD_WIZARD_STATE.splitMode = m;
+      ["auto", "article", "hierarchical"].forEach(k => {
+        const el = document.getElementById(`splitMode-${k}`);
+        if (el) el.classList.toggle("selected", k === m);
+      });
+    }
+
+    function selectValidityOption(opt) {
+      UPLOAD_WIZARD_STATE.validityOption = opt;
+      document.getElementById("validityOpt-permanent").classList.toggle("selected", opt === "permanent");
+      document.getElementById("validityOpt-custom").classList.toggle("selected", opt === "custom");
+      document.getElementById("customDateRow").style.display = opt === "custom" ? "block" : "none";
+    }
+
+    function toggleDirectTextInput() {
+      const el = document.getElementById("wizardDirectText");
+      el.style.display = el.style.display === "none" ? "block" : "none";
+    }
+
+    function handleFileSelected(input) {
+      if (input.files && input.files.length > 0) {
+        UPLOAD_WIZARD_STATE.selectedFiles = Array.from(input.files);
+        const listDiv = document.getElementById("selectedFileList");
+        listDiv.innerHTML = `已选择 ${input.files.length} 个文件：` + Array.from(input.files).map(f => `📄 ${f.name} (${(f.size/1024).toFixed(1)}KB)`).join("， ");
+        document.getElementById("dropzoneMainText").textContent = `已就绪 ${input.files.length} 个文档，点击可重新选择`;
+      }
+    }
+
+    function handleDropFile(e) {
+      e.preventDefault();
+      if (e.dataTransfer && e.dataTransfer.files.length > 0) {
+        document.getElementById("fileUploadInput").files = e.dataTransfer.files;
+        handleFileSelected(document.getElementById("fileUploadInput"));
+      }
+    }
+
+    function goToUploadStep(s) {
+      if (s === 2) {
+        const hasFile = UPLOAD_WIZARD_STATE.selectedFiles.length > 0;
+        const hasText = document.getElementById("wizardDirectText").value.trim().length > 0;
+        if (!hasFile && !hasText) {
+          showToast("请先选择要上传的文档或粘贴条文文本！");
+          return;
+        }
+      }
+      UPLOAD_WIZARD_STATE.step = s;
+      document.getElementById("uploadStep1").style.display = s === 1 ? "block" : "none";
+      document.getElementById("uploadStep2").style.display = s === 2 ? "block" : "none";
+      document.getElementById("stepIndicator-1").classList.toggle("active", s >= 1);
+      document.getElementById("stepLine-1").classList.toggle("active", s >= 2);
+      document.getElementById("stepIndicator-2").classList.toggle("active", s === 2);
+    }
+
+    function openImportModal() {
+      UPLOAD_WIZARD_STATE.selectedFiles = [];
+      document.getElementById("selectedFileList").innerHTML = "";
+      document.getElementById("wizardDirectText").value = "";
+      document.getElementById("wizardDirectText").style.display = "none";
+      document.getElementById("dropzoneMainText").textContent = "点击上传，或拖动文档到这里";
+      goToUploadStep(1);
+      document.getElementById("importModal").classList.add("open");
+    }
+    function closeImportModal() { document.getElementById("importModal").classList.remove("open"); }
+
+    async function submitWizardUpload() {
+      const kbType = document.getElementById("wizardKbSelect").value;
+      const splitMode = UPLOAD_WIZARD_STATE.splitMode;
+      const validityOption = UPLOAD_WIZARD_STATE.validityOption;
+      const validUntil = document.getElementById("wizardValidUntil").value;
+      const directText = document.getElementById("wizardDirectText").value.trim();
+
+      const files = UPLOAD_WIZARD_STATE.selectedFiles;
+      if (files.length === 0 && !directText) {
+        showToast("无有效文档内容");
+        return;
+      }
+
+      showToast("⏳ 正在执行格式抽取、智能分块切分与 BGE-M3 向量入库...");
+
+      try {
+        if (files.length > 0) {
+          for (const f of files) {
+            const reader = new FileReader();
+            await new Promise((resolve, reject) => {
+              reader.onload = async () => {
+                try {
+                  const textContent = reader.result;
+                  const res = await fetch("/kb/documents/upload-advanced", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      filename: f.name,
+                      raw_text: textContent,
+                      kb_type: kbType,
+                      split_mode: splitMode,
+                      validity_option: validityOption,
+                      valid_until: validUntil,
+                      uploader: RBAC_STATE.currentUser || "系统管理员"
+                    })
+                  });
+                  const d = await res.json();
+                  resolve(d);
+                } catch(err) { reject(err); }
+              };
+              reader.readAsText(f);
+            });
+          }
+        } else if (directText) {
+          await fetch("/kb/documents/upload-advanced", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              filename: "直接粘贴法规文档.txt",
+              raw_text: directText,
+              kb_type: kbType,
+              split_mode: splitMode,
+              validity_option: validityOption,
+              valid_until: validUntil,
+              uploader: RBAC_STATE.currentUser || "系统管理员"
+            })
+          });
+        }
+        showToast("🎉 文档已成功解析、切块入库并同步至混合检索库！");
+        closeImportModal();
+        await loadKbTree();
+        loadKbDocuments();
+      } catch (e) {
+        showToast("上传解析失败，已记录异常日志");
+      }
+    }
+
+    // ----------------- 文档加载、过滤、表格渲染与分页 -----------------
+    async function loadKbDocuments(kbType = null) {
+      try {
+        let url = "/kb/documents/advanced";
+        const currentTarget = (kbType !== null) ? kbType : (CURRENT_SELECTED_NODE ? CURRENT_SELECTED_NODE.path : "all");
+        if (currentTarget && currentTarget !== "all") {
+          url += `?kb_type=${encodeURIComponent(currentTarget)}`;
+        }
+        const res = await fetch(url);
         const data = await res.json();
         RBAC_STATE.kbDocuments = data.documents || [];
-        renderKbTable();
-        updateKbMaintenanceUI();
-      } catch (err) { console.error(err); }
+        filterAndRenderKbDocs();
+      } catch (err) {
+        console.error("加载文档列表失败:", err);
+      }
     }
 
-    function filterKbCategory(cat) {
-      RBAC_STATE.kbCategoryFilter = cat;
-      ["all", "internal", "external"].forEach(c => {
-        const el = document.getElementById(`kbNav-${c}`);
-        if (el) el.classList.toggle("active", c === cat);
-      });
-      loadKbDocuments();
-    }
-    function searchKbDocuments() {
-      const q = document.getElementById("filterKbDocName").value.trim().toLowerCase();
-      renderKbTable(RBAC_STATE.kbDocuments.filter(d => !q || d.name.toLowerCase().includes(q)));
-    }
-    function resetKbSearch() {
-      document.getElementById("filterKbDocName").value = "";
-      loadKbDocuments();
+    function filterAndRenderKbDocs() {
+      const q = (document.getElementById("filterKbDocName").value || "").trim().toLowerCase();
+      const status = document.getElementById("filterKbStatus").value;
+      const docType = document.getElementById("filterKbDocType").value;
+      const uploader = (document.getElementById("filterKbUploader").value || "").trim().toLowerCase();
+      const dept = (document.getElementById("filterKbDept").value || "").trim().toLowerCase();
+
+      let list = RBAC_STATE.kbDocuments || [];
+      if (q) list = list.filter(d => d.title && d.title.toLowerCase().includes(q));
+      if (status) list = list.filter(d => (d.doc_status || "已解析") === status);
+      if (docType) list = list.filter(d => (d.doc_format || "TXT").toUpperCase().includes(docType.toUpperCase()));
+      if (uploader) list = list.filter(d => d.uploader && d.uploader.toLowerCase().includes(uploader));
+      if (dept) list = list.filter(d => d.department && d.department.toLowerCase().includes(dept));
+
+      KB_PAGINATION.total = list.length;
+      const maxPage = Math.ceil(list.length / KB_PAGINATION.pageSize) || 1;
+      if (KB_PAGINATION.page > maxPage) KB_PAGINATION.page = maxPage;
+      if (KB_PAGINATION.page < 1) KB_PAGINATION.page = 1;
+
+      const start = (KB_PAGINATION.page - 1) * KB_PAGINATION.pageSize;
+      const pageDocs = list.slice(start, start + KB_PAGINATION.pageSize);
+
+      renderKbTable(pageDocs, list.length);
     }
 
-    function renderKbTable(docs = RBAC_STATE.kbDocuments) {
+    function renderKbTable(docs = [], totalCount = 0) {
       const tbody = document.getElementById("kbDocTableBody");
+      const emptyBox = document.getElementById("kbEmptyPlaceholder");
+      const totalSpan = document.getElementById("kbPaginationTotal");
+      const badge = document.getElementById("kbCurrentPageBadge");
+      const jumpInput = document.getElementById("kbJumpPageInput");
+
+      if (totalSpan) totalSpan.textContent = `共${totalCount}条`;
+      if (badge) badge.textContent = KB_PAGINATION.page;
+      if (jumpInput) jumpInput.value = KB_PAGINATION.page;
+
       tbody.innerHTML = "";
+      if (!docs || docs.length === 0) {
+        if (emptyBox) emptyBox.style.display = "block";
+        return;
+      }
+      if (emptyBox) emptyBox.style.display = "none";
 
-      const perm = RBAC_STATE.currentPermissions;
-      const isAdm = perm && perm.is_admin;
-      const kbs = perm ? perm.manageable_kbs : [];
-
-      docs.forEach(doc => {
-        const collId = doc.category_type === "internal" ? "internal_rules" : "default_external_laws";
-        const canManage = isAdm || kbs.includes("*") || kbs.includes(collId);
-
+      docs.forEach(d => {
         const tr = document.createElement("tr");
+        const valTag = d.validity_status === "有效" 
+          ? `<span style="background:#f6ffed; color:#52c41a; font-size:11px; padding:2px 8px; border-radius:4px; font-weight:600;">有效</span>`
+          : `<span style="background:#fff1f0; color:#f5222d; font-size:11px; padding:2px 8px; border-radius:4px; font-weight:600;">${d.validity_status}</span>`;
+
         tr.innerHTML = `
-          <td><strong>${doc.name}</strong></td>
-          <td>${doc.collection_name || '外规库'}</td>
-          <td>${doc.department || '总行'}</td>
-          <td>${doc.upload_date || '2026-11-03'}</td>
-          <td>${doc.segment_count || '12'}</td>
-          <td><span style="font-size:11px; padding:2px 8px; border-radius:4px; background:${canManage?'#f6ffed':'#fffbe6'}; color:${canManage?'#52c41a':'#d46b08'}; font-weight:600;">${canManage?'可维护写入':'仅只读'}</span></td>
+          <td><input type="checkbox" class="doc-chk" value="${d.doc_id}" /></td>
+          <td><strong style="color:var(--text-title);">${d.title}</strong></td>
+          <td>${d.kb_type || '外规知识库/法律法规'}</td>
+          <td>${d.department || '法律合规部'}</td>
+          <td>${(d.created_at || '').substring(0, 10) || '2026-11-04'}</td>
+          <td>${d.uploader || '执业律师'}</td>
+          <td>${d.doc_size || '12 KB'}</td>
+          <td><span style="background:#f0f2f5; padding:2px 6px; border-radius:3px; font-size:11px;">${d.doc_format || 'TXT'}</span></td>
+          <td><strong style="color:var(--primary);">${d.chunks_count || 1}</strong></td>
+          <td>${valTag}</td>
+          <td><span style="color:#52c41a; font-weight:500;">${d.doc_status || '已解析'}</span></td>
           <td>
-            <span class="table-action-link" style="color:#1890ff; cursor:pointer;" onclick="showToast('正在预览《${doc.name}》')">预览</span>
-            ${canManage ? `<span class="table-action-link danger" style="margin-left:8px; color:#f5222d; cursor:pointer;" onclick="showToast('已删除')">删除</span>` : '<span style="color:#bfbfbf; font-size:12px; margin-left:8px;">无删除权</span>'}
+            <span class="table-action-link" style="color:#1890ff; cursor:pointer;" onclick="previewDocChunks('${d.doc_id}', '${d.title}')">分段</span>
+            <span class="table-action-link danger" style="margin-left:8px; color:#f5222d; cursor:pointer;" onclick="deleteKbDoc('${d.doc_id}')">删除</span>
           </td>
         `;
         tbody.appendChild(tr);
       });
     }
 
-    function openImportModal() {
-      updateKbMaintenanceUI();
-      const perm = RBAC_STATE.currentPermissions;
-      const isAdm = perm && perm.is_admin;
-      const kbs = perm ? perm.manageable_kbs : [];
-      if (!isAdm && kbs.length === 0) {
-        showToast("⚠️ 权限拦截：您当前的角色未被授予知识库维护权限！");
-        return;
-      }
-      document.getElementById("importModal").classList.add("open");
+    function changeKbPageSize(sz) {
+      KB_PAGINATION.pageSize = parseInt(sz, 10) || 10;
+      KB_PAGINATION.page = 1;
+      filterAndRenderKbDocs();
     }
-    function closeImportModal() { document.getElementById("importModal").classList.remove("open"); }
+    function prevKbPage() {
+      if (KB_PAGINATION.page > 1) {
+        KB_PAGINATION.page--;
+        filterAndRenderKbDocs();
+      }
+    }
+    function nextKbPage() {
+      const maxPage = Math.ceil(KB_PAGINATION.total / KB_PAGINATION.pageSize) || 1;
+      if (KB_PAGINATION.page < maxPage) {
+        KB_PAGINATION.page++;
+        filterAndRenderKbDocs();
+      }
+    }
+    function jumpKbPage(val) {
+      const p = parseInt(val, 10);
+      const maxPage = Math.ceil(KB_PAGINATION.total / KB_PAGINATION.pageSize) || 1;
+      if (p >= 1 && p <= maxPage) {
+        KB_PAGINATION.page = p;
+        filterAndRenderKbDocs();
+      }
+    }
 
-    async function submitImportDocument() {
-      const name = document.getElementById("importLawName").value.trim();
-      const text = document.getElementById("importRawText").value.trim();
-      const coll = document.getElementById("importCollectionSelect").value;
-      if (!name || !text) { showToast("请填写完整法规内容"); return; }
+    async function deleteKbDoc(docId) {
+      if (!confirm("确认彻底删除该文档及全部条文分块吗？")) return;
+      try {
+        const res = await fetch(`/kb/documents/advanced/${docId}`, { method: "DELETE" });
+        const d = await res.json();
+        if (d.status === "ok") {
+          showToast("文档已彻底删除");
+          await loadKbTree();
+          loadKbDocuments();
+        }
+      } catch(e) { showToast("删除请求失败"); }
+    }
+
+    function previewDocChunks(docId, title) {
+      showToast(`正在打开《${title}》的条文切片视图...`);
+    }
+
+    function toggleSelectAllDocs(chk) {
+      document.querySelectorAll(".doc-chk").forEach(c => c.checked = chk);
+    }
+
+    function searchKbDocuments() {
+      KB_PAGINATION.page = 1;
+      filterAndRenderKbDocs();
+    }
+
+    function resetKbSearch() {
+      document.getElementById("filterKbDocName").value = "";
+      document.getElementById("filterKbStatus").value = "";
+      document.getElementById("filterKbDocType").value = "";
+      document.getElementById("filterKbUploader").value = "";
+      document.getElementById("filterKbDept").value = "";
+      KB_PAGINATION.page = 1;
+      loadKbDocuments();
+    }
+
+    function refreshKbTable() {
+      showToast("正在重新解析并刷新知识库...");
+      loadKbTree();
+      loadKbDocuments();
+    }
+
+    function downloadSelectedDocs() {
+      showToast("正在打包下载所选文档...");
+    }
+
+    async function deleteSelectedDocs() {
+      const checked = Array.from(document.querySelectorAll(".doc-chk:checked")).map(c => c.value);
+      if (checked.length === 0) { showToast("请先勾选需要删除的文档"); return; }
+      if (!confirm(`确认批量删除勾选的 ${checked.length} 个文档吗？`)) return;
+      await Promise.all(checked.map(id => fetch(`/kb/documents/advanced/${id}`, { method: "DELETE" })));
+      showToast("批量删除成功");
+      await loadKbTree();
+      loadKbDocuments();
+    }
+
+    // 模态框 2: 知识图谱离线构建
+    function openGraphBuilderModal() { document.getElementById("graphBuilderModal").classList.add("open"); }
+    function closeGraphBuilderModal() { document.getElementById("graphBuilderModal").classList.remove("open"); }
+    async function executeGraphExtraction() {
+      const law = document.getElementById("graphLawName").value.trim();
+      const art = document.getElementById("graphArticle").value.trim();
+      const content = document.getElementById("graphContent").value.trim();
+      const type = document.getElementById("graphExtractType").value;
+      if (!law || !content) { showToast("请填写法规名称与正文"); return; }
+      showToast("⏳ 正在执行离线引致关系与法理锚定抽取...");
+      const box = document.getElementById("graphResultBox");
+      box.style.display = "block";
+      box.innerHTML = "正在调用 LLM-Graph Builder 扫描法条依赖关系...";
 
       try {
-        const res = await fetch("/kb/import", {
+        const url = type === "interpretation" ? "/graph-builder/extract-interpretation" : "/graph-builder/extract";
+        const payload = type === "interpretation" 
+          ? { interpretation_name: law, article: art || "第1条", text_content: content }
+          : { law_name: law, article: art || "第1条", content: content, auto_propose: true };
+        const res = await fetch(url, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-User-Id": RBAC_STATE.currentUser
-          },
-          body: JSON.stringify({ law_name: name, raw_text: text, collection_id: coll })
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
         });
-        if (res.status === 403) {
-          const errData = await res.json();
-          showToast(`❌ 权限拒绝：${errData.detail || '无权维护该知识库'}`);
-          return;
-        }
-        showToast(`🎉 成功导入《${name}》到知识库 [${coll}]！`);
-        closeImportModal();
-        loadKbDocuments();
+        const d = await res.json();
+        const items = d.references || d.relations || [];
+        box.innerHTML = `<strong>🎉 成功提取 ${items.length} 条引致与锚定关系（已自动登记至待审规则提案表）：</strong><br/>` +
+          items.map(it => `• [${it.relation_type || it.relation}] ${it.target_law || it.anchor_law} ${it.target_article || it.anchor_article} (${it.reason || it.notes})`).join("<br/>");
       } catch (e) {
-        showToast("导入失败");
+        box.innerHTML = "抽取请求失败，请检查模型服务。";
       }
     }
 
-    function refreshKbTable() { loadKbDocuments(); }
+    // 模态框 3: 官方新旧对照录入
+    function openCounterpartsModal() { document.getElementById("counterpartsModal").classList.add("open"); }
+    function closeCounterpartsModal() { document.getElementById("counterpartsModal").classList.remove("open"); }
+    async function executeBatchImportCounterparts() {
+      showToast("⏳ 正在批量写入全国人大常委会法工委官方新旧对照表...");
+      try {
+        const res = await fetch("/counterparts/batch-import", { method: "POST", headers: { "Content-Type": "application/json" } });
+        const d = await res.json();
+        document.getElementById("counterpartsStatus").textContent = `🎉 ${d.message}`;
+        showToast(d.message);
+      } catch(e) {
+        showToast("录入失败");
+      }
+    }
+
+    // 模态框 4: 国家法规库监听
+    function openFlkCrawlerModal() { document.getElementById("flkCrawlerModal").classList.add("open"); }
+    function closeFlkCrawlerModal() { document.getElementById("flkCrawlerModal").classList.remove("open"); }
+    async function executeFlkSync() {
+      const logs = document.getElementById("flkSyncLogs");
+      logs.textContent = "正在连接国家法律法规数据库 (flk.npc.gov.cn)...\n查询最新修正案与废止公告...\n";
+      try {
+        const res = await fetch("/crawler/sync-flk", { method: "POST", headers: { "Content-Type": "application/json" } });
+        const d = await res.json();
+        logs.textContent += `[${d.sync_time}] 监听任务同步完成！\n`;
+        logs.textContent += `已更新废止法规: ${d.updated_laws_count} 部\n`;
+        (d.updated_laws || []).forEach(l => logs.textContent += `  ✓ ${l}\n`);
+        logs.textContent += `已生成条款项粒度修改日志: ${d.revision_logs_count} 条\n`;
+        (d.revision_logs || []).forEach(r => logs.textContent += `  ✓ ${r}\n`);
+        logs.textContent += "系统全局法规时效缓存已自动刷新生效！";
+        showToast("国家法规库时效公告同步完成！");
+        loadKbDocuments();
+      } catch(e) {
+        logs.textContent += "监听请求异常。";
+      }
+    }
 
     // 大模型配置
     let cachedPresets = {};

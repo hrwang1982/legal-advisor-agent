@@ -82,6 +82,20 @@ class Settings:
     )
     kb_db_path: str = os.getenv("KB_DB_PATH", "app/data/kb_vectors.db")
 
+    # —— 存储引擎扩展（MySQL + Elasticsearch 8.x 选配，缺省自动使用内置 SQLite + 内存 BM25+BGE-M3）——
+    storage_backend: str = os.getenv("STORAGE_BACKEND", "sqlite")  # mysql / sqlite
+    mysql_host: str = os.getenv("MYSQL_HOST", "localhost")
+    mysql_port: int = int(os.getenv("MYSQL_PORT", "3306"))
+    mysql_user: str = os.getenv("MYSQL_USER", "root")
+    mysql_password: str = os.getenv("MYSQL_PASSWORD", "")
+    mysql_database: str = os.getenv("MYSQL_DATABASE", "legal_advisor")
+
+    # —— Elasticsearch 8.x 混合检索配置 ——
+    es_enabled: bool = _bool(os.getenv("ES_ENABLED", "false"), False)
+    es_hosts: str = os.getenv("ES_HOSTS", "http://localhost:9200")
+    es_index: str = os.getenv("ES_INDEX", "legal_chunks")
+    es_api_key: str = os.getenv("ES_API_KEY", "")
+
     # —— 服务 ——
     host: str = os.getenv("HOST", "0.0.0.0")
     port: int = int(os.getenv("PORT", "8000"))

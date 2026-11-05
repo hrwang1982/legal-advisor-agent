@@ -102,6 +102,33 @@
           "reason": "该解释第65条明确以《民法典》第584条规定的损失作为违约金调减衡量基础"
         }
       ]
+    },
+    {
+      "source_law": "中华人民共和国劳动合同法",
+      "source_article": "第46条",
+      "targets": [
+        {
+          "target_law": "中华人民共和国劳动合同法",
+          "target_article": "第38条",
+          "reason": "正文明确规定依照本法第38条"
+        },
+        {
+          "target_law": "中华人民共和国劳动合同法",
+          "target_article": "第47条",
+          "reason": "正文明确规定依照本法第47条"
+        }
+      ]
+    },
+    {
+      "source_law": "测试法",
+      "source_article": "第1条",
+      "targets": [
+        {
+          "target_law": "测试法",
+          "target_article": "第2条",
+          "reason": "测试"
+        }
+      ]
     }
   ],
   "article_succession_list": [
@@ -712,5 +739,87 @@
       "token": "tk-partner-wang",
       "department": "公司与并购部"
     }
-  }
+  },
+  "new_old_counterparts": [
+    {
+      "current_law": "中华人民共和国公司法",
+      "current_article": "第47条",
+      "old_law": "中华人民共和国公司法（2018年修正）",
+      "old_article": "第26条",
+      "relation": "one_to_one",
+      "switch_date": "2024-07-01",
+      "diff_note": "有限责任公司认缴出资额由无期限认缴修改为成立之日起5年内缴足",
+      "authority": "全国人大常委会法制工作委员会"
+    },
+    {
+      "current_law": "中华人民共和国公司法",
+      "current_article": "第54条",
+      "old_law": "中华人民共和国公司法（2018年修正）",
+      "old_article": "第28条",
+      "relation": "one_to_one",
+      "switch_date": "2024-07-01",
+      "diff_note": "新增公司不能清偿到期债务时出资加速到期制度",
+      "authority": "全国人大常委会法制工作委员会"
+    },
+    {
+      "current_law": "中华人民共和国公司法",
+      "current_article": "第23条",
+      "old_law": "中华人民共和国公司法（2018年修正）",
+      "old_article": "第20条",
+      "relation": "one_to_one",
+      "switch_date": "2024-07-01",
+      "diff_note": "完善法人人格否认制度，增加横向法人人格否认（关联公司混同连带）",
+      "authority": "全国人大常委会法制工作委员会"
+    },
+    {
+      "current_law": "中华人民共和国民法典",
+      "current_article": "第577条",
+      "old_law": "中华人民共和国合同法",
+      "old_article": "第107条",
+      "relation": "one_to_one",
+      "switch_date": "2021-01-01",
+      "diff_note": "违约责任基本原则承继，条文文字无实质变动",
+      "authority": "全国人大常委会法制工作委员会"
+    },
+    {
+      "current_law": "中华人民共和国民法典",
+      "current_article": "第585条",
+      "old_law": "中华人民共和国合同法",
+      "old_article": "第114条",
+      "relation": "one_to_one",
+      "switch_date": "2021-01-01",
+      "diff_note": "违约金约定与调减规则承继",
+      "authority": "全国人大常委会法制工作委员会"
+    },
+    {
+      "current_law": "中华人民共和国民法典",
+      "current_article": "第563条",
+      "old_law": "中华人民共和国合同法",
+      "old_article": "第94条",
+      "relation": "one_to_one",
+      "switch_date": "2021-01-01",
+      "diff_note": "法定解除合同条件承继，并与违约责任体系衔接",
+      "authority": "全国人大常委会法制工作委员会"
+    },
+    {
+      "current_law": "中华人民共和国民法典",
+      "current_article": "第1191条",
+      "old_law": "中华人民共和国侵权责任法",
+      "old_article": "第34条",
+      "relation": "one_to_one",
+      "switch_date": "2021-01-01",
+      "diff_note": "用人单位工作人员执行工作任务造成他人损害的替代责任承继并细化追偿权",
+      "authority": "全国人大常委会法制工作委员会"
+    },
+    {
+      "current_law": "中华人民共和国行政处罚法",
+      "current_article": "第33条",
+      "old_law": "中华人民共和国行政处罚法（1996年版）",
+      "old_article": "第27条",
+      "relation": "one_to_one",
+      "switch_date": "2021-07-15",
+      "diff_note": "新增首违不罚（初次违法且危害后果轻微并及时改正的，可以不予行政处罚）与无主观过错不罚",
+      "authority": "全国人大常委会法制工作委员会"
+    }
+  ]
 }

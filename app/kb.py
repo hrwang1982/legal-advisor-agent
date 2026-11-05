@@ -388,6 +388,100 @@ class KnowledgeBaseStore:
             )
             """
         )
+        # 1. 法规文档总表 (对标「AI法盾」知识库管理列表)
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS law_documents (
+                doc_id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                kb_type TEXT NOT NULL DEFAULT '外规知识库/法律法规',
+                department TEXT DEFAULT '法律合规部',
+                uploader TEXT DEFAULT '系统管理员',
+                doc_size TEXT DEFAULT '0 KB',
+                doc_format TEXT DEFAULT 'TXT',
+                split_mode TEXT NOT NULL DEFAULT 'article',
+                chunks_count INTEGER DEFAULT 0,
+                validity_status TEXT DEFAULT '有效',
+                doc_status TEXT DEFAULT '已解析',
+                valid_until TEXT DEFAULT '',
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        # 2. 法规分块表 (支持自动、法条、文档分层三种模式)
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS law_chunks (
+                chunk_id TEXT PRIMARY KEY,
+                doc_id TEXT NOT NULL,
+                law_name TEXT NOT NULL,
+                chapter_path TEXT DEFAULT '',
+                article TEXT NOT NULL,
+                paragraph TEXT DEFAULT '',
+                content TEXT NOT NULL,
+                chunk_type TEXT NOT NULL,
+                parent_chunk_id TEXT DEFAULT '',
+                hierarchy TEXT NOT NULL,
+                effective_date TEXT DEFAULT '',
+                effective_to TEXT DEFAULT '',
+                validity TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                embedding_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        # 3. 条文粒度修正与生命周期追踪表
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS law_article_revision_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                law_name TEXT NOT NULL,
+                article TEXT NOT NULL,
+                paragraph TEXT DEFAULT '',
+                revision_type TEXT NOT NULL,
+                amendment_name TEXT NOT NULL,
+                effective_from TEXT NOT NULL,
+                effective_to TEXT DEFAULT '',
+                old_content TEXT DEFAULT '',
+                new_content TEXT NOT NULL,
+                diff_summary TEXT DEFAULT '',
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        # 4. 知识库与层级目录树表 (支持创建知识库、层级目录、改名、删除)
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS kb_tree_nodes (
+                node_id TEXT PRIMARY KEY,
+                parent_id TEXT NOT NULL DEFAULT '',
+                name TEXT NOT NULL,
+                node_type TEXT NOT NULL DEFAULT 'folder',
+                description TEXT DEFAULT '',
+                sort_order INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        # 预置初始层级知识库与目录（匹配「AI法盾」标准目录树）
+        default_nodes = [
+            ("kb_internal", "", "内规知识库", "kb", "企业内部规章制度与合规政策", 1),
+            ("kb_external", "", "外规知识库", "kb", "国家法律法规、司法解释与部委规章", 2),
+            ("folder_guideline", "kb_external", "指导性文件", "folder", "指导性案例与监管指引", 1),
+            ("folder_laws", "kb_external", "法律法规", "folder", "国家法律法规及司法解释", 2),
+            ("folder_other", "kb_external", "其他文件", "folder", "其他行业合规与外规参考", 3),
+            ("folder_hl_test", "kb_external", "hl_test", "folder", "测试合规分类", 4),
+        ]
+        now_ts = datetime.now(timezone.utc).isoformat()
+        for nid, pid, nname, ntype, ndesc, nsort in default_nodes:
+            cur.execute(
+                """
+                INSERT OR IGNORE INTO kb_tree_nodes (node_id, parent_id, name, node_type, description, sort_order, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (nid, pid, nname, ntype, ndesc, nsort, now_ts),
+            )
         # 确保默认集合存在
         now = datetime.now(timezone.utc).isoformat()
         cur.execute(
@@ -570,22 +664,538 @@ class KnowledgeBaseStore:
         return res
 
     def load_all_kb_rows(self) -> List[Dict[str, Any]]:
-        """加载动态知识库中存储的全部法规条文（含预计算的 embedding 向量）。"""
+        """加载动态知识库中存储的全部法规条文（含 kb_articles 与 law_chunks）。"""
         conn = self._conn()
         cur = conn.cursor()
-        cur.execute("SELECT metadata_json, embedding_json FROM kb_articles ORDER BY id ASC")
-        rows = cur.fetchall()
-        if self._mem_conn is None:
-            conn.close()
         out: List[Dict[str, Any]] = []
-        for meta_str, emb_str in rows:
+
+        # 1. 兼容原 kb_articles
+        cur.execute("SELECT metadata_json, embedding_json FROM kb_articles ORDER BY id ASC")
+        for meta_str, emb_str in cur.fetchall():
             try:
                 item = json.loads(meta_str)
                 item["_embedding"] = json.loads(emb_str)
                 out.append(item)
             except Exception:
                 continue
+
+        # 2. 载入 law_chunks (只取非 parent 的条文块，避免大块上下文与单条重复)
+        cur.execute("SELECT metadata_json, embedding_json FROM law_chunks WHERE chunk_type != 'hierarchical_parent' ORDER BY created_at ASC")
+        for meta_str, emb_str in cur.fetchall():
+            try:
+                item = json.loads(meta_str)
+                item["_embedding"] = json.loads(emb_str)
+                out.append(item)
+            except Exception:
+                continue
+
+        if self._mem_conn is None:
+            conn.close()
         return out
+
+    def import_advanced_document(
+        self,
+        filename: str,
+        content_bytes: Optional[bytes] = None,
+        raw_text: Optional[str] = None,
+        law_name: str = "",
+        kb_type: str = "外规知识库/法律法规",
+        department: str = "法律合规部",
+        uploader: str = "执业律师",
+        split_mode: str = "article",  # auto / article / hierarchical
+        validity_option: str = "permanent",  # permanent / custom
+        valid_until: str = "",
+        hierarchy: str = "法律",
+        promulgation_date: str = "",
+        effective_date: str = "",
+        host_law: str = "",
+    ) -> Dict[str, Any]:
+        """对标「AI法盾」企业级两步上传与三模式切分入库流水线：
+        1. 抽取纯文本
+        2. 根据 split_mode 执行切分算法 (自动 / 法条 / 分层)
+        3. 批量生成 BGE-M3 向量并写入 law_chunks
+        4. 同步至 Elasticsearch 8.x 混合索引库
+        5. 登记至 law_documents 文档列表
+        """
+        import uuid
+        from app.splitter import (
+            extract_text_from_file_bytes,
+            split_auto,
+            split_by_articles,
+            split_hierarchical,
+        )
+        from app.es_store import es_vector_store
+
+        text = ""
+        doc_size = "0 KB"
+        ext = (filename.rsplit(".", 1)[-1] if "." in filename else "TXT").upper()
+
+        if content_bytes is not None:
+            doc_size = f"{len(content_bytes) / 1024:.1f} KB"
+            text = extract_text_from_file_bytes(filename, content_bytes)
+        elif raw_text:
+            text = raw_text
+            doc_size = f"{len(raw_text.encode('utf-8')) / 1024:.1f} KB"
+
+        clean_law = (law_name or filename.rsplit(".", 1)[0]).strip().strip("《》")
+        doc_id = f"doc_{uuid.uuid4().hex[:12]}"
+        now = datetime.now(timezone.utc).isoformat()
+        val_status = "有效"
+        if valid_until and valid_until < datetime.now().strftime("%Y-%m-%d"):
+            val_status = "已过期"
+
+        # 根据分段模式执行切分
+        raw_chunks: List[Dict[str, Any]] = []
+        if split_mode == "auto":
+            raw_chunks = split_auto(text, doc_id=doc_id, law_name=clean_law)
+        elif split_mode == "hierarchical":
+            p_chunks, c_chunks = split_hierarchical(text, doc_id=doc_id, law_name=clean_law)
+            raw_chunks = p_chunks + c_chunks
+        else:  # article 模式
+            raw_chunks = split_by_articles(
+                text,
+                doc_id=doc_id,
+                law_name=clean_law,
+                hierarchy=hierarchy,
+                effective_date=effective_date,
+                effective_to=valid_until if validity_option == "custom" else "",
+                validity="现行有效" if val_status == "有效" else "已废止",
+            )
+
+        # 为分段批量计算 BGE-M3 稠密语义向量
+        texts_for_embed = [
+            f"{c.get('law_name', '')} {c.get('article', '')} {c.get('chapter_path', '')} {c.get('content', '')}"
+            for c in raw_chunks
+        ]
+        vectors, backend = self.embedder.embed_texts(texts_for_embed)
+
+        conn = self._conn()
+        cur = conn.cursor()
+
+        # 写入 law_documents 主表
+        cur.execute(
+            """
+            INSERT INTO law_documents (
+                doc_id, title, kb_type, department, uploader, doc_size, doc_format,
+                split_mode, chunks_count, validity_status, doc_status, valid_until, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                doc_id,
+                clean_law,
+                kb_type,
+                department,
+                uploader,
+                doc_size,
+                ext,
+                split_mode,
+                len(raw_chunks),
+                val_status,
+                "已解析",
+                valid_until if validity_option == "custom" else "",
+                now,
+            ),
+        )
+
+        # 准备分块写入 law_chunks
+        for c, vec in zip(raw_chunks, vectors):
+            meta = {
+                "law_name": clean_law,
+                "document_number": "",
+                "hierarchy": c.get("hierarchy", hierarchy),
+                "host_law": host_law,
+                "host_hierarchy": "法律" if hierarchy == "司法解释" else "",
+                "host_effective_date": "",
+                "promulgation_date": promulgation_date,
+                "effective_date": effective_date,
+                "article_effective_date": effective_date,
+                "effective_to": valid_until if validity_option == "custom" else "",
+                "validity": "现行有效" if val_status == "有效" else "已废止",
+                "superseded_by": "",
+                "article": c.get("article", "第1条"),
+                "paragraph": c.get("paragraph", ""),
+                "content": c.get("content", ""),
+                "source": "全国人民代表大会常务委员会" if hierarchy == "法律" else "最高人民法院",
+                "category": "民事",
+                "scope": "一般",
+                "norm_type": "judicial_interpretation" if hierarchy == "司法解释" else "substantive",
+                "partially_invalid": False,
+                "invalid_parts": "",
+                "trial": "试行" in clean_law or "暂行" in clean_law,
+                "verified": True,
+                "note": f"［{split_mode}切分］",
+            }
+            c["content_vector"] = vec
+            cur.execute(
+                """
+                INSERT INTO law_chunks (
+                    chunk_id, doc_id, law_name, chapter_path, article, paragraph, content,
+                    chunk_type, parent_chunk_id, hierarchy, effective_date, effective_to,
+                    validity, metadata_json, embedding_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    c["chunk_id"],
+                    doc_id,
+                    clean_law,
+                    c.get("chapter_path", ""),
+                    c.get("article", "第1条"),
+                    c.get("paragraph", ""),
+                    c.get("content", ""),
+                    c.get("chunk_type", "article"),
+                    c.get("parent_chunk_id", ""),
+                    hierarchy,
+                    effective_date,
+                    valid_until if validity_option == "custom" else "",
+                    meta["validity"],
+                    json.dumps(meta, ensure_ascii=False),
+                    json.dumps(vec),
+                    now,
+                ),
+            )
+
+        conn.commit()
+        if self._mem_conn is None:
+            conn.close()
+
+        # 同步写入 Elasticsearch 8.x
+        es_indexed_count = 0
+        if es_vector_store.ping():
+            es_vector_store.init_index(dims=len(vectors[0]) if vectors else 128)
+            es_indexed_count = es_vector_store.index_chunks(raw_chunks)
+
+        self.version_counter += 1
+        return {
+            "doc_id": doc_id,
+            "title": clean_law,
+            "split_mode": split_mode,
+            "chunks_count": len(raw_chunks),
+            "es_indexed": es_indexed_count > 0,
+            "embed_backend": backend,
+            "preview_chunks": [
+                {
+                    "chunk_id": c["chunk_id"],
+                    "article": c.get("article", ""),
+                    "chapter_path": c.get("chapter_path", ""),
+                    "chunk_type": c.get("chunk_type", ""),
+                    "content_preview": c["content"][:100] + ("..." if len(c["content"]) > 100 else ""),
+                }
+                for c in raw_chunks[:8]
+            ],
+        }
+
+    def get_node_path(self, node_id: str) -> str:
+        """递归获取节点的完整层级路径（如: '外规知识库/法律法规'）。"""
+        if not node_id:
+            return ""
+        conn = self._conn()
+        cur = conn.cursor()
+        parts = []
+        cur_id = node_id
+        while cur_id:
+            cur.execute("SELECT parent_id, name FROM kb_tree_nodes WHERE node_id = ?", (cur_id,))
+            row = cur.fetchone()
+            if not row:
+                break
+            p_id, n_name = row
+            parts.insert(0, n_name)
+            cur_id = p_id
+        if self._mem_conn is None:
+            conn.close()
+        return "/".join(parts)
+
+    def get_kb_tree(self) -> List[Dict[str, Any]]:
+        """获取层级知识库与目录树（含各级节点下的文档统计数）。"""
+        conn = self._conn()
+        cur = conn.cursor()
+        cur.execute("SELECT node_id, parent_id, name, node_type, description, sort_order, created_at FROM kb_tree_nodes ORDER BY sort_order ASC, created_at ASC")
+        rows = cur.fetchall()
+
+        cur.execute("SELECT kb_type, COUNT(*) FROM law_documents GROUP BY kb_type")
+        doc_counts = dict(cur.fetchall())
+        if self._mem_conn is None:
+            conn.close()
+
+        nodes_map: Dict[str, Dict[str, Any]] = {}
+        for r in rows:
+            nid, pid, nname, ntype, ndesc, nsort, ntime = r
+            nodes_map[nid] = {
+                "node_id": nid,
+                "parent_id": pid or "",
+                "name": nname,
+                "node_type": ntype,
+                "description": ndesc or "",
+                "sort_order": nsort,
+                "created_at": ntime,
+                "children": [],
+                "doc_count": 0,
+            }
+
+        for nid, node in nodes_map.items():
+            path_parts = []
+            cid = nid
+            while cid and cid in nodes_map:
+                path_parts.insert(0, nodes_map[cid]["name"])
+                cid = nodes_map[cid]["parent_id"]
+            node_path = "/".join(path_parts)
+            node["path"] = node_path
+            count = sum(cnt for kb_path, cnt in doc_counts.items() if kb_path == node_path or kb_path.startswith(node_path + "/"))
+            node["doc_count"] = count
+
+        tree: List[Dict[str, Any]] = []
+        for nid, node in nodes_map.items():
+            pid = node["parent_id"]
+            if not pid or pid not in nodes_map:
+                tree.append(node)
+            else:
+                nodes_map[pid]["children"].append(node)
+        return tree
+
+    def create_kb_tree_node(
+        self,
+        name: str,
+        parent_id: str = "",
+        node_type: str = "folder",
+        description: str = "",
+    ) -> Dict[str, Any]:
+        """创建知识库（parent_id 为空）或层级子目录。"""
+        import uuid
+        clean_name = (name or "").strip()
+        if not clean_name:
+            raise ValueError("知识库或目录名称不能为空")
+
+        nid = f"kb_{uuid.uuid4().hex[:10]}" if not parent_id else f"folder_{uuid.uuid4().hex[:10]}"
+        actual_type = "kb" if not parent_id else node_type
+        now_ts = datetime.now(timezone.utc).isoformat()
+
+        conn = self._conn()
+        cur = conn.cursor()
+        cur.execute("SELECT MAX(sort_order) FROM kb_tree_nodes WHERE parent_id = ?", (parent_id or "",))
+        max_sort = cur.fetchone()[0] or 0
+
+        cur.execute(
+            """
+            INSERT INTO kb_tree_nodes (node_id, parent_id, name, node_type, description, sort_order, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (nid, parent_id or "", clean_name, actual_type, description or "", max_sort + 1, now_ts),
+        )
+        conn.commit()
+        if self._mem_conn is None:
+            conn.close()
+
+        full_path = self.get_node_path(nid)
+        return {
+            "node_id": nid,
+            "parent_id": parent_id or "",
+            "name": clean_name,
+            "node_type": actual_type,
+            "path": full_path,
+            "description": description or "",
+        }
+
+    def rename_kb_tree_node(self, node_id: str, new_name: str) -> bool:
+        """重命名知识库或层级目录，并同步更新关联文档的 kb_type 路径。"""
+        clean_name = (new_name or "").strip()
+        if not clean_name:
+            raise ValueError("新名称不能为空")
+        old_path = self.get_node_path(node_id)
+
+        conn = self._conn()
+        cur = conn.cursor()
+        cur.execute("UPDATE kb_tree_nodes SET name = ? WHERE node_id = ?", (clean_name, node_id))
+        conn.commit()
+
+        new_path = self.get_node_path(node_id)
+        if old_path and new_path and old_path != new_path:
+            cur.execute(
+                "UPDATE law_documents SET kb_type = ? WHERE kb_type = ?",
+                (new_path, old_path),
+            )
+            cur.execute(
+                "UPDATE law_documents SET kb_type = ? || SUBSTR(kb_type, ?) WHERE kb_type LIKE ?",
+                (new_path, len(old_path) + 1, old_path + "/%"),
+            )
+            conn.commit()
+
+        if self._mem_conn is None:
+            conn.close()
+        return True
+
+    def delete_kb_tree_node(self, node_id: str) -> bool:
+        """删除知识库或层级目录（递归删除所有子目录和挂在该目录下的文档与切片）。"""
+        conn = self._conn()
+        cur = conn.cursor()
+
+        def _collect_descendants(nid: str) -> List[str]:
+            cur.execute("SELECT node_id FROM kb_tree_nodes WHERE parent_id = ?", (nid,))
+            children = [r[0] for r in cur.fetchall()]
+            all_ids = list(children)
+            for c in children:
+                all_ids.extend(_collect_descendants(c))
+            return all_ids
+
+        all_to_del = [node_id] + _collect_descendants(node_id)
+        node_path = self.get_node_path(node_id)
+
+        placeholders = ",".join("?" for _ in all_to_del)
+        cur.execute(f"DELETE FROM kb_tree_nodes WHERE node_id IN ({placeholders})", all_to_del)
+
+        if node_path:
+            cur.execute(
+                "SELECT doc_id FROM law_documents WHERE kb_type = ? OR kb_type LIKE ?",
+                (node_path, node_path + "/%"),
+            )
+            doc_ids = [r[0] for r in cur.fetchall()]
+            if doc_ids:
+                doc_placeholders = ",".join("?" for _ in doc_ids)
+                cur.execute(f"DELETE FROM law_documents WHERE doc_id IN ({doc_placeholders})", doc_ids)
+                cur.execute(f"DELETE FROM law_chunks WHERE doc_id IN ({doc_placeholders})", doc_ids)
+
+        conn.commit()
+        if self._mem_conn is None:
+            conn.close()
+        self.version_counter += 1
+        return True
+
+    def list_law_documents(self, kb_type: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        """获取法规文档列表（支持根据所属知识库或层级目录路径筛选）。"""
+        conn = self._conn()
+        cur = conn.cursor()
+        if kb_type and kb_type != "all":
+            clean_kb = kb_type.strip()
+            cur.execute(
+                """
+                SELECT doc_id, title, kb_type, department, uploader, doc_size, doc_format,
+                       split_mode, chunks_count, validity_status, doc_status, valid_until, created_at
+                FROM law_documents
+                WHERE kb_type = ? OR kb_type LIKE ?
+                ORDER BY created_at DESC LIMIT ?
+                """,
+                (clean_kb, clean_kb + "/%", limit),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT doc_id, title, kb_type, department, uploader, doc_size, doc_format,
+                       split_mode, chunks_count, validity_status, doc_status, valid_until, created_at
+                FROM law_documents
+                ORDER BY created_at DESC LIMIT ?
+                """,
+                (limit,),
+            )
+        rows = cur.fetchall()
+        if self._mem_conn is None:
+            conn.close()
+        cols = [
+            "doc_id", "title", "kb_type", "department", "uploader", "doc_size", "doc_format",
+            "split_mode", "chunks_count", "validity_status", "doc_status", "valid_until", "created_at",
+        ]
+        return [dict(zip(cols, r)) for r in rows]
+
+    def delete_law_document(self, doc_id: str) -> bool:
+        """删除指定法规文档及其所有条文分段。"""
+        conn = self._conn()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM law_documents WHERE doc_id = ?", (doc_id,))
+        cur.execute("DELETE FROM law_chunks WHERE doc_id = ?", (doc_id,))
+        conn.commit()
+        if self._mem_conn is None:
+            conn.close()
+        self.version_counter += 1
+        return True
+
+    def record_article_revision(
+        self,
+        law_name: str,
+        article: str,
+        amendment_name: str,
+        effective_from: str,
+        new_content: str,
+        effective_to: str = "",
+        paragraph: str = "",
+        revision_type: str = "修改",
+        old_content: str = "",
+        diff_summary: str = "",
+    ) -> int:
+        """记录细粒度（条、款、项）法律修改日志。"""
+        now = datetime.now(timezone.utc).isoformat()
+        conn = self._conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO law_article_revision_log (
+                law_name, article, paragraph, revision_type, amendment_name,
+                effective_from, effective_to, old_content, new_content, diff_summary, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                law_name.strip().strip("《》"),
+                normalize_article_id(article),
+                paragraph.strip(),
+                revision_type,
+                amendment_name,
+                effective_from,
+                effective_to,
+                old_content,
+                new_content,
+                diff_summary,
+                now,
+            ),
+        )
+        new_id = cur.lastrowid
+        conn.commit()
+        if self._mem_conn is None:
+            conn.close()
+        return new_id
+
+    def list_article_revisions(
+        self,
+        law_name: Optional[str] = None,
+        article: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """查询条文粒度的修改日志列表。"""
+        conn = self._conn()
+        cur = conn.cursor()
+        if law_name and article:
+            cur.execute(
+                """
+                SELECT id, law_name, article, paragraph, revision_type, amendment_name,
+                       effective_from, effective_to, old_content, new_content, diff_summary, created_at
+                FROM law_article_revision_log
+                WHERE law_name = ? AND article = ?
+                ORDER BY effective_from DESC
+                """,
+                (law_name.strip().strip("《》"), normalize_article_id(article)),
+            )
+        elif law_name:
+            cur.execute(
+                """
+                SELECT id, law_name, article, paragraph, revision_type, amendment_name,
+                       effective_from, effective_to, old_content, new_content, diff_summary, created_at
+                FROM law_article_revision_log
+                WHERE law_name = ?
+                ORDER BY effective_from DESC
+                """,
+                (law_name.strip().strip("《》"),),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT id, law_name, article, paragraph, revision_type, amendment_name,
+                       effective_from, effective_to, old_content, new_content, diff_summary, created_at
+                FROM law_article_revision_log
+                ORDER BY id DESC LIMIT 50
+                """
+            )
+        rows = cur.fetchall()
+        if self._mem_conn is None:
+            conn.close()
+        cols = [
+            "id", "law_name", "article", "paragraph", "revision_type", "amendment_name",
+            "effective_from", "effective_to", "old_content", "new_content", "diff_summary", "created_at",
+        ]
+        return [dict(zip(cols, r)) for r in rows]
 
     def delete_law(self, law_name: str, article: Optional[str] = None) -> int:
         """删除某部法规或某条具体条文。"""
@@ -596,9 +1206,17 @@ class KnowledgeBaseStore:
                 "DELETE FROM kb_articles WHERE law_name = ? AND article = ?",
                 (law_name.strip().strip("《》"), normalize_article_id(article)),
             )
+            cur.execute(
+                "DELETE FROM law_chunks WHERE law_name = ? AND article = ?",
+                (law_name.strip().strip("《》"), normalize_article_id(article)),
+            )
         else:
             cur.execute(
                 "DELETE FROM kb_articles WHERE law_name = ?",
+                (law_name.strip().strip("《》"),),
+            )
+            cur.execute(
+                "DELETE FROM law_chunks WHERE law_name = ?",
                 (law_name.strip().strip("《》"),),
             )
         deleted = cur.rowcount

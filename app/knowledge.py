@@ -98,20 +98,48 @@ class KnowledgeCenter:
     # ————————————————————————————————————————————————
     def get_cross_reference_graph(self) -> Dict[Tuple[str, str], List[Tuple[str, str, str]]]:
         data = self._ensure_loaded()
-        raw_list = data.get("cross_reference_graph") or []
+        raw_val = data.get("cross_reference_graph") or []
         graph: Dict[Tuple[str, str], List[Tuple[str, str, str]]] = {}
-        for item in raw_list:
+
+        if isinstance(raw_val, dict):
+            for k, targets in raw_val.items():
+                if "|" in str(k):
+                    s_law, s_art = str(k).split("|", 1)
+                elif isinstance(k, tuple) and len(k) >= 2:
+                    s_law, s_art = k[0], k[1]
+                else:
+                    continue
+                t_list = []
+                for t in targets or []:
+                    if isinstance(t, dict):
+                        t_law = (t.get("target_law") or "").strip()
+                        t_art = (t.get("target_article") or "").strip()
+                        reason = (t.get("reason") or "").strip()
+                        if t_law and t_art:
+                            t_list.append((t_law, t_art, reason))
+                    elif isinstance(t, (list, tuple)) and len(t) >= 3:
+                        t_list.append((t[0], t[1], t[2]))
+                if t_list:
+                    graph[(s_law, s_art)] = t_list
+            return graph
+
+        for item in raw_val:
+            if not isinstance(item, dict):
+                continue
             s_law = (item.get("source_law") or "").strip()
             s_art = (item.get("source_article") or "").strip()
             if not s_law or not s_art:
                 continue
             targets: List[Tuple[str, str, str]] = []
             for t in item.get("targets") or []:
-                t_law = (t.get("target_law") or "").strip()
-                t_art = (t.get("target_article") or "").strip()
-                reason = (t.get("reason") or "").strip()
-                if t_law and t_art:
-                    targets.append((t_law, t_art, reason))
+                if isinstance(t, dict):
+                    t_law = (t.get("target_law") or "").strip()
+                    t_art = (t.get("target_article") or "").strip()
+                    reason = (t.get("reason") or "").strip()
+                    if t_law and t_art:
+                        targets.append((t_law, t_art, reason))
+                elif isinstance(t, (list, tuple)) and len(t) >= 3:
+                    targets.append((t[0], t[1], t[2]))
             graph[(s_law, s_art)] = targets
         return graph
 

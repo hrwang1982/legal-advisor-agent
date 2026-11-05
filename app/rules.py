@@ -366,6 +366,26 @@ def locate_article(
     law_f = _parse(effective_from)
     art_f = _parse(article_effective_from)
     f = art_f or law_f
+
+    # 7. 条文修正日志穿透检查（若存在条款项级独立修正记录，精准对齐修正生效日）
+    try:
+        from app.kb import kb_store, normalize_article_id
+        # 从 name 中提取法规名与条号，例如 《公司法》第142条
+        m_name = re.search(r"《?([^》]+)》?\s*(第[零〇一二两三四五六七八九十百千0-9]+条)", name)
+        if m_name:
+            t_law, t_art = m_name.group(1).strip(), normalize_article_id(m_name.group(2).strip())
+            revs = kb_store.list_article_revisions(t_law, t_art)
+            if revs:
+                # 找到与当前候选条文最匹配的修正日志生效日期
+                matched_rev = revs[0]
+                rev_from = _parse(matched_rev.get("effective_from"))
+                if rev_from and (art_f is None or rev_from == art_f):
+                    f = rev_from
+                    if not effective_to and matched_rev.get("effective_to"):
+                        effective_to = matched_rev.get("effective_to")
+    except Exception:
+        pass
+
     if f is None:
         return RuleOutcome(
             status=RuleStatus.PARTIAL,
