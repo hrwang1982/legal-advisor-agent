@@ -1,0 +1,130 @@
+{
+  "roles": [
+    {
+      "role_id": "admin",
+      "role_name": "系统管理员",
+      "description": "拥有全局最高权限，可访问所有菜单并维护所有知识库",
+      "is_system": true,
+      "menus": [
+        "*"
+      ],
+      "kb_permissions": [
+        "*"
+      ]
+    },
+    {
+      "role_id": "compliance_officer",
+      "role_name": "合规法务专家",
+      "description": "负责合规审核、业务规则维护及内外部规章制度维护",
+      "is_system": true,
+      "menus": [
+        "menu:qa",
+        "menu:kb",
+        "menu:rules",
+        "menu:stats",
+        "menu:audit"
+      ],
+      "kb_permissions": [
+        "default_external_laws",
+        "internal_rules"
+      ]
+    },
+    {
+      "role_id": "kb_editor",
+      "role_name": "知识库运维专员",
+      "description": "专注于外部法规文档的导入、向量化切片与解析校验",
+      "is_system": true,
+      "menus": [
+        "menu:qa",
+        "menu:kb"
+      ],
+      "kb_permissions": [
+        "default_external_laws"
+      ]
+    },
+    {
+      "role_id": "lawyer",
+      "role_name": "执业审核律师",
+      "description": "负责人在环咨询意见书审核、执业证注册表校验与审计追溯",
+      "is_system": true,
+      "menus": [
+        "menu:qa",
+        "menu:stats",
+        "menu:audit"
+      ],
+      "kb_permissions": []
+    },
+    {
+      "role_id": "user",
+      "role_name": "普通业务人员",
+      "description": "普通员工，仅具有智能问答与检索查阅权限，无管理维护权",
+      "is_system": true,
+      "menus": [
+        "menu:qa"
+      ],
+      "kb_permissions": []
+    }
+  ],
+  "users": [
+    {
+      "user_id": "u1001",
+      "username": "admin",
+      "name": "张合伙人",
+      "department": "管理委员会",
+      "license_no": "11101201010888888",
+      "roles": [
+        "admin"
+      ],
+      "status": "active",
+      "created_at": "2026-11-01T08:00:00Z"
+    },
+    {
+      "user_id": "u1002",
+      "username": "li_compliance",
+      "name": "李合规",
+      "department": "法务合规部",
+      "license_no": "13101201810012345",
+      "roles": [
+        "compliance_officer"
+      ],
+      "status": "active",
+      "created_at": "2026-11-02T09:30:00Z"
+    },
+    {
+      "user_id": "u1003",
+      "username": "wang_editor",
+      "name": "王知识",
+      "department": "知识资产管理中心",
+      "license_no": "EMP-205",
+      "roles": [
+        "kb_editor"
+      ],
+      "status": "active",
+      "created_at": "2026-11-02T10:15:00Z"
+    },
+    {
+      "user_id": "u1004",
+      "username": "zhang_lawyer",
+      "name": "赵律师",
+      "department": "金融商事业务部",
+      "license_no": "13101201910056789",
+      "roles": [
+        "lawyer"
+      ],
+      "status": "active",
+      "created_at": "2026-11-03T14:20:00Z"
+    },
+    {
+      "user_id": "u1005",
+      "username": "chen_user",
+      "name": "陈员工",
+      "department": "零售金融部",
+      "license_no": "EMP-908",
+      "roles": [
+        "user"
+      ],
+      "status": "active",
+      "created_at": "2026-11-04T08:00:00Z"
+    }
+  ]
+}

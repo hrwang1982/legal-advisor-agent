@@ -1,0 +1,24 @@
+services:
+  legal-advisor:
+    build: .
+    image: legal-advisor-agent:latest
+    container_name: legal-advisor-agent
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app:/app/app
+    environment:
+      # 默认 MOCK 模式，无需任何密钥即可 docker compose up 跑通演示
+      MOCK: "true"
+      TOP_K: "5"
+      EMBED_ENABLED: "true"
+      EMBED_MODEL: "BAAI/bge-m3"
+      # —— 接入真实大模型（支持通义千问 Qwen / 本地 Ollama·vLLM / DeepSeek OpenAI兼容接口）——
+      # MOCK: "false"
+      # LLM_PROVIDER: "qwen"
+      # LLM_API_KEY: "${LLM_API_KEY}"
+      # LLM_API_BASE: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+      # LLM_MODEL: "qwen-plus"
+      # EMBED_API_BASE: "http://host.docker.internal:11434/v1"
+      # EMBED_MODEL: "BAAI/bge-m3"
+    restart: unless-stopped
