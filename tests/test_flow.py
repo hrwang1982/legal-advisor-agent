@@ -192,7 +192,32 @@ def test_pipeline():
     assert first_tr.confidence_score > 0, "溯源匹配度分数应大于0"
     assert first_tr.highlight_snippet, "溯源条目应定位出法条原文的高亮支撑片段"
 
-    print("✅ 核心链路与 P0/P1/P2 全部 9 大专项场景（含 ks-lma-chat 融合特性）测试通过")
+    # 10) 「不使用知识库」专项测试：跳过知识库检索，纯由大模型直接生成答复
+    from app.graph import graph
+    for no_kb_val in ("none", "不使用知识库"):
+        no_kb_state = run_full_state({
+            "query": "客户通过手机银行购买高风险理财产品需要做哪些额外测试",
+            "kb_scope": no_kb_val,
+        })
+        assert no_kb_state.get("retrieved") == [], "不使用知识库时应完全跳过检索，retrieved 应为空"
+        assert no_kb_state.get("ranked") == [], "不使用知识库时 ranked 应为空"
+        assert no_kb_state.get("structured_queries") == {}, "不使用知识库时不应生成三维检索式"
+        assert no_kb_state["rule_plan"]["mode"] == "direct_llm", "不使用知识库时模式应标记为 direct_llm"
+        no_kb_fo = no_kb_state.get("final_output")
+        assert no_kb_fo is not None and no_kb_fo.citations == [], "不使用知识库时第一层引用必须为空"
+        assert no_kb_fo.answer and "未找到与您问题直接对应" not in no_kb_fo.answer, "不使用知识库时应由大模型直接生成答复，不得返回未找到条文提示"
+
+    cfg_no_kb = {"configurable": {"thread_id": "test-no-kb-graph"}}
+    graph.invoke({"query": "对方违约不交货怎么办？", "kb_scope": "none"}, cfg_no_kb)
+    g_state = graph.get_state(cfg_no_kb).values
+    assert g_state["rule_plan"]["mode"] == "direct_llm", "LangGraph 路由应在 kb_scope=none 时直达 synthesize"
+    assert g_state["final_output"].citations == [], "LangGraph 路由在 kb_scope=none 时不返回知识库条文"
+    assert "【一、" not in g_state["final_output"].answer, "不使用知识库时不得输出法律助手的六段式或章节框架"
+    assert "【二、" not in g_state["final_output"].answer, "不使用知识库时不得输出法律助手的法理分析框架"
+    assert len(g_state["final_output"].answer) > 20, "LangGraph 路由在 kb_scope=none 时应直接生成大模型答复"
+    assert not g_state["final_output"].disclaimer, "不使用知识库时不得输出法律助手的免责声明"
+
+    print("✅ 核心链路与 P0/P1/P2 全部 10 大专项场景（含 ks-lma-chat 融合特性与不使用知识库直连生成）测试通过")
 
 
 if __name__ == "__main__":

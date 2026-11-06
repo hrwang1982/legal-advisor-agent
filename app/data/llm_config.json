@@ -1,0 +1,18 @@
+{
+  "mock": false,
+  "llm_provider": "qwen",
+  "llm_api_base": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  "llm_model": "qwen3.8-flash",
+  "llm_api_key": "sk-56cfaaa8be4b45c1aa047a74a6762dc0",
+  "llm_temperature": 0.0,
+  "llm_timeout": 30.0,
+  "llm_max_retries": 2,
+  "embed_enabled": true,
+  "embed_api_base": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  "embed_model": "BAAI/bge-m3",
+  "embed_api_key": "",
+  "embed_dim": 1024,
+  "hybrid_dense_weight": 0.45,
+  "strict_review_auth": false,
+  "top_k": 5
+}

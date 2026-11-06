@@ -39,6 +39,7 @@ from app.knowledge import knowledge_center
 from app.llm import (
     decompose_query,
     generate_answer,
+    generate_direct_llm_answer,
     generate_structured_queries,
     get_and_clear_last_llm_error,
     rewrite_queries,
@@ -108,11 +109,44 @@ def _ensure_fact_summary(state: AgentState) -> Dict:
     return summary.to_dict()
 
 
+def _is_no_kb(state: AgentState) -> bool:
+    """判断当前是否选中了「不使用知识库」模式。"""
+    kb_scope = str(state.get("kb_scope") or "").strip().lower()
+    return kb_scope in ("none", "不使用知识库", "no_kb")
+
+
 # 0) 事实要素抽取 + 合规安全检查（P0 事实层 + P2 PII脱敏与利益冲突检索）
 def extract_facts_node(state: AgentState) -> Dict:
     raw_query = state.get("query", "")
     masked_q, pii_types = mask_pii(raw_query)
     coi = check_conflict_of_interest(raw_query)
+
+    # 若选中「不使用知识库」，纯由大模型直接答复，跳过耗时的法律案由要件推演与大模型推导
+    if _is_no_kb(state):
+        act_d = state.get("act_date") or date.today().isoformat()
+        return {
+            "masked_query": masked_q,
+            "compliance_info": {
+                "pii_masked": bool(pii_types),
+                "pii_types": pii_types,
+                "has_conflict": coi.get("has_conflict", False),
+                "entities": coi.get("entities", []),
+                "conflicts": coi.get("conflicts", []),
+            },
+            "fact_summary": {
+                "act_date": act_d,
+                "act_end_date": state.get("act_end_date") or "",
+                "act_date_source": "assumed_today",
+                "date_granularity": "none",
+                "is_continuous": False,
+                "region": state.get("region") or "",
+                "case_types": ["通用问答与咨询"],
+                "extracted_facts": [],
+                "missing_facts": [],
+                "clarification_questions": [],
+                "procedural_notes": [],
+            },
+        }
 
     summary = analyze_facts(
         masked_q,
@@ -143,12 +177,17 @@ def extract_facts_node(state: AgentState) -> Dict:
 # 1) 问题拆解（优先使用脱敏后文本防止敏感信息外发）
 def decompose(state: AgentState) -> Dict:
     q = state.get("masked_query") or state["query"]
+    if _is_no_kb(state):
+        return {"decomposed": [q]}
     subs = decompose_query(q)
     return {"decomposed": subs}
 
 
 # 2) 问题改写与三维检索式生成（融合 ks-lma-chat 检索理念）
 def rewrite(state: AgentState) -> Dict:
+    if _is_no_kb(state):
+        return {"rewritten_queries": [], "structured_queries": {}}
+
     queries: List[str] = []
     for sub in state.get("decomposed", []):
         queries.extend(rewrite_queries(sub))
@@ -175,6 +214,9 @@ def rewrite(state: AgentState) -> Dict:
 
 # 3) RAG 混合检索（BM25 + 概念扩展 + P1 引致条款图谱扩展 + P1 新旧法条文对照回填）
 def retrieve(state: AgentState) -> Dict:
+    if _is_no_kb(state):
+        return {"retrieved": []}
+
     nodes = load_nodes()
     node_index: Dict[Tuple[str, str, str], object] = {}
     for n in nodes:
@@ -185,7 +227,47 @@ def retrieve(state: AgentState) -> Dict:
         )
         node_index[k] = n
 
-    retriever = build_retriever(nodes)
+    # 支持知识库范围筛选（支持全库、不使用知识库、自定义多知识库/多文档）
+    kb_scope = (state.get("kb_scope") or "all").strip()
+    active_nodes = nodes
+    if kb_scope in ("none", "不使用知识库"):
+        active_nodes = []
+    elif kb_scope and kb_scope not in ("all", "全部知识库", "自由交互识别范围"):
+        import json
+        scopes = []
+        if kb_scope.startswith("[") and kb_scope.endswith("]"):
+            try:
+                scopes = json.loads(kb_scope)
+            except Exception:
+                scopes = [s.strip(" '\"") for s in kb_scope.strip("[]").split(",") if s.strip()]
+        else:
+            scopes = [s.strip(" '\"") for s in kb_scope.replace(";", ",").split(",") if s.strip()]
+
+        if scopes:
+            scoped = []
+            for n in nodes:
+                kb_t = n.metadata.get("kb_type") or ""
+                cat = n.metadata.get("category") or ""
+                doc_title = n.metadata.get("document_name") or n.metadata.get("law_name") or ""
+                matched = False
+                for sc in scopes:
+                    if not sc:
+                        continue
+                    if sc in kb_t or kb_t.startswith(sc) or sc == doc_title or sc in doc_title:
+                        matched = True
+                        break
+                    if sc == "内规知识库" and "内规" in cat:
+                        matched = True
+                        break
+                    if sc.startswith("外规知识库") and "内规" not in cat:
+                        matched = True
+                        break
+                if matched:
+                    scoped.append(n)
+            if scoped:
+                active_nodes = scoped
+
+    retriever = build_retriever(active_nodes)
     collected: Dict[Tuple[str, str, str], Citation] = {}
     for q in state.get("rewritten_queries", []):
         for r in retriever.retrieve(q):
@@ -238,6 +320,9 @@ def retrieve(state: AgentState) -> Dict:
 
 # 4) 有效性校验（时间感知）：只打标留痕，不提前删除失效条文
 def validate(state: AgentState) -> Dict:
+    if _is_no_kb(state):
+        return {"validated": [], "validation_notes": []}
+
     notes: List[str] = []
     kept: List[Citation] = []
     for c in state.get("retrieved", []):
@@ -270,6 +355,9 @@ def validate(state: AgentState) -> Dict:
 
 # 5) 重排（多子问题 Max-Pooling 相关性精排 + 相关性阈值过滤噪声）
 def rerank_node(state: AgentState) -> Dict:
+    if _is_no_kb(state):
+        return {"reranked": [], "rerank_scores": []}
+
     candidates = state.get("validated", [])
     sub_queries = state.get("decomposed") or []
     scored = rerank(state["query"], candidates, sub_queries=sub_queries)
@@ -283,6 +371,9 @@ def rerank_node(state: AgentState) -> Dict:
 
 # 6) 位阶排序
 def rank_hierarchy(state: AgentState) -> Dict:
+    if _is_no_kb(state):
+        return {"ranked": []}
+
     items = state.get("reranked") or state.get("validated", [])
     ranked = sorted(items, key=lambda c: (c.rank(), -c.rerank_score, -c.score))
     return {"ranked": ranked}
@@ -309,6 +400,27 @@ def _are_successor_laws(a: Citation, b: Citation) -> bool:
 
 # 7) 规则判定：事实前提核验 + 合规利益冲突核验 + 条文级时空效力过滤 + 冲突识别与位阶裁决
 def rules_node(state: AgentState) -> Dict:
+    if _is_no_kb(state):
+        fs = _ensure_fact_summary(state)
+        act_date = state.get("act_date") or fs.get("act_date") or date.today().isoformat()
+        return {
+            "act_date": act_date,
+            "fact_summary": fs,
+            "ranked": [],
+            "rule_plan": {
+                "mode": "direct_llm",
+                "status": "HIT",
+                "confidence": "B",
+                "review": ReviewLevel.SAMPLE.value,
+                "llm_callable": True,
+                "reason": "已选择「不使用知识库」，跳过知识库检索，纯由大模型直接生成答复",
+                "constraints": [],
+                "verify_actions": [],
+            },
+            "rule_notes": ["模式说明：已选中「不使用知识库」，跳过知识库检索，纯由大模型直接生成答复。"],
+            "precedence": [],
+        }
+
     cites = state.get("ranked", [])
     fs = _ensure_fact_summary(state)
     comp = state.get("compliance_info") or {}
@@ -739,6 +851,56 @@ def post_verify_answer(
 
 # 8) 两层结构合成：第一层=引用（真实可追溯），第二层=六段式分析 + 三重后验校验 + AI 合规标识
 def synthesize(state: AgentState) -> Dict:
+    if _is_no_kb(state):
+        raw_q = state.get("query", "") or state.get("masked_query", "")
+        deep_thinking = state.get("deep_thinking", True)
+        history = state.get("history") or []
+        direct_answer = generate_direct_llm_answer(
+            raw_q,
+            history=history,
+            feedback=state.get("human_feedback"),
+            fact_summary=None,
+            deep_thinking=bool(deep_thinking),
+        )
+        plan = dict(
+            state.get("rule_plan")
+            or {
+                "mode": "direct_llm",
+                "status": "DIRECT_LLM",
+                "confidence": "A",
+                "review": ReviewLevel.SAMPLE.value,
+                "llm_callable": True,
+                "reason": "已选择「不使用知识库」，直接提交大模型回答，不走任何法律助手的规则和输出框架",
+                "constraints": [],
+                "verify_actions": [],
+            }
+        )
+        rule_notes = list(
+            state.get("rule_notes")
+            or ["模式说明：已选中「不使用知识库」，直接将输入框内容提交给大模型回答（不走法律助手的规则和输出框架）。"]
+        )
+        llm_err = get_and_clear_last_llm_error()
+        if llm_err:
+            rule_notes.append(f"LLM调用回退说明：{llm_err}")
+        return {
+            "final_output": TwoLayerAnswer(
+                citations=[],
+                answer=direct_answer,
+                sentence_traces=[],
+                structured_queries={},
+                missing_facts=[],
+                clarification_questions=[],
+                procedural_notes=[],
+                disclaimer="",
+                suggested_citations=[],
+            ),
+            "sentence_traces": [],
+            "structured_queries": {},
+            "rule_plan": plan,
+            "rule_notes": rule_notes,
+            "answer_confidence": "A",
+        }
+
     cites = state.get("ranked", [])
     plan = dict(state.get("rule_plan") or {})
     mode = plan.get("mode", "deterministic")
@@ -796,7 +958,8 @@ def synthesize(state: AgentState) -> Dict:
     llm_err = get_and_clear_last_llm_error()
     if llm_err:
         post_notes.append(f"LLM调用告警：外部模型调用异常（{llm_err}），已降级为规则骨架兜底并强制人工必审。")
-        plan["review"] = ReviewLevel.MUST.value
+        if plan.get("review") in (None, ReviewLevel.SAMPLE.value):
+            plan["review"] = ReviewLevel.MUST.value
         if plan.get("confidence") == Confidence.A.value:
             plan["confidence"] = Confidence.B.value
 

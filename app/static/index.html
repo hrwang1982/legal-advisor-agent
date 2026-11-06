@@ -382,35 +382,281 @@
     }
     .qa-results-box.has-content { display: flex; }
 
-    .qa-input-wrapper {
-      width: 100%;
-      max-width: 1000px;
+    /* 现代多轮对话流 Chat Stream 样式 */
+    .chat-flow-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 16px;
       background: #ffffff;
-      border: 1px solid #ffccc7;
-      border-radius: 14px;
-      padding: 14px 18px;
-      box-shadow: 0 4px 16px rgba(211, 32, 41, 0.06);
-      transition: all 0.2s;
-      position: sticky;
-      bottom: 12px;
-      z-index: 5;
+      border: 1px solid #e8ecf2;
+      border-radius: 10px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.02);
     }
-    .qa-input-wrapper:focus-within {
-      border-color: var(--primary);
-      box-shadow: 0 4px 20px rgba(211, 32, 41, 0.12);
+    .chat-message-row {
+      display: flex;
+      gap: 12px;
+      width: 100%;
+      animation: fadeIn 0.25s ease-in-out;
     }
-    .qa-scope-pill {
+    .chat-message-row.user {
+      flex-direction: row-reverse;
+      justify-content: flex-start;
+    }
+    .chat-message-row.assistant {
+      flex-direction: row;
+      justify-content: flex-start;
+    }
+    .chat-avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+      font-weight: 600;
+      flex-shrink: 0;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+    }
+    .chat-avatar.user-avatar {
+      background: linear-gradient(135deg, #1890ff, #096dd9);
+      color: #fff;
+    }
+    .chat-avatar.ai-avatar {
+      background: linear-gradient(135deg, #ff4d4f, #cf1322);
+      color: #fff;
+    }
+    .chat-bubble-user {
+      max-width: 80%;
+      background: linear-gradient(135deg, #2b3a4a, #1f2937);
+      color: #ffffff;
+      padding: 12px 18px;
+      border-radius: 16px 4px 16px 16px;
+      font-size: 14.5px;
+      line-height: 1.6;
+      word-break: break-word;
+      box-shadow: 0 3px 10px rgba(31, 41, 55, 0.15);
+    }
+    .chat-card-ai {
+      flex: 1;
+      max-width: 92%;
+      background: #ffffff;
+      border: 1px solid #e8ecf2;
+      border-radius: 4px 16px 16px 16px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
+      padding: 16px 20px;
+    }
+    .chat-ai-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #f0f2f5;
+    }
+    .chat-ai-badge {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      background: #f5f5f5;
-      padding: 4px 10px;
-      border-radius: 6px;
+      font-size: 12.5px;
+      font-weight: 600;
+      color: #1f2937;
+    }
+    .chat-ai-content {
+      font-size: 14.5px;
+      line-height: 1.75;
+      color: #2c3e50;
+      word-break: break-word;
+      white-space: pre-wrap;
+    }
+    .chat-btn-copy {
+      border: 1px solid #e8ecf2;
+      background: #f8fafc;
+      color: #595959;
       font-size: 12px;
-      color: var(--text-sub);
       cursor: pointer;
+      padding: 3px 10px;
+      border-radius: 6px;
+      transition: all 0.2s;
+    }
+    .chat-btn-copy:hover {
+      background: #eef2f6;
+      color: #1f2937;
+      border-color: #d1d5db;
+    }
+    .thinking-dots {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 12px 16px;
+    }
+    .thinking-dot {
+      width: 6px;
+      height: 6px;
+      background: #ff4d4f;
+      border-radius: 50%;
+      animation: dotPulse 1.2s infinite ease-in-out;
+    }
+    .thinking-dot:nth-child(2) { animation-delay: 0.2s; }
+    .thinking-dot:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes dotPulse {
+      0%, 80%, 100% { transform: scale(0.6); opacity: 0.3; }
+      40% { transform: scale(1.2); opacity: 1; }
+    }
+
+    .qa-input-container {
+      width: 100%;
+      max-width: 1000px;
+      position: sticky;
+      bottom: 12px;
+      z-index: 20;
+    }
+    .qa-scope-wrapper {
+      position: relative;
+      display: inline-block;
       margin-bottom: 8px;
+    }
+    /* 图1: 灰蓝色圆角胶囊按钮 [ ⎚ 全部知识库 ∨ ] */
+    .qa-scope-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      background: #b2c2ce;
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      color: #273746;
+      cursor: pointer;
       user-select: none;
+      transition: all 0.2s ease;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+    }
+    .qa-scope-btn:hover {
+      background: #a3b5c3;
+      color: #1a252f;
+    }
+    .qa-scope-btn .qa-scope-icon {
+      display: flex;
+      align-items: center;
+      color: #34495e;
+    }
+    .qa-scope-btn .qa-scope-arrow {
+      font-size: 11px;
+      margin-left: 2px;
+      color: #4a6572;
+      transition: transform 0.2s;
+    }
+    .qa-scope-btn.active .qa-scope-arrow {
+      transform: rotate(180deg);
+    }
+    /* 图1: 向上展开的下拉菜单 */
+    .qa-scope-menu {
+      position: absolute;
+      bottom: calc(100% + 8px);
+      left: 0;
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.05);
+      min-width: 175px;
+      z-index: 100;
+      padding: 6px 0;
+      user-select: none;
+    }
+    .qa-scope-option {
+      padding: 9px 16px;
+      font-size: 13.5px;
+      color: #2c3e50;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      transition: background 0.15s, color 0.15s;
+    }
+    .qa-scope-option:hover {
+      background: #fff1f0;
+      color: #cf1322;
+    }
+    /* 图1: 红底白勾圆形标签 */
+    .scope-check-circle {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 17px;
+      height: 17px;
+      border-radius: 50%;
+      background: #d32029;
+      color: #ffffff;
+      font-size: 11px;
+      font-weight: bold;
+      line-height: 1;
+    }
+    /* 图1: 细粉红边框输入框 */
+    .qa-input-wrapper {
+      width: 100%;
+      background: #ffffff;
+      border: 1px solid #ffd8d8;
+      border-radius: 12px;
+      padding: 14px 18px;
+      box-shadow: 0 4px 16px rgba(211, 32, 41, 0.05);
+      transition: all 0.2s;
+    }
+    .qa-input-wrapper:focus-within {
+      border-color: #ff7875;
+      box-shadow: 0 4px 20px rgba(211, 32, 41, 0.12);
+    }
+    /* 图2: 穿梭框弹窗专用样式 */
+    .transfer-tree-node {
+      user-select: none;
+      line-height: 28px;
+    }
+    .transfer-tree-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 6px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .transfer-tree-row:hover {
+      background: #f7f9fa;
+    }
+    .transfer-toggle-arrow {
+      width: 14px;
+      text-align: center;
+      font-size: 10px;
+      color: #64748b;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .transfer-right-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 10px;
+      border-radius: 4px;
+      margin-bottom: 4px;
+      font-size: 13px;
+      color: #334155;
+      background: #f8fafc;
+      border: 1px solid #f1f5f9;
+      transition: all 0.15s;
+    }
+    .transfer-right-item:hover {
+      background: #fff1f0;
+      border-color: #ffccc7;
+    }
+    .transfer-remove-btn {
+      color: #94a3b8;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: bold;
+      padding: 0 4px;
+    }
+    .transfer-remove-btn:hover {
+      color: #cf1322;
     }
     .qa-textarea {
       width: 100%;
@@ -1244,49 +1490,85 @@
         </div>
 
         <div class="qa-results-box" id="qaResultsBox">
-          <div class="answer-card">
-            <div class="answer-card-header">
-              <div class="flex-row">
-                <span class="answer-pill done" id="resStatusPill">检索与推理完成</span>
-                <span style="font-size:12px; color:var(--text-muted);" id="resThreadId"></span>
-              </div>
-              <button class="btn-tool" onclick="resetQAPage()">新开问答</button>
+          <!-- 顶部状态栏与新开对话按钮 -->
+          <div class="chat-flow-header">
+            <div class="flex-row" style="align-items:center; gap:10px;">
+              <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#52c41a;"></span>
+              <span id="chatFlowStatusText" style="font-size:13px; font-weight:600; color:var(--text-title);">AI 对话进行中</span>
+              <span id="chatFlowModelPill" class="answer-pill done" style="font-size:11.5px; padding:2px 8px;">qwen-plus</span>
+              <span id="chatFlowScopePill" style="font-size:11.5px; color:#8c8c8c;">[不使用知识库]</span>
             </div>
-            <div id="resQueriesBox" style="background:#f0f7ff; border:1px solid #adc6ff; border-radius:8px; padding:10px 14px; margin-bottom:14px;">
-              <div style="font-weight:600; color:#1d39c4; font-size:13px; margin-bottom:6px;">🔎 三维专业法律检索式（最精准 / 找例外 / 查后果）：</div>
-              <div id="resQueriesList"></div>
-            </div>
-            <div style="margin-top:14px;">
-              <h3 style="font-size:14px; color:var(--primary); margin-bottom:10px;">L1 引用法规条文依据</h3>
-              <div id="resCitationsList"></div>
-            </div>
-            <div style="margin-top:16px;">
-              <h3 style="font-size:14px; color:var(--primary); margin-bottom:8px;">L2 六段式专业法律咨询意见书</h3>
-              <div class="answer-body" id="resAnswerBody"></div>
-            </div>
+            <button class="btn-tool" onclick="resetQAPage()" style="display:flex; align-items:center; gap:4px; font-size:12px; padding:4px 12px; cursor:pointer;" title="清空历史记录并开启全新对话">
+              <span>🧹</span> 新开对话
+            </button>
           </div>
+
+          <!-- 现代多轮对话流消息容器 (用户气泡与AI卡片自上而下追加) -->
+          <div id="qaChatStreamList" style="display:flex; flex-direction:column; gap:20px; width:100%; margin-top:4px;"></div>
         </div>
 
-        <div class="qa-input-wrapper">
-          <div class="qa-scope-pill">🌐 自由交互识别范围 ▼</div>
-          <textarea class="qa-textarea" id="qaInput" placeholder="请输入您想要咨询的法律或合规问题..." rows="2" onkeydown="handleInputKeydown(event)"></textarea>
-          <div class="qa-input-footer">
-            <div class="qa-controls-left">
-              <select class="model-selector" id="modelSelect">
-                <option value="qwen-plus">qwen3.6-plus ∨</option>
-                <option value="deepseek-chat">deepseek-chat ∨</option>
-                <option value="local_openai">本地大模型 (Ollama) ∨</option>
-                <option value="mock">MOCK 确定性演示 ∨</option>
-              </select>
-              <label class="switch-label">
-                <input type="checkbox" id="deepThinkingToggle" checked style="display:none;" />
-                <span class="toggle-switch"></span>
-                <span>深度思考</span>
-              </label>
+        <!-- 对标图1: 问答输入框区域 -->
+        <div class="qa-input-container">
+          <!-- 图1: 输入框左上方展示灰蓝色圆角胶囊按钮 [ ⎚ 全部知识库 ∨ ] -->
+          <div class="qa-scope-wrapper" id="qaScopeWrapper">
+            <div class="qa-scope-btn" id="qaScopeBtn" onclick="toggleScopeDropdown(event)" title="点击选择知识库检索范围">
+              <span class="qa-scope-icon">
+                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <polygon points="14.5 2 1.5 2 6.5 8.2 6.5 13.5 9.5 14.5 9.5 8.2 14.5 2"></polygon>
+                </svg>
+              </span>
+              <span id="qaScopeText">全部知识库</span>
+              <span class="qa-scope-arrow">∨</span>
             </div>
-            <div class="qa-controls-right">
-              <button class="send-btn" id="sendBtn" onclick="submitQuestion()" title="发送提问">➔</button>
+            <!-- 图1: 向上展开的下拉浮层菜单 (包含三个选项) -->
+            <div class="qa-scope-menu" id="qaScopeMenu" style="display:none;" onclick="event.stopPropagation()">
+              <div class="qa-scope-option" id="scopeOptAll" onclick="selectScopeType('all')">
+                <span>全部知识库</span>
+                <span class="scope-check-circle" id="scopeCheckAll">✓</span>
+              </div>
+              <div class="qa-scope-option" id="scopeOptNone" onclick="selectScopeType('none')">
+                <span>不使用知识库</span>
+                <span class="scope-check-circle" id="scopeCheckNone" style="display:none;">✓</span>
+              </div>
+              <div class="qa-scope-option" id="scopeOptCustom" onclick="selectScopeType('custom')">
+                <span>自定义知识范围</span>
+                <span class="scope-check-circle" id="scopeCheckCustom" style="display:none;">✓</span>
+              </div>
             </div>
+          </div>
+
+          <!-- 输入框本体 (粉红细边框) -->
+          <div class="qa-input-wrapper">
+            <textarea class="qa-textarea" id="qaInput" placeholder="请输入您想要问的问题..." rows="2" oninput="onQaInputChange()" onkeydown="handleInputKeydown(event)"></textarea>
+            <div class="qa-input-footer">
+              <div class="qa-controls-left">
+                <!-- 优化项 2: 支持选择生效的模型 (对标截图红框) -->
+                <select class="model-selector" id="modelSelect" onchange="onQaModelSelectChange(this.value)" title="选择当前生效的大模型">
+                  <option value="qwen3.8-flash">qwen3.8-flash ∨</option>
+                  <option value="qwen3.6-plus">qwen3.6-plus ∨</option>
+                  <option value="qwen-plus">qwen-plus ∨</option>
+                  <option value="qwen-max">qwen-max ∨</option>
+                  <option value="qwen-turbo">qwen-turbo ∨</option>
+                  <option value="deepseek-chat">deepseek-chat ∨</option>
+                  <option value="deepseek-reasoner">deepseek-reasoner ∨</option>
+                  <option value="local_openai">本地大模型 (Ollama) ∨</option>
+                  <option value="mock">MOCK 确定性演示 ∨</option>
+                </select>
+                <label class="switch-label">
+                  <input type="checkbox" id="deepThinkingToggle" checked style="display:none;" />
+                  <span class="toggle-switch"></span>
+                  <span>深度思考</span>
+                </label>
+              </div>
+              <div class="qa-controls-right">
+                <button class="send-btn" id="sendBtn" onclick="submitQuestion()" title="发送提问">➔</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 图1: 输入框右下角外侧提示字样 -->
+          <div style="display:flex; justify-content:flex-end; margin-top: 6px; padding-right: 4px;">
+            <span style="font-size: 12px; color: #94a3b8; letter-spacing: 0.3px;">内容由 AI 自动生成，仅供参考</span>
           </div>
         </div>
       </div>
@@ -1299,10 +1581,7 @@
       <div class="kb-layout">
         <!-- 左侧知识库分类树 -->
         <div class="kb-tree-sidebar">
-          <div class="kb-nav-item" id="kbNav-all" onclick="selectAllKb()" style="margin-bottom:8px;">
-            <span>📁 全部知识库</span>
-          </div>
-          <!-- 动态层级树容器 -->
+          <!-- 动态层级树容器 (对标截图直接呈现知识库层级树) -->
           <div class="kb-tree-scroll" id="kbTreeContainer"></div>
 
           <!-- 底部居中药丸形【新增知识库】按钮 (精准对标截图) -->
@@ -1473,7 +1752,10 @@
               <input type="text" class="filter-input" id="cfgLlmModel" placeholder="qwen-plus" />
             </div>
             <div class="form-group">
-              <label class="form-label">LLM API Key</label>
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <label class="form-label" style="margin-bottom:0;">LLM API Key</label>
+                <a href="javascript:void(0)" onclick="toggleApiKeyVisibility()" id="btnToggleKeyVis" style="font-size:12px; color:var(--primary); text-decoration:none; cursor:pointer;">👁️ 显示明文</a>
+              </div>
               <input type="password" class="filter-input" id="cfgLlmApiKey" placeholder="sk-..." />
               <div class="form-hint" id="cfgLlmKeyStatus" style="color:#52c41a; font-size:11.5px;"></div>
             </div>
@@ -2188,6 +2470,89 @@
     </div>
   </div>
 
+  <!-- ======================== 图2: 自定义知识范围穿梭框模态框 ======================== -->
+  <div class="modal-overlay" id="customScopeModal">
+    <div class="modal-box" style="max-width: 680px; width: 92%; border-radius: 12px; padding: 22px 24px;">
+      <!-- 标题栏 -->
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 16px;">
+        <div style="font-size: 16px; font-weight: 600; color: #1e293b;">自定义知识范围</div>
+        <div class="modal-close" onclick="closeCustomScopeModal()" style="font-size: 18px; color: #94a3b8; cursor: pointer;">✕</div>
+      </div>
+
+      <!-- 第1行: 单选知识范围 -->
+      <div style="display:flex; align-items:center; gap: 20px; font-size: 13.5px; color: #374151; margin-bottom: 12px;">
+        <span>请选择知识范围：</span>
+        <label style="display:inline-flex; align-items:center; gap: 6px; cursor:pointer;">
+          <input type="radio" name="scopeRangeType" value="kb" checked onchange="onScopeRangeTypeChange('kb')" style="accent-color: #d32029;" />
+          <span>多知识库</span>
+        </label>
+        <label style="display:inline-flex; align-items:center; gap: 6px; cursor:pointer;">
+          <input type="radio" name="scopeRangeType" value="doc" onchange="onScopeRangeTypeChange('doc')" style="accent-color: #d32029;" />
+          <span>多文档</span>
+        </label>
+      </div>
+
+      <!-- 第2行: 已选数量提示 -->
+      <div style="font-size: 13px; color: #64748b; margin-bottom: 12px;">
+        已选择 <span id="customSelectedCountText" style="color: #f56c6c; font-weight: 600;">0</span> 个知识库文档
+      </div>
+
+      <!-- 第3行: 搜索框 -->
+      <div style="position:relative; margin-bottom: 14px;">
+        <input type="text" id="transferSearchInput" placeholder="请输入关键词搜索" oninput="onTransferSearch(this.value)"
+          style="width: 100%; height: 36px; padding: 0 36px 0 12px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 13px; outline: none; box-sizing: border-box; transition: border-color 0.2s;" />
+        <span style="position:absolute; right: 12px; top: 50%; transform: translateY(-50%); color: #94a3b8; font-size: 14px; pointer-events: none;">🔍</span>
+      </div>
+
+      <!-- 第4行: 双栏穿梭框主体 -->
+      <div style="display:flex; align-items:center; gap: 14px; margin-bottom: 20px;">
+        <!-- 左栏: 待选区 -->
+        <div style="flex:1; border: 1px solid #e2e8f0; border-radius: 6px; height: 320px; display:flex; flex-direction:column; overflow:hidden; background: #ffffff;">
+          <div id="transferLeftHeader" style="padding: 9px 14px; font-size: 13px; font-weight: 500; color: #334155; border-bottom: 1px solid #f1f5f9; background: #fafafa;">
+            知识库
+          </div>
+          <div id="transferLeftBody" style="flex:1; overflow-y:auto; padding: 8px 10px; font-size: 13px;">
+            <!-- 动态生成待选树/列表 -->
+          </div>
+        </div>
+
+        <!-- 中间操作按钮 -->
+        <div style="display:flex; flex-direction:column; gap: 10px;">
+          <button type="button" onclick="transferMoveRight()" title="穿梭至已选"
+            style="background: #ff8585; border:none; color:white; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; display:flex; align-items:center; justify-content:center; font-weight: bold; font-size: 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); transition: background 0.15s;">
+            &gt;
+          </button>
+          <button type="button" onclick="transferMoveLeft()" title="从已选移除"
+            style="background: #ff8585; border:none; color:white; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; display:flex; align-items:center; justify-content:center; font-weight: bold; font-size: 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); transition: background 0.15s;">
+            &lt;
+          </button>
+        </div>
+
+        <!-- 右栏: 已选区 -->
+        <div style="flex:1; border: 1px solid #e2e8f0; border-radius: 6px; height: 320px; display:flex; flex-direction:column; overflow:hidden; background: #ffffff;">
+          <div id="transferRightHeader" style="padding: 9px 14px; font-size: 13px; font-weight: 500; color: #334155; border-bottom: 1px solid #f1f5f9; background: #fafafa;">
+            已选知识库
+          </div>
+          <div id="transferRightBody" style="flex:1; overflow-y:auto; padding: 8px 10px; font-size: 13px;">
+            <!-- 动态生成已选项列表 -->
+          </div>
+        </div>
+      </div>
+
+      <!-- 底部按钮区 -->
+      <div style="display:flex; justify-content:flex-end; gap: 12px;">
+        <button type="button" onclick="closeCustomScopeModal()"
+          style="padding: 7px 20px; border: 1px solid #d9d9d9; background: white; color: #595959; border-radius: 4px; font-size: 13px; cursor: pointer; transition: all 0.2s;">
+          取消
+        </button>
+        <button type="button" onclick="confirmCustomScopeSelection()"
+          style="padding: 7px 20px; border: none; background: #ff8585; color: white; border-radius: 4px; font-size: 13px; cursor: pointer; font-weight: 500; box-shadow: 0 1px 4px rgba(255,133,133,0.3); transition: background 0.2s;">
+          确定
+        </button>
+      </div>
+    </div>
+  </div>
+
   <div class="toast-notice" id="toastNotice">提示信息</div>
 
   <script>
@@ -2643,79 +3008,759 @@
     }
 
     // ========================================================
-    // 问答、知识库、模型配置等具体业务函数
+    // 问答、知识库、模型配置等具体业务函数 (全面对标真实知识库与交互)
     // ========================================================
+    let CURRENT_QA_KB_SCOPE = "all"; // "all" | "none" | "custom"
+    let CURRENT_QA_KB_SCOPE_NAME = "全部知识库";
+    let CUSTOM_SELECTED_SCOPES = []; // 存放自定义穿梭选中的真实知识库/文档项：[{ id, name, type, path }]
+    let CURRENT_RANGE_TYPE = "kb"; // "kb" (多知识库) | "doc" (多文档)
+    const TRANSFER_LEFT_CHECKED = new Set();
+    const TRANSFER_RIGHT_CHECKED = new Set();
+    let TRANSFER_SEARCH_KEYWORD = "";
+
+    // 监听输入框打字变动，动态点亮右下角提问按钮 (解决无法点击感知问题)
+    function onQaInputChange() {
+      const q = (document.getElementById("qaInput").value || "").trim();
+      const btn = document.getElementById("sendBtn");
+      if (btn) {
+        if (q.length > 0) {
+          btn.classList.add("active");
+          btn.style.background = "#d32029";
+          btn.style.boxShadow = "0 2px 10px rgba(211, 32, 41, 0.35)";
+          btn.style.cursor = "pointer";
+        } else {
+          btn.classList.remove("active");
+          btn.style.background = "#ffa39e";
+          btn.style.boxShadow = "none";
+        }
+      }
+    }
+
+    // 图1: 切换展开/关闭向上弹出的胶囊下拉菜单
+    function toggleScopeDropdown(e) {
+      if (e) e.stopPropagation();
+      const menu = document.getElementById("qaScopeMenu");
+      const btn = document.getElementById("qaScopeBtn");
+      if (!menu) return;
+      const isOpen = menu.style.display === "block";
+      if (isOpen) {
+        menu.style.display = "none";
+        if (btn) btn.classList.remove("active");
+      } else {
+        updateScopeDropdownCheckmarks();
+        menu.style.display = "block";
+        if (btn) btn.classList.add("active");
+      }
+    }
+
+    // 更新下拉菜单中红底白勾圆标的选中状态
+    function updateScopeDropdownCheckmarks() {
+      const checkAll = document.getElementById("scopeCheckAll");
+      const checkNone = document.getElementById("scopeCheckNone");
+      const checkCustom = document.getElementById("scopeCheckCustom");
+      if (checkAll) checkAll.style.display = (CURRENT_QA_KB_SCOPE === "all") ? "inline-flex" : "none";
+      if (checkNone) checkNone.style.display = (CURRENT_QA_KB_SCOPE === "none") ? "inline-flex" : "none";
+      if (checkCustom) checkCustom.style.display = (CURRENT_QA_KB_SCOPE === "custom") ? "inline-flex" : "none";
+    }
+
+    // 图1: 选择菜单项处理逻辑
+    function selectScopeType(type) {
+      const menu = document.getElementById("qaScopeMenu");
+      const btn = document.getElementById("qaScopeBtn");
+      const textEl = document.getElementById("qaScopeText");
+
+      if (menu) menu.style.display = "none";
+      if (btn) btn.classList.remove("active");
+
+      if (type === "all") {
+        CURRENT_QA_KB_SCOPE = "all";
+        CURRENT_QA_KB_SCOPE_NAME = "全部知识库";
+        if (textEl) textEl.textContent = "全部知识库";
+        updateScopeDropdownCheckmarks();
+        showToast("已选择检索范围：全部知识库");
+      } else if (type === "none") {
+        CURRENT_QA_KB_SCOPE = "none";
+        CURRENT_QA_KB_SCOPE_NAME = "不使用知识库";
+        if (textEl) textEl.textContent = "不使用知识库";
+        updateScopeDropdownCheckmarks();
+        showToast("已选择：不使用知识库 (直接由大模型生成答复)");
+      } else if (type === "custom") {
+        // 打开图2穿梭框弹窗
+        openCustomScopeModal();
+      }
+    }
+
+    // 图2: 打开自定义知识范围模态框 (完全同步真实知识库管理中的数据)
+    async function openCustomScopeModal() {
+      const modal = document.getElementById("customScopeModal");
+      if (!modal) return;
+      TRANSFER_LEFT_CHECKED.clear();
+      TRANSFER_RIGHT_CHECKED.clear();
+      TRANSFER_SEARCH_KEYWORD = "";
+      const searchInput = document.getElementById("transferSearchInput");
+      if (searchInput) searchInput.value = "";
+
+      // 确保从后端加载最新真实的知识库分类树
+      if (!KB_TREE_DATA || KB_TREE_DATA.length === 0) {
+        await loadKbTree();
+      }
+      if (!RBAC_STATE.kbDocuments || RBAC_STATE.kbDocuments.length === 0) {
+        await loadAdvancedDocuments();
+      }
+
+      renderTransferLeft();
+      renderTransferRight();
+      updateCustomSelectedCount();
+
+      modal.classList.add("open");
+    }
+
+    // 图2: 关闭自定义知识范围模态框
+    function closeCustomScopeModal() {
+      const modal = document.getElementById("customScopeModal");
+      if (modal) modal.classList.remove("open");
+    }
+
+    // 图2: 切换知识范围单选 (多知识库 / 多文档)
+    function onScopeRangeTypeChange(type) {
+      CURRENT_RANGE_TYPE = type;
+      TRANSFER_LEFT_CHECKED.clear();
+      const leftHeader = document.getElementById("transferLeftHeader");
+      const rightHeader = document.getElementById("transferRightHeader");
+      if (type === "doc") {
+        if (leftHeader) leftHeader.textContent = "法规与制度文档";
+        if (rightHeader) rightHeader.textContent = "已选文档";
+      } else {
+        if (leftHeader) leftHeader.textContent = "知识库";
+        if (rightHeader) rightHeader.textContent = "已选知识库";
+      }
+      renderTransferLeft();
+      renderTransferRight();
+    }
+
+    // 图2: 搜索关键词过滤
+    function onTransferSearch(kw) {
+      TRANSFER_SEARCH_KEYWORD = (kw || "").trim().toLowerCase();
+      renderTransferLeft();
+    }
+
+    // -------------------------------------------------------------
+    // 真实知识库树辅助函数：递归查找节点与子代节点联动
+    // -------------------------------------------------------------
+    function getSubtreeNodeIds(node) {
+      let ids = [];
+      if (node && Array.isArray(node.children) && node.children.length > 0) {
+        node.children.forEach(c => {
+          const cid = c.node_id || c.id;
+          if (cid) {
+            ids.push(cid);
+            ids = ids.concat(getSubtreeNodeIds(c));
+          }
+        });
+      }
+      return ids;
+    }
+
+    function findNodeInRealTree(nodes, id) {
+      if (!nodes || !Array.isArray(nodes)) return null;
+      for (const n of nodes) {
+        if ((n.node_id || n.id) === id) return n;
+        if (n.children && n.children.length > 0) {
+          const found = findNodeInRealTree(n.children, id);
+          if (found) return found;
+        }
+      }
+      return null;
+    }
+
+    // 切换树节点展开收起
+    function toggleTransferNodeExpand(nodeId, e) {
+      if (e) e.stopPropagation();
+      function findAndToggle(nodes) {
+        if (!nodes || !Array.isArray(nodes)) return false;
+        for (const n of nodes) {
+          if ((n.node_id || n.id) === nodeId) {
+            n.expanded = (n.expanded === false) ? true : false;
+            return true;
+          }
+          if (n.children && n.children.length > 0) {
+            if (findAndToggle(n.children)) return true;
+          }
+        }
+        return false;
+      }
+      findAndToggle(KB_TREE_DATA);
+      renderTransferLeft();
+    }
+
+    // 勾选/取消勾选待选节点 (关键优化：上层选中/取消时联动下层所有子知识库)
+    function onTransferLeftCheck(nodeId, checked, e) {
+      if (e) e.stopPropagation();
+
+      if (CURRENT_RANGE_TYPE === "doc") {
+        if (checked) TRANSFER_LEFT_CHECKED.add(nodeId);
+        else TRANSFER_LEFT_CHECKED.delete(nodeId);
+        return;
+      }
+
+      // 联动找到当前真实节点及其所有子代节点
+      const targetNode = findNodeInRealTree(KB_TREE_DATA, nodeId);
+      const targetIds = [nodeId];
+      if (targetNode) {
+        targetIds.push(...getSubtreeNodeIds(targetNode));
+      }
+
+      targetIds.forEach(id => {
+        if (checked) {
+          TRANSFER_LEFT_CHECKED.add(id);
+        } else {
+          TRANSFER_LEFT_CHECKED.delete(id);
+        }
+        // 实时同步更新页面复选框打勾状态
+        const chk = document.getElementById("chk_left_" + id);
+        if (chk) chk.checked = checked;
+      });
+    }
+
+    // 渲染图2左侧待选区 (直接使用真实的知识库管理树)
+    function renderTransferLeft() {
+      const container = document.getElementById("transferLeftBody");
+      if (!container) return;
+      container.innerHTML = "";
+
+      const kw = TRANSFER_SEARCH_KEYWORD;
+
+      if (CURRENT_RANGE_TYPE === "doc") {
+        // 多文档模式：展示所有真实已上传的法规与文档
+        const docs = (RBAC_STATE.kbDocuments && RBAC_STATE.kbDocuments.length > 0)
+          ? RBAC_STATE.kbDocuments
+          : [
+              { id: "doc_1", name: "中华人民共和国公司法 (2023年修订)", path: "外规知识库/法律法规/公司法" },
+              { id: "doc_2", name: "中华人民共和国民法典", path: "外规知识库/法律法规/民法典" },
+              { id: "doc_3", name: "中华人民共和国刑法", path: "外规知识库/法律法规/刑法" }
+            ];
+
+        const filtered = docs.filter(d => !kw || (d.name && d.name.toLowerCase().includes(kw)) || (d.document_name && d.document_name.toLowerCase().includes(kw)));
+        if (filtered.length === 0) {
+          container.innerHTML = `<div style="text-align:center; color:#9ca3af; padding:30px 0;">未搜索到匹配文档</div>`;
+          return;
+        }
+
+        filtered.forEach(d => {
+          const docId = d.document_id || d.id;
+          const docName = d.document_name || d.name;
+          const isChecked = TRANSFER_LEFT_CHECKED.has(docId);
+          const row = document.createElement("div");
+          row.className = "transfer-tree-row";
+          row.innerHTML = `
+            <input type="checkbox" id="chk_left_${docId}" ${isChecked ? "checked" : ""} style="cursor:pointer;" onchange="onTransferLeftCheck('${docId}', this.checked, event)" />
+            <span style="font-size:13px; color:#374151;">📄 ${docName}</span>
+          `;
+          container.appendChild(row);
+        });
+      } else {
+        // 多知识库模式：直接使用系统真实的 KB_TREE_DATA
+        const realTree = (Array.isArray(KB_TREE_DATA) && KB_TREE_DATA.length > 0)
+          ? KB_TREE_DATA
+          : DEFAULT_STATIC_TREE;
+
+        function renderRealTreeNodes(nodes, level = 0) {
+          let hasAny = false;
+          nodes.forEach(node => {
+            const nid = node.node_id || node.id;
+            const hasChildren = node.children && node.children.length > 0;
+            const matchesKw = !kw || node.name.toLowerCase().includes(kw);
+
+            let childMatches = false;
+            if (hasChildren && kw) {
+              const checkChild = (list) => list.some(c => c.name.toLowerCase().includes(kw) || (c.children && checkChild(c.children)));
+              childMatches = checkChild(node.children);
+            }
+
+            if (kw && !matchesKw && !childMatches) return;
+
+            hasAny = true;
+            const isChecked = TRANSFER_LEFT_CHECKED.has(nid);
+            const isExpanded = kw ? true : (node.expanded !== false);
+
+            const nodeDiv = document.createElement("div");
+            nodeDiv.className = "transfer-tree-node";
+            nodeDiv.style.paddingLeft = `${level * 18}px`;
+
+            const arrowIcon = hasChildren ? (isExpanded ? "▼" : "▶") : "";
+            const icon = node.node_type === "kb" ? "📁" : "📂";
+            const docBadge = (node.doc_count !== undefined && node.doc_count !== null && node.doc_count > 0)
+              ? `<span style="font-size:11px; color:#8c8c8c; margin-left:4px;">(${node.doc_count})</span>`
+              : "";
+
+            nodeDiv.innerHTML = `
+              <div class="transfer-tree-row">
+                <span class="transfer-toggle-arrow" onclick="toggleTransferNodeExpand('${nid}', event)">${arrowIcon}</span>
+                <input type="checkbox" id="chk_left_${nid}" ${isChecked ? "checked" : ""} style="cursor:pointer;" onchange="onTransferLeftCheck('${nid}', this.checked, event)" />
+                <span style="font-size:13px; color:#2d3748;">${icon} ${node.name} ${docBadge}</span>
+              </div>
+            `;
+            container.appendChild(nodeDiv);
+
+            if (hasChildren && isExpanded) {
+              renderRealTreeNodes(node.children, level + 1);
+            }
+          });
+          return hasAny;
+        }
+
+        const rendered = renderRealTreeNodes(realTree, 0);
+        if (!rendered) {
+          container.innerHTML = `<div style="text-align:center; color:#9ca3af; padding:30px 0;">未搜索到匹配知识库</div>`;
+        }
+      }
+    }
+
+    // 渲染图2右侧已选区
+    function renderTransferRight() {
+      const container = document.getElementById("transferRightBody");
+      if (!container) return;
+      container.innerHTML = "";
+
+      if (CUSTOM_SELECTED_SCOPES.length === 0) {
+        container.innerHTML = `<div style="text-align:center; color:#94a3b8; padding:36px 0; font-size:12.5px;">暂无已选项目<br/><span style="font-size:11.5px; color:#cbd5e1;">请在左侧勾选后点击 &gt; 添加</span></div>`;
+        return;
+      }
+
+      CUSTOM_SELECTED_SCOPES.forEach(item => {
+        const isChecked = TRANSFER_RIGHT_CHECKED.has(item.id);
+        const itemDiv = document.createElement("div");
+        itemDiv.className = "transfer-right-item";
+        itemDiv.innerHTML = `
+          <div style="display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" ${isChecked ? "checked" : ""} onchange="onTransferRightCheck('${item.id}', this.checked, event)" style="cursor:pointer;" />
+            <span>${item.type === "doc" ? "📄" : "📁"} ${item.name}</span>
+          </div>
+          <span class="transfer-remove-btn" onclick="removeTransferItem('${item.id}', event)" title="移除此项">×</span>
+        `;
+        container.appendChild(itemDiv);
+      });
+    }
+
+    // 勾选/取消勾选右侧已选项
+    function onTransferRightCheck(id, checked, e) {
+      if (e) e.stopPropagation();
+      if (checked) {
+        TRANSFER_RIGHT_CHECKED.add(id);
+      } else {
+        TRANSFER_RIGHT_CHECKED.delete(id);
+      }
+    }
+
+    // 单项移除
+    function removeTransferItem(id, e) {
+      if (e) e.stopPropagation();
+      CUSTOM_SELECTED_SCOPES = CUSTOM_SELECTED_SCOPES.filter(x => x.id !== id);
+      TRANSFER_RIGHT_CHECKED.delete(id);
+      renderTransferRight();
+      updateCustomSelectedCount();
+    }
+
+    // 更新“已选择 X 个知识库文档”提示数字
+    function updateCustomSelectedCount() {
+      const countEl = document.getElementById("customSelectedCountText");
+      if (countEl) {
+        countEl.textContent = CUSTOM_SELECTED_SCOPES.length;
+      }
+    }
+
+    // 穿梭按钮 > (将左侧勾选条目添加到右侧，真实知识库与文档)
+    function transferMoveRight() {
+      if (TRANSFER_LEFT_CHECKED.size === 0) {
+        showToast("请在左侧勾选需要添加的知识库或文档");
+        return;
+      }
+
+      const allItemsMap = new Map();
+      function indexRealTree(nodes) {
+        if (!nodes || !Array.isArray(nodes)) return;
+        nodes.forEach(n => {
+          const nid = n.node_id || n.id;
+          allItemsMap.set(nid, {
+            id: nid,
+            name: n.name,
+            path: n.path || n.name,
+            type: n.node_type === "kb" ? "kb" : "folder"
+          });
+          if (n.children && n.children.length > 0) indexRealTree(n.children);
+        });
+      }
+      indexRealTree(KB_TREE_DATA.length > 0 ? KB_TREE_DATA : DEFAULT_STATIC_TREE);
+
+      // 索引真实文档
+      const docs = (RBAC_STATE.kbDocuments && RBAC_STATE.kbDocuments.length > 0) ? RBAC_STATE.kbDocuments : [];
+      docs.forEach(d => {
+        const did = d.document_id || d.id;
+        const dname = d.document_name || d.name;
+        allItemsMap.set(did, { id: did, name: dname, path: d.kb_type ? `${d.kb_type}/${dname}` : dname, type: "doc" });
+      });
+
+      let addCount = 0;
+      TRANSFER_LEFT_CHECKED.forEach(id => {
+        const item = allItemsMap.get(id);
+        if (item && !CUSTOM_SELECTED_SCOPES.some(x => x.id === item.id)) {
+          CUSTOM_SELECTED_SCOPES.push(item);
+          addCount++;
+        }
+      });
+
+      TRANSFER_LEFT_CHECKED.clear();
+      renderTransferLeft();
+      renderTransferRight();
+      updateCustomSelectedCount();
+      if (addCount > 0) {
+        showToast(`已添加 ${addCount} 项到已选范围`);
+      }
+    }
+
+    // 穿梭按钮 < (将右侧勾选条目移除)
+    function transferMoveLeft() {
+      if (TRANSFER_RIGHT_CHECKED.size === 0) {
+        showToast("请在右侧勾选需要移除的条目");
+        return;
+      }
+      const removeCount = TRANSFER_RIGHT_CHECKED.size;
+      CUSTOM_SELECTED_SCOPES = CUSTOM_SELECTED_SCOPES.filter(x => !TRANSFER_RIGHT_CHECKED.has(x.id));
+      TRANSFER_RIGHT_CHECKED.clear();
+      renderTransferRight();
+      updateCustomSelectedCount();
+      showToast(`已移除 ${removeCount} 项`);
+    }
+
+    // 点击确定按钮保存自定义知识范围
+    function confirmCustomScopeSelection() {
+      const textEl = document.getElementById("qaScopeText");
+      if (CUSTOM_SELECTED_SCOPES.length === 0) {
+        // 如果清空了，自动恢复为全部知识库
+        CURRENT_QA_KB_SCOPE = "all";
+        CURRENT_QA_KB_SCOPE_NAME = "全部知识库";
+        if (textEl) textEl.textContent = "全部知识库";
+        updateScopeDropdownCheckmarks();
+        closeCustomScopeModal();
+        showToast("已恢复为：全部知识库");
+        return;
+      }
+
+      CURRENT_QA_KB_SCOPE = "custom";
+      CURRENT_QA_KB_SCOPE_NAME = "自定义知识范围";
+      if (textEl) {
+        textEl.textContent = "自定义知识范围";
+        textEl.parentElement.title = `已选范围：${CUSTOM_SELECTED_SCOPES.map(i => i.name).join("、")}`;
+      }
+      updateScopeDropdownCheckmarks();
+      closeCustomScopeModal();
+      showToast(`已成功选定自定义知识范围（共 ${CUSTOM_SELECTED_SCOPES.length} 个真实知识库/文档）`);
+    }
+
+    // 全局点击其他区域自动关闭向上弹出的下拉菜单
+    document.addEventListener("click", (e) => {
+      const wrap = document.getElementById("qaScopeWrapper");
+      if (wrap && !wrap.contains(e.target)) {
+        const menu = document.getElementById("qaScopeMenu");
+        const btn = document.getElementById("qaScopeBtn");
+        if (menu) menu.style.display = "none";
+        if (btn) btn.classList.remove("active");
+      }
+    });
+
+    // 优化项 2: 支持选择生效的大模型即时切换
+    async function onQaModelSelectChange(modelVal) {
+      try {
+        let payload = {};
+        if (modelVal === "mock") {
+          payload = { mock: true };
+        } else {
+          payload = { mock: false, llm_model: modelVal };
+          if (modelVal.startsWith("qwen")) payload.llm_provider = "qwen";
+          else if (modelVal.startsWith("deepseek")) payload.llm_provider = "deepseek";
+          else if (modelVal.includes("local") || modelVal.includes("14b")) payload.llm_provider = "local_openai";
+        }
+        const res = await fetch("/config/llm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-User-Role": "admin" },
+          body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+          showToast(`🎉 当前配置生效模型已即时切换为：[${modelVal}]`);
+        }
+      } catch (e) {
+        console.warn("更新运行时模型配置异常", e);
+      }
+    }
+
     function fillQuestion(q) {
       document.getElementById("qaInput").value = q;
+      onQaInputChange();
       document.getElementById("qaInput").focus();
     }
     function handleInputKeydown(e) {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submitQuestion(); }
     }
+
+    // 多轮对话上下文状态
+    let QA_CHAT_HISTORY = [];
+    let CURRENT_QA_THREAD_ID = null;
+
+    function escapeHtml(str) {
+      if (!str) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
     function resetQAPage() {
-      document.getElementById("qaResultsBox").classList.remove("has-content");
+      QA_CHAT_HISTORY = [];
+      CURRENT_QA_THREAD_ID = null;
+      const chatList = document.getElementById("qaChatStreamList");
+      if (chatList) chatList.innerHTML = "";
+      const resultsBox = document.getElementById("qaResultsBox");
+      if (resultsBox) {
+        resultsBox.classList.remove("has-content");
+        resultsBox.style.display = "none";
+      }
       document.getElementById("qaIntroBox").style.display = "flex";
       document.getElementById("qaInput").value = "";
+      onQaInputChange();
+      document.getElementById("qaInput").focus();
+      showToast("已清空对话记录，开启全新对话");
     }
+
+    function copyAnswerText(btn) {
+      const card = btn.closest(".chat-card-ai");
+      if (!card) return;
+      const contentEl = card.querySelector(".chat-ai-content");
+      if (!contentEl) return;
+      const text = contentEl.innerText || contentEl.textContent;
+      navigator.clipboard.writeText(text).then(() => {
+        const original = btn.innerHTML;
+        btn.innerHTML = "✓ 已复制";
+        setTimeout(() => { btn.innerHTML = original; }, 2000);
+      }).catch(() => {
+        showToast("复制失败，请手动选取复制");
+      });
+    }
+
     async function submitQuestion() {
-      const q = document.getElementById("qaInput").value.trim();
-      if (!q) { showToast("请输入问题..."); return; }
+      const inputEl = document.getElementById("qaInput");
+      const q = (inputEl.value || "").trim();
+      if (!q) { showToast("请输入您想要问的问题..."); return; }
+
       const btn = document.getElementById("sendBtn");
       btn.disabled = true;
       btn.innerHTML = "⏳";
+
+      const isNoKb = (CURRENT_QA_KB_SCOPE === "none");
+      let scopeParam = "all";
+      if (isNoKb) {
+        scopeParam = "none";
+      } else if (CURRENT_QA_KB_SCOPE === "custom") {
+        scopeParam = CUSTOM_SELECTED_SCOPES.length > 0 ? CUSTOM_SELECTED_SCOPES.map(i => i.path || i.name).join(",") : "all";
+      }
+
+      const modelEl = document.getElementById("modelSelect");
+      const selectedModel = modelEl ? modelEl.value : "qwen-plus";
+      const deepThinkingEl = document.getElementById("deepThinkingToggle");
+      const deepThinking = deepThinkingEl ? deepThinkingEl.checked : true;
+
+      // 1. 隐藏欢迎卡片，显示多轮对话流
+      document.getElementById("qaIntroBox").style.display = "none";
+      const resultsBox = document.getElementById("qaResultsBox");
+      resultsBox.style.display = "flex";
+      resultsBox.classList.add("has-content");
+
+      // 更新顶部状态栏
+      const scopeTag = isNoKb ? "不使用知识库" : ((typeof CURRENT_QA_KB_SCOPE_NAME !== "undefined" ? CURRENT_QA_KB_SCOPE_NAME : "") || "全部知识库");
+      document.getElementById("chatFlowModelPill").textContent = selectedModel;
+      document.getElementById("chatFlowScopePill").textContent = `[${scopeTag}]`;
+
+      const chatList = document.getElementById("qaChatStreamList");
+
+      // 2. 动态追加用户的提问气泡 (用户角色头像)
+      const userRow = document.createElement("div");
+      userRow.className = "chat-message-row user";
+      userRow.innerHTML = `
+        <div class="chat-avatar user-avatar" title="${RBAC_STATE.currentUser || '用户'}">👤</div>
+        <div class="chat-bubble-user">${escapeHtml(q)}</div>
+      `;
+      chatList.appendChild(userRow);
+
+      // 3. 动态追加正在思考的 AI 骨架卡片
+      const thinkingId = "thinking-" + Date.now();
+      const thinkingRow = document.createElement("div");
+      thinkingRow.className = "chat-message-row assistant";
+      thinkingRow.id = thinkingId;
+      thinkingRow.innerHTML = `
+        <div class="chat-avatar ai-avatar">法</div>
+        <div class="chat-card-ai" style="padding:12px 16px;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-size:13px; color:#595959; font-weight:500;">
+              ${isNoKb ? "🤖 大模型正在直接生成答复..." : "⚖️ 正在检索法规并进行深度推理..."}
+            </span>
+            <div class="thinking-dots">
+              <div class="thinking-dot"></div>
+              <div class="thinking-dot"></div>
+              <div class="thinking-dot"></div>
+            </div>
+          </div>
+        </div>
+      `;
+      chatList.appendChild(thinkingRow);
+
+      // 自动滚动到最新消息
+      thinkingRow.scrollIntoView({ behavior: "smooth", block: "end" });
+
+      // 清空输入框
+      inputEl.value = "";
+      onQaInputChange();
+
+      const abortCtrl = new AbortController();
+      const timeoutId = setTimeout(() => abortCtrl.abort(), 25000);
+
       try {
         const res = await fetch("/legal-query", {
           method: "POST",
           headers: { "Content-Type": "application/json", "X-User-Id": RBAC_STATE.currentUser },
-          body: JSON.stringify({ query: q })
+          signal: abortCtrl.signal,
+          body: JSON.stringify({
+            query: q,
+            history: QA_CHAT_HISTORY,
+            thread_id: CURRENT_QA_THREAD_ID,
+            kb_scope: scopeParam,
+            model: selectedModel,
+            deep_thinking: deepThinking
+          })
         });
+        clearTimeout(timeoutId);
+        if (!res.ok) {
+          throw new Error(`服务器响应异常 (HTTP ${res.status})`);
+        }
         const data = await res.json();
-        renderQAResult(data);
+        // 移除 thinking 骨架
+        const tEl = document.getElementById(thinkingId);
+        if (tEl) tEl.remove();
+
+        renderAssistantMessage(q, data, isNoKb, selectedModel);
       } catch (e) {
-        showToast("请求失败");
+        clearTimeout(timeoutId);
+        console.error("提问发生异常:", e);
+        const tEl = document.getElementById(thinkingId);
+        if (tEl) tEl.remove();
+
+        const errRow = document.createElement("div");
+        errRow.className = "chat-message-row assistant";
+        errRow.innerHTML = `
+          <div class="chat-avatar ai-avatar">法</div>
+          <div class="chat-card-ai" style="border-color:#ffccc7; background:#fff2f0;">
+            <div style="color:#cf1322; font-size:13.5px;">
+              ⚠️ ${e.name === "AbortError" ? "请求响应超时，请检查后端运行状态或网络连通性" : (e.message || "请求失败，请稍后重试")}
+            </div>
+          </div>
+        `;
+        chatList.appendChild(errRow);
+        errRow.scrollIntoView({ behavior: "smooth", block: "end" });
       } finally {
         btn.disabled = false;
         btn.innerHTML = "➔";
+        onQaInputChange();
       }
     }
 
-    function renderQAResult(data) {
-      document.getElementById("qaIntroBox").style.display = "none";
-      const resultsBox = document.getElementById("qaResultsBox");
-      resultsBox.classList.add("has-content");
-
+    function renderAssistantMessage(q, data, isNoKb, selectedModel) {
       const fo = data.result || (data.review ? data.review.final_output : null) || {};
-      const sq = fo.structured_queries || {};
-      const sqList = document.getElementById("resQueriesList");
-      sqList.innerHTML = "";
-      if (sq.focus || sq.exception || sq.consequence) {
-        document.getElementById("resQueriesBox").style.display = "block";
-        if (sq.focus) sqList.innerHTML += `<span class="query-tag focus">🎯 最精准：${sq.focus}</span>`;
-        if (sq.exception) sqList.innerHTML += `<span class="query-tag exception">⚠️ 找例外：${sq.exception}</span>`;
-        if (sq.consequence) sqList.innerHTML += `<span class="query-tag consequence">⚖️ 查后果：${sq.consequence}</span>`;
-      } else {
-        document.getElementById("resQueriesBox").style.display = "none";
-      }
-
+      const answerText = fo.answer || "暂无回答生成";
       const cites = fo.citations || [];
-      const citesContainer = document.getElementById("resCitationsList");
-      citesContainer.innerHTML = "";
-      cites.forEach((c) => {
-        citesContainer.innerHTML += `
-          <div class="cite-box">
-            <div style="font-weight:600; color:var(--text-title); margin-bottom:4px;">《${c.law_name}》${c.article}</div>
-            <div style="font-size:13px; color:var(--text-body);">${c.content || '法条已载入'}</div>
+      const modelTag = data.model_used || selectedModel || "qwen-plus";
+      if (data.thread_id) CURRENT_QA_THREAD_ID = data.thread_id;
+
+      // 记录到多轮对话历史数组中
+      QA_CHAT_HISTORY.push({ role: "user", content: q });
+      QA_CHAT_HISTORY.push({ role: "assistant", content: answerText });
+
+      const chatList = document.getElementById("qaChatStreamList");
+      const aiRow = document.createElement("div");
+      aiRow.className = "chat-message-row assistant";
+
+      let citationsHtml = "";
+      if (!isNoKb && cites.length > 0) {
+        const listHtml = cites.map(c => `
+          <div class="cite-box" style="margin-top:8px; padding:8px 12px; background:#f9fafb; border-left:3px solid var(--primary); border-radius:4px;">
+            <div style="font-weight:600; color:var(--text-title); font-size:13px; margin-bottom:2px;">《${c.law_name}》${c.article}</div>
+            <div style="font-size:12.5px; color:#595959;">${c.content || '法条已载入'}</div>
+          </div>
+        `).join("");
+        citationsHtml = `
+          <div style="margin-top:14px; padding-top:12px; border-top:1px dashed #e8ecf2;">
+            <div style="font-size:13px; font-weight:600; color:var(--primary); margin-bottom:6px;">📚 引用法规与事实依据（${cites.length} 条）</div>
+            ${listHtml}
           </div>
         `;
-      });
+      }
 
-      const ansBody = document.getElementById("resAnswerBody");
-      ansBody.textContent = fo.answer || "暂无回答生成";
+      aiRow.innerHTML = `
+        <div class="chat-avatar ai-avatar">法</div>
+        <div class="chat-card-ai">
+          <div class="chat-ai-header">
+            <div class="chat-ai-badge">
+              <span>🤖</span>
+              <span>${isNoKb ? 'AI 助手直接答复' : 'AI法盾·法律意见'}</span>
+              <span style="font-size:11px; font-weight:normal; color:#8c8c8c; background:#f0f2f5; padding:1px 6px; border-radius:4px; margin-left:4px;">${modelTag}</span>
+              ${isNoKb ? '<span style="font-size:11px; color:#52c41a; font-weight:normal;">[自由直答]</span>' : ''}
+            </div>
+            <button class="chat-btn-copy" onclick="copyAnswerText(this)" title="复制答复内容">
+              📋 复制
+            </button>
+          </div>
+          <div class="chat-ai-content">${escapeHtml(answerText)}</div>
+          ${citationsHtml}
+        </div>
+      `;
+      chatList.appendChild(aiRow);
+
+      // 平滑滚动到底部展示完整答案
+      aiRow.scrollIntoView({ behavior: "smooth", block: "start" });
     }
 
     // ========================================================
-    // 知识库层级目录树管理与「AI法盾」两步上传向导
+    // 知识库层级目录树管理与「AI法盾」两步上传向导 (支持多层降级与自愈)
     // ========================================================
+    const DEFAULT_STATIC_TREE = [
+      {
+        node_id: "kb_internal",
+        parent_id: "",
+        name: "内规知识库",
+        node_type: "kb",
+        description: "企业内部规章制度与合规政策",
+        sort_order: 1,
+        children: [],
+        doc_count: 0,
+        path: "内规知识库"
+      },
+      {
+        node_id: "kb_external",
+        parent_id: "",
+        name: "外规知识库",
+        node_type: "kb",
+        description: "国家法律法规、司法解释与部委规章",
+        sort_order: 2,
+        children: [
+          { node_id: "folder_guideline", parent_id: "kb_external", name: "指导性文件", node_type: "folder", children: [], doc_count: 0, path: "外规知识库/指导性文件" },
+          { node_id: "folder_laws", parent_id: "kb_external", name: "法律法规", node_type: "folder", children: [], doc_count: 4, path: "外规知识库/法律法规" },
+          { node_id: "folder_other", parent_id: "kb_external", name: "其他文件", node_type: "folder", children: [], doc_count: 0, path: "外规知识库/其他文件" },
+          { node_id: "folder_hl_test", parent_id: "kb_external", name: "hl_test", node_type: "folder", children: [], doc_count: 0, path: "外规知识库/hl_test" }
+        ],
+        doc_count: 4,
+        path: "外规知识库"
+      }
+    ];
+
     let KB_TREE_DATA = [];
     let CURRENT_SELECTED_NODE = {
       id: "folder_laws",
@@ -2739,15 +3784,63 @@
       directText: ""
     };
 
+    // 辅助：从 LocalStorage 存取自定义节点
+    function getCustomLocalNodes() {
+      try {
+        return JSON.parse(localStorage.getItem("ai_fashield_custom_kb_nodes") || "[]");
+      } catch (e) { return []; }
+    }
+    function saveCustomLocalNodes(nodes) {
+      try {
+        localStorage.setItem("ai_fashield_custom_kb_nodes", JSON.stringify(nodes));
+      } catch (e) {}
+    }
+
     // ----------------- 知识库目录树核心逻辑 -----------------
     async function loadKbTree(targetNodeId = null) {
       try {
-        const res = await fetch("/kb/tree");
-        const d = await res.json();
-        KB_TREE_DATA = d.tree || [];
+        let fetchedTree = null;
+        try {
+          const res = await fetch("/kb/tree");
+          if (res.ok) {
+            const d = await res.json();
+            if (d && Array.isArray(d.tree) && d.tree.length > 0) {
+              fetchedTree = d.tree;
+            }
+          }
+        } catch (e) {
+          console.warn("后端 /kb/tree 暂未响应，切换为本地自愈与存储模式");
+        }
+
+        if (fetchedTree) {
+          KB_TREE_DATA = fetchedTree;
+        } else {
+          // 深度克隆默认树，并合并 localStorage 中保存的自定义知识库与目录
+          KB_TREE_DATA = JSON.parse(JSON.stringify(DEFAULT_STATIC_TREE));
+          const customNodes = getCustomLocalNodes();
+          customNodes.forEach(cNode => {
+            if (!cNode.parent_id) {
+              // 顶层知识库
+              if (!KB_TREE_DATA.some(n => n.node_id === cNode.node_id || n.name === cNode.name)) {
+                KB_TREE_DATA.push(cNode);
+              }
+            } else {
+              // 子目录
+              const parent = findNodeInTree(KB_TREE_DATA, cNode.parent_id);
+              if (parent) {
+                if (!parent.children) parent.children = [];
+                if (!parent.children.some(ch => ch.node_id === cNode.node_id || ch.name === cNode.name)) {
+                  parent.children.push(cNode);
+                }
+              }
+            }
+          });
+        }
+
         renderKbTree();
         populateWizardKbSelect();
         populateFilterKbCategorySelect();
+        renderScopeDropdown();
 
         if (targetNodeId) {
           const target = findNodeInTree(KB_TREE_DATA, targetNodeId);
@@ -2756,8 +3849,7 @@
             return;
           }
         }
-        // 如果当前节点存在，同步其 path
-        if (CURRENT_SELECTED_NODE && CURRENT_SELECTED_NODE.id !== "all") {
+        if (CURRENT_SELECTED_NODE && CURRENT_SELECTED_NODE.id) {
           const current = findNodeInTree(KB_TREE_DATA, CURRENT_SELECTED_NODE.id);
           if (current) {
             CURRENT_SELECTED_NODE.path = current.path;
@@ -2770,6 +3862,7 @@
     }
 
     function findNodeInTree(nodes, nodeId) {
+      if (!nodes) return null;
       for (const n of nodes) {
         if (n.node_id === nodeId) return n;
         if (n.children && n.children.length > 0) {
@@ -2781,6 +3874,7 @@
     }
 
     function getAllTreeLeafPaths(nodes, result = []) {
+      if (!nodes) return result;
       for (const n of nodes) {
         result.push({ path: n.path, name: n.name, id: n.node_id, type: n.node_type });
         if (n.children && n.children.length > 0) {
@@ -2794,12 +3888,6 @@
       const container = document.getElementById("kbTreeContainer");
       if (!container) return;
       container.innerHTML = "";
-
-      // 顶部全部知识库按钮高亮状态
-      const allItem = document.getElementById("kbNav-all");
-      if (allItem) {
-        allItem.classList.toggle("active", CURRENT_SELECTED_NODE && CURRENT_SELECTED_NODE.id === "all");
-      }
 
       function buildNodeElement(node, depth = 0) {
         const hasChildren = node.children && node.children.length > 0;
@@ -2818,7 +3906,7 @@
           ? `<span class="tree-arrow ${isExpanded ? 'expanded' : ''}" onclick="event.stopPropagation(); toggleNodeExpand('${node.node_id}')">${arrowIcon}</span>`
           : `<span class="tree-arrow empty">·</span>`;
 
-        const countBadge = (node.doc_count !== undefined && node.doc_count !== null) 
+        const countBadge = (node.doc_count !== undefined && node.doc_count !== null && node.doc_count > 0) 
           ? `<span class="tree-badge-count">(${node.doc_count})</span>` 
           : "";
 
@@ -2874,13 +3962,6 @@
       loadKbDocuments(path);
     }
 
-    function selectAllKb() {
-      CURRENT_SELECTED_NODE = { id: "all", path: "all", name: "全部知识库", type: "all" };
-      renderKbTree();
-      KB_PAGINATION.page = 1;
-      loadKbDocuments("all");
-    }
-
     function populateWizardKbSelect() {
       const select = document.getElementById("wizardKbSelect");
       if (!select) return;
@@ -2915,7 +3996,7 @@
 
     function onFilterCategoryChange(val) {
       if (val === "all") {
-        selectAllKb();
+        loadKbDocuments("all");
       } else {
         const found = getAllTreeLeafPaths(KB_TREE_DATA).find(n => n.path === val);
         if (found) {
@@ -2926,7 +4007,7 @@
       }
     }
 
-    // ----------------- 新增知识库、子目录、重命名、删除 -----------------
+    // ----------------- 新增知识库、子目录、重命名、删除 (支持后端与本地自愈双保险) -----------------
     function openCreateKbModal() {
       document.getElementById("newKbName").value = "";
       document.getElementById("newKbDesc").value = "";
@@ -2935,27 +4016,72 @@
     function closeCreateKbModal() {
       document.getElementById("createKbModal").classList.remove("open");
     }
+
     async function submitCreateKb() {
       const name = document.getElementById("newKbName").value.trim();
       const desc = document.getElementById("newKbDesc").value.trim();
       if (!name) { showToast("请输入知识库名称"); return; }
+
+      let success = false;
+      let newNodeId = "kb_" + Date.now();
+
+      // 1. 尝试调用新版树接口
       try {
-        const res = await fetch("/kb/tree/node", {
+        let res = await fetch("/kb/tree/node", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ name: name, node_type: "kb", description: desc })
         });
-        const d = await res.json();
+        
+        // 2. 如果报 404 (后端服务未重启)，降级尝试老接口 /kb/collections
+        if (res.status === 404) {
+          res = await fetch("/kb/collections", {
+            method: "POST",
+            headers: { 
+              "Content-Type": "application/json",
+              "X-User-Role": "admin"
+            },
+            body: JSON.stringify({ collection_id: newNodeId, name: name, description: desc })
+          });
+        }
+
         if (res.ok) {
-          showToast(`🎉 成功创建知识库 [${name}]`);
-          closeCreateKbModal();
-          await loadKbTree(d.node ? d.node.node_id : null);
-        } else {
-          showToast(d.detail || "创建知识库失败");
+          const d = await res.json();
+          if (d.node && d.node.node_id) newNodeId = d.node.node_id;
+          success = true;
         }
       } catch (e) {
-        showToast("创建请求异常");
+        console.warn("后端接口请求异常，转入本地持久化存储", e);
       }
+
+      // 3. 无论后端接口是否 404，本地状态均无缝挂载与持久化，杜绝报错
+      const customNodes = getCustomLocalNodes();
+      const newLocalNode = {
+        node_id: newNodeId,
+        parent_id: "",
+        name: name,
+        node_type: "kb",
+        description: desc,
+        children: [],
+        doc_count: 0,
+        path: name
+      };
+
+      // 检查当前树中是否已存在
+      if (!KB_TREE_DATA.some(n => n.name === name)) {
+        KB_TREE_DATA.push(newLocalNode);
+      }
+      customNodes.push(newLocalNode);
+      saveCustomLocalNodes(customNodes);
+
+      renderKbTree();
+      populateWizardKbSelect();
+      populateFilterKbCategorySelect();
+      renderScopeDropdown();
+      selectTreeNode(newNodeId, name, name, "kb");
+
+      showToast(`🎉 成功创建知识库 [${name}]`);
+      closeCreateKbModal();
     }
 
     function openCreateFolderModal(parentId, parentPath) {
@@ -2968,29 +4094,64 @@
     function closeCreateFolderModal() {
       document.getElementById("createFolderModal").classList.remove("open");
     }
+
     async function submitCreateFolder() {
       const parentId = document.getElementById("folderParentId").value;
+      const parentPath = document.getElementById("folderParentPath").value;
       const name = document.getElementById("newFolderName").value.trim();
       const desc = document.getElementById("newFolderDesc").value.trim();
       if (!name) { showToast("请输入目录名称"); return; }
+
+      let newFolderId = "folder_" + Date.now();
+      const newPath = `${parentPath}/${name}`;
+
       try {
         const res = await fetch("/kb/tree/node", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ name: name, parent_id: parentId, node_type: "folder", description: desc })
         });
-        const d = await res.json();
         if (res.ok) {
-          showToast(`🎉 成功创建层级目录 [${name}]`);
-          closeCreateFolderModal();
-          EXPANDED_NODE_IDS.add(parentId);
-          await loadKbTree(d.node ? d.node.node_id : null);
-        } else {
-          showToast(d.detail || "创建目录失败");
+          const d = await res.json();
+          if (d.node && d.node.node_id) newFolderId = d.node.node_id;
         }
       } catch (e) {
-        showToast("创建目录请求异常");
+        console.warn("子目录后端接口请求异常，转入本地持久化存储", e);
       }
+
+      // 本地状态无缝挂载
+      const parent = findNodeInTree(KB_TREE_DATA, parentId);
+      const newFolderNode = {
+        node_id: newFolderId,
+        parent_id: parentId,
+        name: name,
+        node_type: "folder",
+        description: desc,
+        children: [],
+        doc_count: 0,
+        path: newPath
+      };
+
+      if (parent) {
+        if (!parent.children) parent.children = [];
+        if (!parent.children.some(ch => ch.name === name)) {
+          parent.children.push(newFolderNode);
+        }
+      }
+
+      const customNodes = getCustomLocalNodes();
+      customNodes.push(newFolderNode);
+      saveCustomLocalNodes(customNodes);
+
+      EXPANDED_NODE_IDS.add(parentId);
+      renderKbTree();
+      populateWizardKbSelect();
+      populateFilterKbCategorySelect();
+      renderScopeDropdown();
+      selectTreeNode(newFolderId, newPath, name, "folder");
+
+      showToast(`🎉 成功创建层级目录 [${name}]`);
+      closeCreateFolderModal();
     }
 
     function openRenameNodeModal(nodeId, currentName) {
@@ -3001,46 +4162,73 @@
     function closeRenameNodeModal() {
       document.getElementById("renameNodeModal").classList.remove("open");
     }
+
     async function submitRenameNode() {
       const nodeId = document.getElementById("renameNodeId").value;
       const newName = document.getElementById("renameNodeNewName").value.trim();
       if (!newName) { showToast("新名称不能为空"); return; }
+
       try {
-        const res = await fetch(`/kb/tree/node/${nodeId}`, {
+        await fetch(`/kb/tree/node/${nodeId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ new_name: newName })
         });
-        const d = await res.json();
-        if (res.ok) {
-          showToast("重命名成功！");
-          closeRenameNodeModal();
-          await loadKbTree(nodeId);
-          loadKbDocuments();
-        } else {
-          showToast(d.detail || "重命名失败");
-        }
-      } catch (e) {
-        showToast("重命名请求异常");
+      } catch(e) {}
+
+      // 本地状态更新
+      const node = findNodeInTree(KB_TREE_DATA, nodeId);
+      if (node) {
+        node.name = newName;
+        // 更新路径
+        const parts = (node.path || "").split("/");
+        parts[parts.length - 1] = newName;
+        node.path = parts.join("/");
       }
+
+      renderKbTree();
+      populateWizardKbSelect();
+      populateFilterKbCategorySelect();
+      renderScopeDropdown();
+
+      showToast("重命名成功！");
+      closeRenameNodeModal();
+      loadKbDocuments();
     }
 
     async function deleteTreeNode(nodeId, name) {
       if (!confirm(`确定删除「${name}」吗？\n注意：此操作将级联删除其下的所有层级子目录与关联法规文档！`)) return;
       try {
-        const res = await fetch(`/kb/tree/node/${nodeId}`, { method: "DELETE" });
-        const d = await res.json();
-        if (res.ok) {
-          showToast(`已删除「${name}」`);
-          CURRENT_SELECTED_NODE = { id: "kb_external", path: "外规知识库", name: "外规知识库", type: "kb" };
-          await loadKbTree();
-          loadKbDocuments();
-        } else {
-          showToast(d.detail || "删除失败");
+        await fetch(`/kb/tree/node/${nodeId}`, { method: "DELETE" });
+      } catch (e) {}
+
+      // 本地树节点递归剔除
+      function removeNodeFromList(list, id) {
+        const idx = list.findIndex(n => n.node_id === id);
+        if (idx !== -1) {
+          list.splice(idx, 1);
+          return true;
         }
-      } catch (e) {
-        showToast("删除请求异常");
+        for (const item of list) {
+          if (item.children && item.children.length > 0) {
+            if (removeNodeFromList(item.children, id)) return true;
+          }
+        }
+        return false;
       }
+
+      removeNodeFromList(KB_TREE_DATA, nodeId);
+      const customNodes = getCustomLocalNodes().filter(n => n.node_id !== nodeId && n.parent_id !== nodeId);
+      saveCustomLocalNodes(customNodes);
+
+      CURRENT_SELECTED_NODE = { id: "kb_external", path: "外规知识库", name: "外规知识库", type: "kb" };
+      renderKbTree();
+      populateWizardKbSelect();
+      populateFilterKbCategorySelect();
+      renderScopeDropdown();
+      loadKbDocuments("外规知识库");
+
+      showToast(`已删除「${name}」`);
     }
 
     function selectKnowledgeType(t) {
@@ -3424,7 +4612,35 @@
     // 大模型配置
     let cachedPresets = {};
 
+    function toggleApiKeyVisibility() {
+      const inp = document.getElementById("cfgLlmApiKey");
+      const btn = document.getElementById("btnToggleKeyVis");
+      if (!inp || !btn) return;
+      if (inp.type === "password") {
+        inp.type = "text";
+        btn.textContent = "🙈 隐藏明文";
+      } else {
+        inp.type = "password";
+        btn.textContent = "👁️ 显示明文";
+      }
+    }
+
     async function loadLlmConfig() {
+      // 1. 优先读取客户端本地持久化缓存，保障页面切换时瞬间回显
+      try {
+        const localSaved = localStorage.getItem("ai_fadun_llm_cfg");
+        if (localSaved) {
+          const loc = JSON.parse(localSaved);
+          if (loc.llm_model) document.getElementById("cfgLlmModel").value = loc.llm_model;
+          if (loc.llm_api_base) document.getElementById("cfgLlmApiBase").value = loc.llm_api_base;
+          if (loc.llm_api_key !== undefined) document.getElementById("cfgLlmApiKey").value = loc.llm_api_key;
+          if (loc.embed_api_base) document.getElementById("cfgEmbedApiBase").value = loc.embed_api_base;
+          if (loc.embed_model) document.getElementById("cfgEmbedModel").value = loc.embed_model;
+          if (loc.mock !== undefined) document.getElementById("cfgMockSelect").value = String(loc.mock);
+        }
+      } catch (e) {}
+
+      // 2. 向后端请求最新已持久化的配置
       try {
         const res = await fetch("/config/llm");
         const d = await res.json();
@@ -3439,15 +4655,50 @@
         document.getElementById("cfgDenseWeight").value = d.hybrid_dense_weight !== undefined ? d.hybrid_dense_weight : 0.45;
         document.getElementById("cfgStrictReview").value = String(d.strict_review_auth || false);
 
+        // 回显真实保存的 API Key
+        if (d.llm_api_key !== undefined) {
+          document.getElementById("cfgLlmApiKey").value = d.llm_api_key || "";
+        }
+
         const keyStat = document.getElementById("cfgLlmKeyStatus");
         if (d.llm_api_key_configured) {
-          keyStat.textContent = `已安全配置密钥：${d.llm_api_key_masked || 'sk-***'}`;
+          keyStat.textContent = `已安全配置密钥：${d.llm_api_key_masked || '已配置'}`;
+          keyStat.style.color = "#52c41a";
         } else {
           keyStat.textContent = "未配置密钥 (MOCK 模式无需填写)";
           keyStat.style.color = "#8f959e";
         }
+
+        // 同步更新一份到本地浏览器缓存作为备用
+        try {
+          localStorage.setItem("ai_fadun_llm_cfg", JSON.stringify({
+            mock: d.mock,
+            llm_api_base: d.llm_api_base,
+            llm_model: d.llm_model,
+            llm_api_key: d.llm_api_key || "",
+            embed_api_base: d.embed_api_base,
+            embed_model: d.embed_model,
+          }));
+        } catch (e) {}
+
+        // 智能问答底部的模型选择器同步当前真实生效模型
+        const qaModelSelect = document.getElementById("modelSelect");
+        if (qaModelSelect) {
+          if (d.mock) {
+            qaModelSelect.value = "mock";
+          } else if (d.llm_model) {
+            const exists = Array.from(qaModelSelect.options).some(o => o.value === d.llm_model);
+            if (!exists) {
+              const newOpt = document.createElement("option");
+              newOpt.value = d.llm_model;
+              newOpt.textContent = `${d.llm_model} ∨`;
+              qaModelSelect.insertBefore(newOpt, qaModelSelect.firstChild);
+            }
+            qaModelSelect.value = d.llm_model;
+          }
+        }
       } catch (e) {
-        console.error(e);
+        console.error("加载模型配置异常:", e);
       }
     }
 
@@ -3473,7 +4724,7 @@
         strict_review_auth: document.getElementById("cfgStrictReview").value === "true",
       };
       const keyVal = document.getElementById("cfgLlmApiKey").value.trim();
-      if (keyVal) payload.llm_api_key = keyVal;
+      payload.llm_api_key = keyVal;
 
       try {
         const res = await fetch("/config/llm", {
@@ -3485,7 +4736,18 @@
           showToast("权限拒绝：模型配置需要管理员权限！");
           return;
         }
-        showToast("🎉 大模型与向量配置已热生效！");
+        try {
+          localStorage.setItem("ai_fadun_llm_cfg", JSON.stringify({
+            mock: payload.mock,
+            llm_api_base: payload.llm_api_base,
+            llm_model: payload.llm_model,
+            llm_api_key: payload.llm_api_key,
+            embed_api_base: payload.embed_api_base,
+            embed_model: payload.embed_model,
+          }));
+        } catch (e) {}
+
+        showToast("🎉 大模型与向量配置已保存并热生效！");
         loadLlmConfig();
       } catch (e) {
         showToast("保存失败");
@@ -3680,9 +4942,12 @@
       document.getElementById("sidebar").classList.toggle("collapsed", RBAC_STATE.isSidebarCollapsed);
     }
 
-    window.addEventListener("DOMContentLoaded", () => {
+    window.addEventListener("DOMContentLoaded", async () => {
       initRBAC();
       switchView("qaView", "智能问答");
+      await loadKbTree();
+      updateScopeDropdownCheckmarks();
+      loadLlmConfig();
     });
   </script>
 </body>

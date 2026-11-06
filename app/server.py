@@ -45,10 +45,14 @@ os.makedirs(STATIC_DIR, exist_ok=True)
 
 class QueryReq(BaseModel):
     query: str
+    history: Optional[List[Dict[str, str]]] = Field(default_factory=list)
     act_date: Optional[str] = None
     act_end_date: Optional[str] = None
     region: Optional[str] = None
     thread_id: Optional[str] = None
+    kb_scope: Optional[str] = "all"
+    model: Optional[str] = None
+    deep_thinking: Optional[bool] = True
 
 
 class ReviewReq(BaseModel):
@@ -192,6 +196,67 @@ def check_kb_manage_permission(user_identifier: Optional[str], collection_id: st
         )
 
 
+def handle_legal_query(req: QueryReq) -> Dict[str, Any]:
+    tid = req.thread_id or str(uuid.uuid4())
+    cfg = {"configurable": {"thread_id": tid}}
+    payload: Dict[str, Any] = {"query": req.query, "thread_id": tid}
+    if req.history:
+        payload["history"] = req.history
+    if req.act_date:
+        payload["act_date"] = req.act_date
+    if req.act_end_date:
+        payload["act_end_date"] = req.act_end_date
+    if req.region:
+        payload["region"] = req.region
+    if req.kb_scope:
+        payload["kb_scope"] = req.kb_scope
+    if req.model:
+        payload["model"] = req.model
+        if req.model == "mock":
+            settings.mock = True
+        else:
+            settings.llm_model = req.model
+            if (
+                settings.llm_api_key
+                or "localhost" in (settings.llm_api_base or "")
+                or "127.0.0.1" in (settings.llm_api_base or "")
+            ):
+                settings.mock = False
+    if req.deep_thinking is not None:
+        payload["deep_thinking"] = req.deep_thinking
+
+    graph.invoke(payload, cfg)
+    snap = _snapshot(cfg, tid)
+    fo = snap.get("final_output") or {}
+    plan = snap.get("rule_plan") or {}
+    audit_rec = audit_store.record_audit_event(
+        thread_id=tid,
+        event_type="query_generated",
+        decision="pending_review",
+        confidence=snap.get("answer_confidence") or "",
+        review_level=plan.get("review", ""),
+        citations=fo.get("citations", []),
+        draft_answer=fo.get("answer", ""),
+        final_answer=fo.get("answer", ""),
+    )
+    base = {
+        "thread_id": tid,
+        "result": snap["final_output"],
+        "fact_summary": snap.get("fact_summary"),
+        "compliance_info": snap.get("compliance_info"),
+        "rule_plan": snap.get("rule_plan"),
+        "rule_notes": snap.get("rule_notes", []),
+        "precedence": snap.get("precedence", []),
+        "answer_confidence": snap.get("answer_confidence"),
+        "audit_entry": audit_rec,
+        "kb_scope": req.kb_scope or "all",
+        "model_used": req.model or (settings.llm_model if not settings.mock else "mock"),
+    }
+    if snap["needs_review"]:
+        return {"status": "needs_review", "review": snap["review_payload"], **base}
+    return {"status": "done", **base}
+
+
 if _HAS_FASTAPI:
     app = FastAPI(title="法律顾问 Agent（可交付版 v3.5）", version="3.5.0")
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -218,44 +283,7 @@ if _HAS_FASTAPI:
 
     @app.post("/legal-query")
     def legal_query(req: QueryReq):
-        tid = req.thread_id or str(uuid.uuid4())
-        cfg = {"configurable": {"thread_id": tid}}
-        payload = {"query": req.query, "thread_id": tid}
-        if req.act_date:
-            payload["act_date"] = req.act_date
-        if req.act_end_date:
-            payload["act_end_date"] = req.act_end_date
-        if req.region:
-            payload["region"] = req.region
-
-        graph.invoke(payload, cfg)
-        snap = _snapshot(cfg, tid)
-        fo = snap.get("final_output") or {}
-        plan = snap.get("rule_plan") or {}
-        audit_rec = audit_store.record_audit_event(
-            thread_id=tid,
-            event_type="query_generated",
-            decision="pending_review",
-            confidence=snap.get("answer_confidence") or "",
-            review_level=plan.get("review", ""),
-            citations=fo.get("citations", []),
-            draft_answer=fo.get("answer", ""),
-            final_answer=fo.get("answer", ""),
-        )
-        base = {
-            "thread_id": tid,
-            "result": snap["final_output"],
-            "fact_summary": snap.get("fact_summary"),
-            "compliance_info": snap.get("compliance_info"),
-            "rule_plan": snap.get("rule_plan"),
-            "rule_notes": snap.get("rule_notes", []),
-            "precedence": snap.get("precedence", []),
-            "answer_confidence": snap.get("answer_confidence"),
-            "audit_entry": audit_rec,
-        }
-        if snap["needs_review"]:
-            return {"status": "needs_review", "review": snap["review_payload"], **base}
-        return {"status": "done", **base}
+        return handle_legal_query(req)
 
     @app.post("/human-review")
     def human_review(req: ReviewReq):

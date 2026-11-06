@@ -15,6 +15,13 @@ from app.models import Citation, TwoLayerAnswer
 class AgentState(TypedDict, total=False):
     thread_id: str
     query: str
+    # 多轮对话上下文历史（[{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]）
+    history: List[dict]
+    # 知识库检索范围（all / none / 不使用知识库 / 自定义知识库或文档路径）
+    kb_scope: str
+    # 当前问答指定模型与深度思考开关
+    model: str
+    deep_thinking: bool
     # 脱敏后的查询文本（用于外发 LLM 与日志留存）
     masked_query: str
     # 合规检查摘要（PII 脱敏项、律所利益冲突预警）

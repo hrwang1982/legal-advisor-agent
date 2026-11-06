@@ -39,6 +39,18 @@ except ImportError:
     MemorySaver = None  # type: ignore
 
 
+def _is_no_kb_scope(state: AgentState) -> bool:
+    scope = str(state.get("kb_scope") or "").strip().lower()
+    return scope in ("none", "不使用知识库", "no_kb")
+
+
+def route_after_extract_facts(state: AgentState) -> str:
+    """若选中「不使用知识库」，直接跳过拆解、改写、知识库检索与规则过滤，直达 synthesize 由大模型直接生成答复。"""
+    if _is_no_kb_scope(state):
+        return "synthesize"
+    return "decompose"
+
+
 def route_after_review(state: AgentState) -> str:
     """人在环后的三路条件路由。"""
     if state.get("human_approved"):
@@ -111,17 +123,22 @@ class _FallbackCompiledGraph:
                 self._states[tid] = state
                 return state
             if next_step == "extract_facts":
-                for fn in (
-                    extract_facts_node,
-                    decompose,
-                    rewrite,
-                    retrieve,
-                    validate,
-                    rerank_node,
-                    rank_hierarchy,
-                    rules_node,
-                    synthesize,
-                ):
+                steps = (
+                    (extract_facts_node, synthesize)
+                    if _is_no_kb_scope(state)
+                    else (
+                        extract_facts_node,
+                        decompose,
+                        rewrite,
+                        retrieve,
+                        validate,
+                        rerank_node,
+                        rank_hierarchy,
+                        rules_node,
+                        synthesize,
+                    )
+                )
+                for fn in steps:
                     state.update(fn(state))
             elif next_step == "synthesize":
                 state.update(synthesize(state))
@@ -132,17 +149,22 @@ class _FallbackCompiledGraph:
         if isinstance(payload, dict):
             state.update(payload)
         state["human_approved"] = False
-        for fn in (
-            extract_facts_node,
-            decompose,
-            rewrite,
-            retrieve,
-            validate,
-            rerank_node,
-            rank_hierarchy,
-            rules_node,
-            synthesize,
-        ):
+        steps = (
+            (extract_facts_node, synthesize)
+            if _is_no_kb_scope(state)
+            else (
+                extract_facts_node,
+                decompose,
+                rewrite,
+                retrieve,
+                validate,
+                rerank_node,
+                rank_hierarchy,
+                rules_node,
+                synthesize,
+            )
+        )
+        for fn in steps:
             state.update(fn(state))
         self._pending_interrupts[tid] = self._build_interrupt_payload(state)
         self._states[tid] = state
@@ -174,7 +196,14 @@ def build_graph(checkpointer=None):
     g.add_node("human_review", human_review)
 
     g.add_edge(START, "extract_facts")
-    g.add_edge("extract_facts", "decompose")
+    g.add_conditional_edges(
+        "extract_facts",
+        route_after_extract_facts,
+        {
+            "decompose": "decompose",
+            "synthesize": "synthesize",
+        },
+    )
     g.add_edge("decompose", "rewrite")
     g.add_edge("rewrite", "retrieve")
     g.add_edge("retrieve", "validate")

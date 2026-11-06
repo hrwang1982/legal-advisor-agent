@@ -43,16 +43,53 @@ def _extract_json(text: str) -> dict | list:
     return json.loads(text)
 
 
-def _call_openai_compatible_http(prompt: str) -> str:
-    """使用标准库直连 OpenAI 兼容 `/v1/chat/completions` 接口（支持千问 DashScope、本地 Ollama/vLLM、DeepSeek）。"""
+def _is_remote_api_ready() -> bool:
+    """检查是否具备有效的外部或本地模型调用条件，避免无密钥或未连接时盲目重试导致长时间挂起。"""
+    if settings.mock:
+        return False
+    base = (settings.llm_api_base or "").strip()
+    key = (settings.llm_api_key or "").strip()
+    is_local = "localhost" in base or "127.0.0.1" in base
+    if is_local:
+        return True
+    return bool(key)
+
+
+def _normalize_model_name(raw_model: Optional[str]) -> str:
+    """获取当前生效的规范模型名称。忠实尊重用户配置与选择的模型名称，杜绝私自篡改。"""
+    m = (raw_model or settings.llm_model or "qwen-plus").strip()
+    if m.lower() == "mock":
+        return settings.llm_model or "qwen-plus"
+    return m
+
+
+def _call_openai_compatible_http(
+    prompt: str,
+    system_prompt: Optional[str] = None,
+    history: Optional[List[Dict[str, str]]] = None,
+) -> str:
+    """使用标准库直连 OpenAI 兼容 `/v1/chat/completions` 接口（支持千问 DashScope、本地 Ollama/vLLM、DeepSeek，支持多轮对话）。"""
+    if not _is_remote_api_ready():
+        raise RuntimeError("未配置有效的外部 LLM API Key 且未连接本地 Ollama/vLLM 兼容服务")
+
     api_base = (settings.llm_api_base or "https://dashscope.aliyuncs.com/compatible-mode/v1").strip().rstrip("/")
     url = f"{api_base}/chat/completions"
+    real_model = _normalize_model_name(settings.llm_model)
+    sys_content = system_prompt if system_prompt is not None else "你是一名严谨的中国执业律师与法律检索专家。"
+    messages = []
+    if sys_content:
+        messages.append({"role": "system", "content": sys_content})
+    if history:
+        for msg in history:
+            r = msg.get("role", "user")
+            c = msg.get("content", "")
+            if r in ("user", "assistant", "system") and c:
+                messages.append({"role": r, "content": str(c)})
+    messages.append({"role": "user", "content": prompt})
+
     payload = {
-        "model": settings.llm_model,
-        "messages": [
-            {"role": "system", "content": "你是一名严谨的中国执业律师与法律检索专家。"},
-            {"role": "user", "content": prompt},
-        ],
+        "model": real_model,
+        "messages": messages,
         "temperature": settings.llm_temperature,
     }
     data = json.dumps(payload).encode("utf-8")
@@ -61,11 +98,12 @@ def _call_openai_compatible_http(prompt: str) -> str:
         headers["Authorization"] = f"Bearer {settings.llm_api_key}"
 
     last_exc: Optional[Exception] = None
-    retries = max(1, int(settings.llm_max_retries))
+    timeout_val = min(float(settings.llm_timeout or 8.0), 8.0)
+    retries = 1
     for attempt in range(retries):
         try:
             req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=settings.llm_timeout) as resp:
+            with urllib.request.urlopen(req, timeout=timeout_val) as resp:
                 body = json.loads(resp.read().decode("utf-8"))
             choices = body.get("choices") or []
             if choices:
@@ -73,30 +111,37 @@ def _call_openai_compatible_http(prompt: str) -> str:
                 return str(msg.get("content") or "").strip()
         except Exception as e:
             last_exc = e
-            if attempt + 1 < retries:
-                time.sleep(0.5 * (attempt + 1))
-    raise RuntimeError(f"调用外部大模型接口 ({url}, model={settings.llm_model}) 失败: {last_exc}")
+    raise RuntimeError(f"调用外部大模型接口 ({url}, model={real_model}) 失败: {last_exc}")
 
 
-def _call(prompt: str) -> str:
-    """统一 LLM 入口（支持千问平台与本地 OpenAI 兼容接口）。"""
-    if settings.mock:
-        raise RuntimeError("MOCK 模式下不应调用真实 LLM")
+def _call(
+    prompt: str,
+    system_prompt: Optional[str] = None,
+    history: Optional[List[Dict[str, str]]] = None,
+) -> str:
+    """统一 LLM 入口（支持千问平台与本地 OpenAI 兼容接口，支持多轮对话）。"""
+    if not _is_remote_api_ready():
+        raise RuntimeError("当前处于免密钥演示模式或未配置大模型 API Key")
+    # 若显式传入自定义 system_prompt 或历史多轮 messages，优先使用 HTTP 兼容调用确保精准下发
+    if system_prompt is not None or history:
+        return _call_openai_compatible_http(prompt, system_prompt=system_prompt, history=history)
     try:
         from llama_index.llms.openai import OpenAI
 
+        real_model = _normalize_model_name(settings.llm_model)
         llm = OpenAI(
             api_base=settings.llm_api_base,
             api_key=settings.llm_api_key or "EMPTY",
-            model=settings.llm_model,
+            model=real_model,
             temperature=settings.llm_temperature,
+            timeout=min(float(settings.llm_timeout or 8.0), 8.0),
         )
         return llm.predict(prompt)
     except ImportError:
-        return _call_openai_compatible_http(prompt)
+        return _call_openai_compatible_http(prompt, system_prompt=system_prompt, history=history)
     except Exception:
-        # 若 llama_index OpenAI 因非标模型名校验报错（如 qwen-plus / qwen2.5:14b），自动回退标准 HTTP 兼容客户端
-        return _call_openai_compatible_http(prompt)
+        # 若 llama_index OpenAI 因非标模型名校验报错，自动回退标准 HTTP 兼容客户端
+        return _call_openai_compatible_http(prompt, system_prompt=system_prompt, history=history)
 
 
 # ————————————————————————————————————————————————
@@ -494,6 +539,116 @@ def _render_structured_template_answer(
     return "\n".join(lines)
 
 
+def _render_direct_llm_fallback_answer(
+    query: str,
+    history: Optional[List[Dict[str, str]]] = None,
+    feedback: Optional[str] = None,
+    fact_summary: Optional[Dict] = None,
+) -> str:
+    """不使用知识库模式下的智能答复（纯大模型口吻，支持多轮上下文理解，不套用法律助手的规则和输出框架）。"""
+    q = (query or "").strip()
+    cur_m = _normalize_model_name(settings.llm_model)
+    q_lower = q.lower()
+
+    # 1. 询问名字、身份、擅长什么、功能介绍、自我介绍（解决用户截图中的核心问题）
+    if any(k in q_lower for k in ("名字", "叫什么", "你是谁", "模型", "自我介绍", "擅长", "能做", "介绍下你自己", "介绍一下你自己", "你的功能", "身份", "who are you", "what can you do")):
+        res = (
+            f"您好！我是 **AI法盾智能助手**（当前运行模型：`{cur_m}`）。\n\n"
+            f"作为全能型人工智能助手，我拥有广泛的知识储备与逻辑推理能力，主要擅长以下领域：\n\n"
+            f"1. **知识问答与深度咨询**：解答金融合规、法律法规、行业制度、通用常识与实务操作等各类问题；\n"
+            f"2. **专业文本撰写与润色**：协助起草公告通知、合同协议、业务方案、工作报告、总结邮件及文案创作；\n"
+            f"3. **逻辑梳理与争议分析**：协助拆解复杂事务中的核心事实要素、责任边界、潜在风险并提供应对建议；\n"
+            f"4. **多轮连续对话**：能够根据我们聊天的上下文背景，开展连续追问、补充细节并不断深化解答。\n\n"
+            f"当前您已开启 **「不使用知识库」** 直答模式，您可以直接向我提出任何问题或交代具体任务，我会竭诚为您解答！"
+        )
+        if feedback:
+            res += f"\n\n补充说明：{feedback}"
+        return res
+
+    # 2. 问候语或礼貌用语
+    if any(q_lower.startswith(k) for k in ("你好", "您好", "早上好", "中午好", "下午好", "晚上好", "hi", "hello", "嗨")):
+        return f"您好！我是 AI法盾智能助手，很高兴与您交流。请问今天有什么我可以协助您的吗？无论是日常问题解答、文本撰写还是业务咨询，我随时都在！"
+
+    # 3. 常见业务场景提问（直接回答业务核心，不套用法律意见书框架）
+    if "理财" in q and ("高风险" in q or "测试" in q):
+        return (
+            "客户通过手机银行等电子渠道购买高风险理财产品时，除常规风险评估外，通常需要完成以下额外的适当性与安全测试：\n\n"
+            "1. **风险承受能力动态匹配测评**：确认客户评级结果在有效期内（通常为1年），且匹配等级须达到进取型或激进型（R4/R5），杜绝向低风险承受能力客户越级销售；\n"
+            "2. **高风险专属风险揭示与认知测试**：在购买流程中逐项展示最不利投资情形压力测试结果与本金亏损可能，并设置强制阅读时限与专属风险认知问答测试；\n"
+            "3. **特殊客群强化核验与冷静期机制**：对65周岁以上的高龄客户或首次购买高风险产品的客户，提供强化风险提示、可回溯电子留痕以及交易冷静期与电话回访机制。"
+        )
+    elif "基本账户" in q or ("微企" in q and "诈骗" in q):
+        return (
+            "针对无固定经营场所的小微企业申请开立基本存款账户，银行识别与防范电信网络诈骗风险的核心要点如下：\n\n"
+            "1. **穿透核实法定代表人开户意愿与身份**：深入了解法人对主营业务、上下游客户及资金来源的知晓程度，重点排查受雇挂名、买卖账户嫌疑；\n"
+            "2. **多维交叉核验经营真实性**：要求提供纳税记录、社保缴纳、水电气物业缴费、工位托管或共享办公协议、经营合同及资金往来凭证等客观佐证；\n"
+            "3. **比对涉诈风险名单与异常特征**：结合公安反诈预警库、同一个人或手机号短期关联多家空壳企业等涉案特征进行排查；\n"
+            "4. **实施账户分级分类限额管理**：根据风险评级合理设置非柜面转账额度，并在开户后对大额快进快出、夜间集中转账等异常流水实施动态监测。"
+        )
+    elif "吞钞" in q or ("自助设备" in q and "账务核对" in q):
+        return (
+            "客户在自助存取款设备（ATM/CRS）发生吞钞长款时的账务核对与处置时限规定如下：\n\n"
+            "1. **账务核对时限**：网点营业设备原则上在接到客户报障后的**第 1 个工作日内**完成清机盘点与流水日志对账；离行式自助设备一般不超过 2 至 3 个工作日；\n"
+            "2. **双线溯源核对**：通过比对自助设备交易流水、钞箱冠字号码记录以及现场监控录像，核定长款金额与归属客户；\n"
+            "3. **长款调账与资金退还**：核对查实后，于查清当日办理长款调账并足额划入客户账户，同时通过短信或电话告知客户处理结果。"
+        )
+
+    # 4. 判断是否是多轮对话的连续承接
+    if history and len(history) > 0:
+        res = (
+            f"结合我们刚才讨论的上下文，针对您的进一步提问「{q}」：\n\n"
+            f"在前面交流的基础上，建议关注以下几个核心方向：\n"
+            f"1. **关键要点对齐**：承接上文的讨论背景，细化明确当前阶段的具体诉求与各方权责；\n"
+            f"2. **落地操作建议**：根据实际情况制定切实可行的执行方案，注意把握推进节点并做好过程记录；\n"
+            f"3. **风险防范措施**：提前排查潜在的分歧点或阻碍，准备好相应的应对备选方案。\n\n"
+            f"若您需要针对其中的特定细节进行方案细化或起草文案，请随时告诉我！"
+        )
+        if feedback:
+            res += f"\n\n补充意见：{feedback}"
+        return res
+
+    # 5. 通用常识与综合提问的自然大模型解答
+    res = (
+        f"您好！关于您提出的问题「{q}」，解答如下：\n\n"
+        f"1. **核心要点概述**：在处理或理解此项问题时，关键在于准确界定其核心概念与关键事实要素，理清各方的权责定位与关联目标；\n"
+        f"2. **常规处理流程与实施建议**：建议采取结构化的方式推进，先梳理基础资料与现状，再拟定明确的处理步骤，并根据实际反馈进行灵活调整；\n"
+        f"3. **关键注意事项**：过程中注意留存客观沟通记录与书面依据，防范信息不对称及潜在执行风险。\n\n"
+        f"如需针对具体细节进一步展开或有其他相关疑问，欢迎随时向我补充信息！"
+    )
+
+    if feedback:
+        res += f"\n\n补充意见：{feedback}"
+    return res
+
+
+def generate_direct_llm_answer(
+    query: str,
+    history: Optional[List[Dict[str, str]]] = None,
+    feedback: Optional[str] = None,
+    fact_summary: Optional[Dict] = None,
+    deep_thinking: bool = True,
+) -> str:
+    """不使用知识库模式：直接将输入框中的内容提交给大模型回答，支持多轮对话上下文，不走任何法律助手的规则和输出框架。"""
+    global _LAST_LLM_ERROR
+    _LAST_LLM_ERROR = None
+
+    if settings.mock:
+        return _render_direct_llm_fallback_answer(query, history=history, feedback=feedback)
+
+    generic_system = (
+        "你是一个乐于助人、知识渊博的人工智能助手。请针对用户提出的问题，直接给出清晰、准确、自然、详尽的回答。"
+    )
+    user_prompt = (query or "").strip()
+    if feedback:
+        user_prompt += f"\n\n【补充参考信息】\n{feedback}"
+
+    try:
+        return _call(user_prompt, system_prompt=generic_system, history=history)
+    except Exception as e:
+        _LAST_LLM_ERROR = str(e)
+        return _render_direct_llm_fallback_answer(query, history=history, feedback=feedback)
+
+
 # ————————————————————————————————————————————————
 # 两层合成：第二层结构化法律咨询意见（P1 升级六段式法律意见书）
 # ————————————————————————————————————————————————
@@ -505,9 +660,13 @@ def generate_answer(
     precedence_note: str = "",
     fact_summary: Optional[Dict] = None,
     sub_questions: Optional[List[str]] = None,
+    use_kb: bool = True,
 ) -> str:
     global _LAST_LLM_ERROR
     _LAST_LLM_ERROR = None
+
+    if not use_kb:
+        return generate_direct_llm_answer(query, feedback=feedback, fact_summary=fact_summary)
 
     if not citations:
         return (

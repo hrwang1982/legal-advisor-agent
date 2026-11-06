@@ -525,6 +525,16 @@ class KnowledgeBaseStore:
             """,
             (cid, name, description, em, now),
         )
+        # 同步登记到目录树根节点
+        cur.execute("SELECT node_id FROM kb_tree_nodes WHERE name = ?", (name,))
+        if not cur.fetchone():
+            cur.execute(
+                """
+                INSERT OR IGNORE INTO kb_tree_nodes (node_id, parent_id, name, node_type, description, sort_order, created_at)
+                VALUES (?, '', ?, 'kb', ?, 99, ?)
+                """,
+                (cid, name, description, now),
+            )
         conn.commit()
         if self._mem_conn is None:
             conn.close()
@@ -691,6 +701,14 @@ class KnowledgeBaseStore:
 
         if self._mem_conn is None:
             conn.close()
+
+        today_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        for item in out:
+            if not item.get("effective_date"):
+                item["effective_date"] = today_iso
+            if not item.get("article_effective_date"):
+                item["article_effective_date"] = item["effective_date"]
+
         return out
 
     def import_advanced_document(
@@ -740,6 +758,7 @@ class KnowledgeBaseStore:
         clean_law = (law_name or filename.rsplit(".", 1)[0]).strip().strip("《》")
         doc_id = f"doc_{uuid.uuid4().hex[:12]}"
         now = datetime.now(timezone.utc).isoformat()
+        eff_date = (effective_date or "").strip() or datetime.now(timezone.utc).strftime("%Y-%m-%d")
         val_status = "有效"
         if valid_until and valid_until < datetime.now().strftime("%Y-%m-%d"):
             val_status = "已过期"
@@ -845,7 +864,7 @@ class KnowledgeBaseStore:
                     c.get("chunk_type", "article"),
                     c.get("parent_chunk_id", ""),
                     hierarchy,
-                    effective_date,
+                    eff_date,
                     valid_until if validity_option == "custom" else "",
                     meta["validity"],
                     json.dumps(meta, ensure_ascii=False),
@@ -980,6 +999,14 @@ class KnowledgeBaseStore:
             """,
             (nid, parent_id or "", clean_name, actual_type, description or "", max_sort + 1, now_ts),
         )
+        if actual_type == "kb":
+            cur.execute(
+                """
+                INSERT OR IGNORE INTO kb_collections (collection_id, name, description, embed_model, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (nid, clean_name, description or "", settings.embed_model, now_ts),
+            )
         conn.commit()
         if self._mem_conn is None:
             conn.close()
