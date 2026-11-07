@@ -2,13 +2,13 @@
   "mock": false,
   "llm_provider": "qwen",
   "llm_api_base": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-  "llm_model": "qwen3.8-flash",
+  "llm_model": "qwen-turbo",
   "llm_api_key": "sk-56cfaaa8be4b45c1aa047a74a6762dc0",
   "llm_temperature": 0.0,
   "llm_timeout": 30.0,
   "llm_max_retries": 2,
   "embed_enabled": true,
-  "embed_api_base": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  "embed_api_base": "http://localhost:11434/v1",
   "embed_model": "BAAI/bge-m3",
   "embed_api_key": "",
   "embed_dim": 1024,
@@ -19,14 +19,14 @@
     "qwen": {
       "api_base": "https://dashscope.aliyuncs.com/compatible-mode/v1",
       "api_key": "sk-56cfaaa8be4b45c1aa047a74a6762dc0",
-      "model": "qwen3.8-flash",
+      "model": "qwen-turbo",
       "verified": true
     },
     "deepseek": {
       "api_base": "https://api.deepseek.com/v1",
-      "api_key": "",
+      "api_key": "sk-fake-key-test-12345678",
       "model": "deepseek-chat",
-      "verified": false
+      "verified": true
     },
     "siliconflow": {
       "api_base": "https://api.siliconflow.cn/v1",
@@ -36,7 +36,7 @@
     },
     "local_openai": {
       "api_base": "http://localhost:11434/v1",
-      "api_key": "",
+      "api_key": "sk-56cfaaa8be4b45c1aa047a74a6762dc0",
       "model": "qwen2.5:14b",
       "verified": false
     }

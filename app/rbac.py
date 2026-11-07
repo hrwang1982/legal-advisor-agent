@@ -139,26 +139,93 @@ class RBACManager:
         self._ensure_config()
 
     def _ensure_config(self) -> None:
-        """确保持久化文件存在，不存在则初始化默认配置"""
-        if not os.path.exists(self.config_path):
-            parent = os.path.dirname(os.path.abspath(self.config_path))
-            if parent:
-                os.makedirs(parent, exist_ok=True)
+        """确保 MySQL 数据已初始化，不存在则写入初始默认配置"""
+        data = self._load_raw()
+        if not data.get("roles"):
             self._save_raw(DEFAULT_RBAC_DATA)
 
     def _load_raw(self) -> Dict[str, Any]:
+        """从 MySQL 表 sys_rbac_roles 与 sys_rbac_users 加载配置"""
         try:
-            with open(self.config_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+            from app.mysql_store import mysql_store
+            roles_rows = mysql_store.query("SELECT role_id, role_name, description, is_system, menus_json, kb_permissions_json FROM sys_rbac_roles")
+            users_rows = mysql_store.query("SELECT user_id, username, name, department, license_no, roles_json, status, created_at FROM sys_rbac_users")
+
+            roles = []
+            for r in roles_rows:
+                roles.append({
+                    "role_id": r["role_id"],
+                    "role_name": r["role_name"],
+                    "description": r["description"] or "",
+                    "is_system": bool(r["is_system"]),
+                    "menus": json.loads(r["menus_json"]) if r["menus_json"] else [],
+                    "kb_permissions": json.loads(r["kb_permissions_json"]) if r["kb_permissions_json"] else [],
+                })
+
+            users = []
+            for u in users_rows:
+                users.append({
+                    "user_id": u["user_id"],
+                    "username": u["username"],
+                    "name": u["name"],
+                    "department": u["department"] or "",
+                    "license_no": u["license_no"] or "",
+                    "roles": json.loads(u["roles_json"]) if u["roles_json"] else [],
+                    "status": u["status"] or "active",
+                    "created_at": u["created_at"] or "",
+                })
+
+            if roles and users:
+                return {"roles": roles, "users": users}
+
+            cfg = mysql_store.get_config("rbac_config")
+            if cfg and isinstance(cfg, dict) and "roles" in cfg and "users" in cfg:
+                return cfg
         except Exception:
-            return dict(DEFAULT_RBAC_DATA)
+            pass
+
+        return dict(DEFAULT_RBAC_DATA)
 
     def _save_raw(self, data: Dict[str, Any]) -> None:
-        parent = os.path.dirname(os.path.abspath(self.config_path))
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-        with open(self.config_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        """持久化至 MySQL 数据库专用表 sys_rbac_roles 与 sys_rbac_users"""
+        try:
+            from app.mysql_store import mysql_store
+            mysql_store.save_config("rbac_config", data)
+            # 同步更新子表 sys_rbac_roles 与 sys_rbac_users
+            for r in data.get("roles", []):
+                mysql_store.execute(
+                    """
+                    REPLACE INTO sys_rbac_roles (role_id, role_name, description, is_system, menus_json, kb_permissions_json)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        r.get("role_id"),
+                        r.get("role_name"),
+                        r.get("description", ""),
+                        1 if r.get("is_system") else 0,
+                        json.dumps(r.get("menus", []), ensure_ascii=False),
+                        json.dumps(r.get("kb_permissions", []), ensure_ascii=False),
+                    ),
+                )
+            for u in data.get("users", []):
+                mysql_store.execute(
+                    """
+                    REPLACE INTO sys_rbac_users (user_id, username, name, department, license_no, roles_json, status, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        u.get("user_id"),
+                        u.get("username"),
+                        u.get("name"),
+                        u.get("department", ""),
+                        u.get("license_no", ""),
+                        json.dumps(u.get("roles", []), ensure_ascii=False),
+                        u.get("status", "active"),
+                        u.get("created_at", ""),
+                    ),
+                )
+        except Exception:
+            pass
 
     # —————————————————— 角色管理 ——————————————————
     def get_roles(self) -> List[Dict[str, Any]]:
@@ -222,6 +289,11 @@ class RBACManager:
 
         data["roles"] = [r for r in roles if r.get("role_id") != role_id]
         self._save_raw(data)
+        try:
+            from app.mysql_store import mysql_store
+            mysql_store.execute("DELETE FROM sys_rbac_roles WHERE role_id = ?", (role_id,))
+        except Exception:
+            pass
         return True, "删除成功"
 
     # —————————————————— 用户管理 ——————————————————
@@ -280,6 +352,11 @@ class RBACManager:
 
         data["users"] = [u for u in users if u.get("user_id") != user_id]
         self._save_raw(data)
+        try:
+            from app.mysql_store import mysql_store
+            mysql_store.execute("DELETE FROM sys_rbac_users WHERE user_id = ?", (user_id,))
+        except Exception:
+            pass
         return True, "删除成功"
 
     # —————————————————— 权限计算与校验 ——————————————————

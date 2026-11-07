@@ -1,19 +1,79 @@
 services:
+  # —— 1. MySQL 8.x 关系型数据存储容器（统一集中维护配置、法规、用户及审计账本）——
+  mysql:
+    image: mysql:8.0
+    container_name: legal-advisor-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: "root"
+      MYSQL_DATABASE: "legal_advisor"
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # —— 2. Elasticsearch 8.x 混合检索与向量库容器（维护稠密向量与全文粗排）——
+  elasticsearch:
+    image: elasticsearch:8.13.0
+    container_name: legal-advisor-es
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - xpack.security.http.ssl.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200 >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # —— 3. 智能法律顾问智能体业务容器 ——
   legal-advisor:
     build: .
     image: legal-advisor-agent:latest
     container_name: legal-advisor-agent
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
     ports:
       - "8000:8000"
     volumes:
       - ./app:/app/app
     environment:
-      # 默认 MOCK 模式，无需任何密钥即可 docker compose up 跑通演示
+      # 默认 MOCK 确定性演示模式
       MOCK: "true"
       TOP_K: "5"
       EMBED_ENABLED: "true"
       EMBED_MODEL: "BAAI/bge-m3"
-      # —— 接入真实大模型（支持通义千问 Qwen / 本地 Ollama·vLLM / DeepSeek OpenAI兼容接口）——
+
+      # 启用 MySQL 8.x 存储引擎
+      STORAGE_BACKEND: "mysql"
+      MYSQL_HOST: "mysql"
+      MYSQL_PORT: "3306"
+      MYSQL_USER: "root"
+      MYSQL_PASSWORD: "root"
+      MYSQL_DATABASE: "legal_advisor"
+
+      # 启用 Elasticsearch 8.x 向量与粗排
+      ES_ENABLED: "true"
+      ES_HOSTS: "http://elasticsearch:9200"
+      ES_INDEX: "legal_chunks"
+
+      # —— 接入真实大模型时可取消注释覆盖 ——
       # MOCK: "false"
       # LLM_PROVIDER: "qwen"
       # LLM_API_KEY: "${LLM_API_KEY}"
@@ -21,4 +81,9 @@ services:
       # LLM_MODEL: "qwen-plus"
       # EMBED_API_BASE: "http://host.docker.internal:11434/v1"
       # EMBED_MODEL: "BAAI/bge-m3"
-    restart: unless-stopped
+
+volumes:
+  mysql_data:
+    driver: local
+  es_data:
+    driver: local

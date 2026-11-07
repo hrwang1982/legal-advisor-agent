@@ -1,10 +1,11 @@
-"""Elasticsearch 8.x 混合检索适配器（BM25 全文倒排 + Dense Vector 稠密语义向量）。
-支持在配置了 ES 时执行工业级多路召回，未配置或连接失败时平滑降级。
+"""Elasticsearch 8.x 混合检索与向量生命周期管理引擎（BM25 全文倒排 + Dense Vector 稠密语义向量）。
+承担法规文档分块与向量的写入、维护、更新、删除及首轮工业级混合粗排（Coarse Ranking）。
 """
 from __future__ import annotations
 
 import json
 import logging
+import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -99,8 +100,10 @@ class ESVectorStore:
             with urllib.request.urlopen(req, timeout=5.0) as resp:
                 return resp.status in (200, 201)
         except urllib.error.HTTPError as e:
-            if e.code == 400 and "resource_already_exists_exception" in e.read().decode("utf-8"):
-                return True
+            if e.code == 400:
+                body = e.read().decode("utf-8", errors="ignore")
+                if "resource_already_exists_exception" in body:
+                    return True
             logger.warning(f"ES 索引初始化异常: {e}")
             return False
         except Exception as e:
@@ -108,15 +111,18 @@ class ESVectorStore:
             return False
 
     def index_chunks(self, chunks: List[Dict[str, Any]]) -> int:
-        """通过 Bulk API 批量索引条文分段与向量。"""
+        """通过 Bulk API 批量索引条文分段与向量数据。"""
         if not chunks or not self.ping():
             return 0
 
         lines: List[str] = []
         for c in chunks:
-            action = json.dumps({"index": {"_index": self.index_name, "_id": c["chunk_id"]}})
+            chunk_id = c.get("chunk_id") or c.get("id") or ""
+            if not chunk_id:
+                continue
+            action = json.dumps({"index": {"_index": self.index_name, "_id": chunk_id}})
             doc = {
-                "chunk_id": c["chunk_id"],
+                "chunk_id": chunk_id,
                 "doc_id": c.get("doc_id", ""),
                 "law_name": c.get("law_name", ""),
                 "hierarchy": c.get("hierarchy", "法律"),
@@ -132,8 +138,14 @@ class ESVectorStore:
                 "effective_to": c.get("effective_to") or None,
                 "content_vector": c.get("content_vector") or [],
             }
-            # 清除 None 值
-            clean_doc = {k: v for k, v in doc.items() if v is not None}
+            # 清理空字段，防止时间格式不合法报错
+            clean_doc = {}
+            for k, v in doc.items():
+                if v is not None:
+                    if k in ("effective_date", "effective_to") and not str(v).strip():
+                        continue
+                    clean_doc[k] = v
+
             lines.append(action)
             lines.append(json.dumps(clean_doc, ensure_ascii=False))
 
@@ -145,7 +157,7 @@ class ESVectorStore:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=10.0) as resp:
+            with urllib.request.urlopen(req, timeout=15.0) as resp:
                 res = json.loads(resp.read().decode("utf-8"))
                 errors = res.get("errors", False)
                 items = res.get("items", [])
@@ -153,6 +165,80 @@ class ESVectorStore:
         except Exception as e:
             logger.warning(f"ES Bulk 写入失败: {e}")
             return 0
+
+    def delete_by_doc_id(self, doc_id: str) -> int:
+        """从 ES 索引中根据文档 doc_id 物理删除其全部向量切片。"""
+        if not doc_id or not self.ping():
+            return 0
+
+        url = f"{self.hosts}/{self.index_name}/_delete_by_query"
+        payload = {
+            "query": {
+                "term": {
+                    "doc_id": doc_id
+                }
+            }
+        }
+        try:
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers=self._get_headers(),
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=10.0) as resp:
+                res = json.loads(resp.read().decode("utf-8"))
+                return res.get("deleted", 0)
+        except Exception as e:
+            logger.warning(f"ES 按 doc_id ({doc_id}) 删除失败: {e}")
+            return 0
+
+    def delete_chunk(self, chunk_id: str) -> bool:
+        """从 ES 索引中按单个 chunk_id 删除。"""
+        if not chunk_id or not self.ping():
+            return False
+
+        url = f"{self.hosts}/{self.index_name}/_doc/{chunk_id}"
+        try:
+            req = urllib.request.Request(url, headers=self._get_headers(), method="DELETE")
+            with urllib.request.urlopen(req, timeout=5.0) as resp:
+                return resp.status in (200, 204)
+        except Exception as e:
+            logger.warning(f"ES 删除 chunk ({chunk_id}) 失败: {e}")
+            return False
+
+    def count(self) -> int:
+        """获取 ES 索引中当前的法规分块与向量总数。"""
+        if not self.ping():
+            return 0
+        try:
+            req = urllib.request.Request(
+                f"{self.hosts}/{self.index_name}/_count",
+                headers=self._get_headers(),
+                method="GET",
+            )
+            with urllib.request.urlopen(req, timeout=5.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                return data.get("count", 0)
+        except Exception:
+            return 0
+
+    def coarse_rank(
+        self,
+        query: str,
+        query_vector: Optional[List[float]] = None,
+        top_k: int = 15,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        """执行工业级第一轮多路召回与粗排：
+        利用 Elasticsearch 原生 BM25 多字段文本加权与 kNN 余弦语义向量，返回 Top-K 候选法规条文。
+        """
+        return self.hybrid_search(
+            query=query,
+            query_vector=query_vector,
+            top_k=top_k,
+            filters=filters,
+        )
 
     def hybrid_search(
         self,
@@ -173,7 +259,12 @@ class ESVectorStore:
                         {
                             "multi_match": {
                                 "query": query,
-                                "fields": ["content^2.5", "law_name^3.0", "chapter_path^1.5", "article^2.0"],
+                                "fields": [
+                                    "content^2.5",
+                                    "law_name^3.5",
+                                    "chapter_path^1.5",
+                                    "article^2.0",
+                                ],
                             }
                         }
                     ]
@@ -181,22 +272,24 @@ class ESVectorStore:
             },
         }
 
+        # 若提供了查询向量且 ES 支持，添加 kNN 稠密向量检索
         if query_vector:
             search_body["knn"] = {
                 "field": "content_vector",
                 "query_vector": query_vector,
                 "k": top_k,
                 "num_candidates": max(50, top_k * 5),
-                "boost": 1.2,
+                "boost": 1.5,
             }
 
-        filter_clauses = []
+        # 过滤项（如生效状态等）
         if filters:
+            filter_clauses = []
             for k, v in filters.items():
                 if v:
                     filter_clauses.append({"term": {k: v}})
-        if filter_clauses:
-            search_body["query"]["bool"]["filter"] = filter_clauses
+            if filter_clauses:
+                search_body["query"]["bool"]["filter"] = filter_clauses
 
         req = urllib.request.Request(
             f"{self.hosts}/{self.index_name}/_search",
@@ -220,4 +313,3 @@ class ESVectorStore:
 
 
 es_vector_store = ESVectorStore()
-

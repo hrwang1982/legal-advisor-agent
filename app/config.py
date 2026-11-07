@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any, Dict
+
+logger = logging.getLogger(__name__)
 
 
 def _bool(v: str | None, default: bool = False) -> bool:
@@ -330,79 +333,78 @@ class Settings:
         }
 
     def save_to_disk(self) -> None:
-        """将当前核心大模型与检索配置持久化写入本地 JSON 文件，确保重启或刷新后不丢失。"""
+        """将当前核心大模型与检索配置持久化写入 MySQL 专用表 llm_config 中。"""
+        cfg = {
+            "mock": self.mock,
+            "llm_provider": self.llm_provider,
+            "llm_api_base": self.llm_api_base,
+            "llm_model": self.llm_model,
+            "llm_api_key": self.llm_api_key,
+            "llm_temperature": self.llm_temperature,
+            "llm_timeout": self.llm_timeout,
+            "llm_max_retries": self.llm_max_retries,
+            "embed_enabled": self.embed_enabled,
+            "embed_api_base": self.embed_api_base,
+            "embed_model": self.embed_model,
+            "embed_api_key": self.embed_api_key,
+            "embed_dim": self.embed_dim,
+            "hybrid_dense_weight": self.hybrid_dense_weight,
+            "strict_review_auth": self.strict_review_auth,
+            "top_k": self.top_k,
+            "platform_credentials": self.platform_credentials,
+        }
         try:
-            target_path = os.path.abspath(self.llm_config_path)
-            os.makedirs(os.path.dirname(target_path), exist_ok=True)
-            cfg = {
-                "mock": self.mock,
-                "llm_provider": self.llm_provider,
-                "llm_api_base": self.llm_api_base,
-                "llm_model": self.llm_model,
-                "llm_api_key": self.llm_api_key,
-                "llm_temperature": self.llm_temperature,
-                "llm_timeout": self.llm_timeout,
-                "llm_max_retries": self.llm_max_retries,
-                "embed_enabled": self.embed_enabled,
-                "embed_api_base": self.embed_api_base,
-                "embed_model": self.embed_model,
-                "embed_api_key": self.embed_api_key,
-                "embed_dim": self.embed_dim,
-                "hybrid_dense_weight": self.hybrid_dense_weight,
-                "strict_review_auth": self.strict_review_auth,
-                "top_k": self.top_k,
-                "platform_credentials": self.platform_credentials,
-            }
-            with open(target_path, "w", encoding="utf-8") as f:
-                json.dump(cfg, f, ensure_ascii=False, indent=2)
+            from app.mysql_store import mysql_store
+            mysql_store.save_llm_config(cfg)
         except Exception as e:
-            print(f"[Settings] 保存配置到 {self.llm_config_path} 失败: {e}")
+            logger.warning(f"[Settings] 保存配置至 MySQL llm_config 失败: {e}")
 
     def load_from_disk(self) -> None:
-        """启动时从本地磁盘文件加载已保存的配置（若存在）。"""
-        target_path = os.path.abspath(self.llm_config_path)
-        if not os.path.exists(target_path):
-            return
+        """从 MySQL 数据库专用表 llm_config 加载已保存的配置。"""
+        data = None
         try:
-            with open(target_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict):
-                if "mock" in data and data["mock"] is not None:
-                    self.mock = bool(data["mock"])
-                if "llm_provider" in data and data["llm_provider"]:
-                    self.llm_provider = str(data["llm_provider"])
-                if "llm_api_base" in data and data["llm_api_base"]:
-                    self.llm_api_base = str(data["llm_api_base"])
-                if "llm_model" in data and data["llm_model"]:
-                    self.llm_model = str(data["llm_model"])
-                if "llm_api_key" in data and data["llm_api_key"] is not None:
-                    self.llm_api_key = str(data["llm_api_key"])
-                if "llm_temperature" in data and data["llm_temperature"] is not None:
-                    self.llm_temperature = float(data["llm_temperature"])
-                if "embed_enabled" in data and data["embed_enabled"] is not None:
-                    self.embed_enabled = bool(data["embed_enabled"])
-                if "embed_api_base" in data and data["embed_api_base"]:
-                    self.embed_api_base = str(data["embed_api_base"])
-                if "embed_model" in data and data["embed_model"]:
-                    self.embed_model = str(data["embed_model"])
-                if "embed_api_key" in data and data["embed_api_key"] is not None:
-                    self.embed_api_key = str(data["embed_api_key"])
-                if "embed_dim" in data and data["embed_dim"] is not None:
-                    self.embed_dim = int(data["embed_dim"])
-                if "hybrid_dense_weight" in data and data["hybrid_dense_weight"] is not None:
-                    self.hybrid_dense_weight = float(data["hybrid_dense_weight"])
-                if "strict_review_auth" in data and data["strict_review_auth"] is not None:
-                    self.strict_review_auth = bool(data["strict_review_auth"])
-                if "top_k" in data and data["top_k"] is not None:
-                    self.top_k = int(data["top_k"])
-                if "platform_credentials" in data and isinstance(data["platform_credentials"], dict):
-                    for pk, pv in data["platform_credentials"].items():
-                        if pk in self.platform_credentials and isinstance(pv, dict):
-                            self.platform_credentials[pk].update(pv)
-                        else:
-                            self.platform_credentials[pk] = pv
-        except Exception as e:
-            print(f"[Settings] 从 {target_path} 加载配置异常: {e}")
+            from app.mysql_store import mysql_store
+            data = mysql_store.get_llm_config()
+            if not data:
+                self.save_to_disk()
+        except (ImportError, Exception):
+            return
+
+        if isinstance(data, dict):
+            if "mock" in data and data["mock"] is not None:
+                self.mock = bool(data["mock"])
+            if "llm_provider" in data and data["llm_provider"]:
+                self.llm_provider = str(data["llm_provider"])
+            if "llm_api_base" in data and data["llm_api_base"]:
+                self.llm_api_base = str(data["llm_api_base"])
+            if "llm_model" in data and data["llm_model"]:
+                self.llm_model = str(data["llm_model"])
+            if "llm_api_key" in data and data["llm_api_key"] is not None:
+                self.llm_api_key = str(data["llm_api_key"])
+            if "llm_temperature" in data and data["llm_temperature"] is not None:
+                self.llm_temperature = float(data["llm_temperature"])
+            if "embed_enabled" in data and data["embed_enabled"] is not None:
+                self.embed_enabled = bool(data["embed_enabled"])
+            if "embed_api_base" in data and data["embed_api_base"]:
+                self.embed_api_base = str(data["embed_api_base"])
+            if "embed_model" in data and data["embed_model"]:
+                self.embed_model = str(data["embed_model"])
+            if "embed_api_key" in data and data["embed_api_key"] is not None:
+                self.embed_api_key = str(data["embed_api_key"])
+            if "embed_dim" in data and data["embed_dim"] is not None:
+                self.embed_dim = int(data["embed_dim"])
+            if "hybrid_dense_weight" in data and data["hybrid_dense_weight"] is not None:
+                self.hybrid_dense_weight = float(data["hybrid_dense_weight"])
+            if "strict_review_auth" in data and data["strict_review_auth"] is not None:
+                self.strict_review_auth = bool(data["strict_review_auth"])
+            if "top_k" in data and data["top_k"] is not None:
+                self.top_k = int(data["top_k"])
+            if "platform_credentials" in data and isinstance(data["platform_credentials"], dict):
+                for pk, pv in data["platform_credentials"].items():
+                    if pk in self.platform_credentials and isinstance(pv, dict):
+                        self.platform_credentials[pk].update(pv)
+                    else:
+                        self.platform_credentials[pk] = pv
 
     def update_runtime(self, updates: Dict[str, Any]) -> Dict[str, Any]:
         """支持在线热更新大模型与检索配置（无需重启服务，并自动持久化写入本地磁盘）。"""

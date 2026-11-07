@@ -1,0 +1,1311 @@
+"""MySQL 8.x 关系型数据存储与交互管理引擎：
+支持系统细粒度解耦存储（llm_config、kb_legal_synonyms、kb_cross_references、
+kb_article_successions、kb_client_registry 等专用表）、法规知识库及审计账本。
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import sqlite3
+import threading
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+try:
+    import pymysql
+    import pymysql.cursors
+    HAS_PYMYSQL = True
+except ImportError:
+    pymysql = None
+    HAS_PYMYSQL = False
+
+
+class MySQLStore:
+    """企业级关系存储引擎，支持 MySQL 8.x 细粒度表结构交互与本地兼容代理。"""
+
+    _instance: Optional["MySQLStore"] = None
+    _lock = threading.Lock()
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._initialized = False
+        return cls._instance
+
+    def __init__(
+        self,
+        host: Optional[str] = None,
+        port: Optional[int] = None,
+        user: Optional[str] = None,
+        password: Optional[str] = None,
+        database: Optional[str] = None,
+    ):
+        if getattr(self, "_initialized", False):
+            return
+
+        self.host = host or settings.mysql_host
+        self.port = port or settings.mysql_port
+        self.user = user or settings.mysql_user
+        self.password = password or settings.mysql_password
+        self.database = database or settings.mysql_database
+
+        self._fallback_db_path = os.getenv("MYSQL_FALLBACK_SQLITE", "app/data/mysql_mirror.db")
+        self._is_mysql_active: Optional[bool] = None
+        self._thread_local = threading.local()
+        self._initialized = True
+
+    def ping(self) -> bool:
+        """探测 MySQL 服务是否真实可用且能成功认证。"""
+        if not HAS_PYMYSQL:
+            self._is_mysql_active = False
+            return False
+
+        try:
+            conn = pymysql.connect(
+                host=self.host,
+                port=self.port,
+                user=self.user,
+                password=self.password,
+                database=self.database,
+                charset="utf8mb4",
+                connect_timeout=2,
+            )
+            conn.close()
+            self._is_mysql_active = True
+            return True
+        except Exception as e:
+            logger.debug(f"[MySQLStore] MySQL 连接探测失败 ({self.host}:{self.port}/{self.database}): {e}")
+            self._is_mysql_active = False
+            return False
+
+    @property
+    def is_mysql(self) -> bool:
+        if self._is_mysql_active is None:
+            self.ping()
+        return bool(self._is_mysql_active)
+
+    def get_connection(self):
+        """获取底层数据库物理连接。"""
+        if self.is_mysql and HAS_PYMYSQL:
+            return pymysql.connect(
+                host=self.host,
+                port=self.port,
+                user=self.user,
+                password=self.password,
+                database=self.database,
+                charset="utf8mb4",
+                cursorclass=pymysql.cursors.DictCursor,
+                autocommit=True,
+            )
+        else:
+            parent = os.path.dirname(os.path.abspath(self._fallback_db_path))
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            conn = sqlite3.connect(self._fallback_db_path, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            return conn
+
+    def init_schema(self) -> bool:
+        """初始化全量数据表结构（兼容 MySQL 8.x 与 SQLite 语法）。"""
+        conn = self.get_connection()
+        cur = conn.cursor()
+        try:
+            if self.is_mysql:
+                # 1. 大模型与向量参数专门配置表 (llm_config)
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS llm_config (
+                        id INT PRIMARY KEY DEFAULT 1,
+                        mock TINYINT(1) DEFAULT 1,
+                        llm_provider VARCHAR(64) NOT NULL DEFAULT 'qwen',
+                        llm_api_base VARCHAR(255) NOT NULL,
+                        llm_model VARCHAR(128) NOT NULL,
+                        llm_api_key VARCHAR(255) DEFAULT '',
+                        llm_temperature FLOAT DEFAULT 0.0,
+                        llm_timeout FLOAT DEFAULT 30.0,
+                        llm_max_retries INT DEFAULT 2,
+                        embed_enabled TINYINT(1) DEFAULT 1,
+                        embed_api_base VARCHAR(255) DEFAULT '',
+                        embed_model VARCHAR(128) DEFAULT 'BAAI/bge-m3',
+                        embed_api_key VARCHAR(255) DEFAULT '',
+                        embed_dim INT DEFAULT 1024,
+                        hybrid_dense_weight FLOAT DEFAULT 0.45,
+                        strict_review_auth TINYINT(1) DEFAULT 0,
+                        top_k INT DEFAULT 5,
+                        platform_credentials_json LONGTEXT,
+                        updated_at VARCHAR(64) NOT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                # 2. 法律同义词表 (kb_legal_synonyms)
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS kb_legal_synonyms (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        colloquial_term VARCHAR(128) NOT NULL UNIQUE,
+                        legal_terms TEXT NOT NULL,
+                        updated_at VARCHAR(64) NOT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                # 3. 法条引用图谱表 (kb_cross_references)
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS kb_cross_references (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        source_law VARCHAR(255) NOT NULL,
+                        source_article VARCHAR(64) NOT NULL,
+                        targets_json LONGTEXT NOT NULL,
+                        updated_at VARCHAR(64) NOT NULL,
+                        UNIQUE KEY uk_cross_source (source_law, source_article)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                # 4. 新旧法条文级演进与对照表 (kb_article_successions)
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS kb_article_successions (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        old_law VARCHAR(255) NOT NULL,
+                        old_article VARCHAR(64) NOT NULL,
+                        new_law VARCHAR(255) NOT NULL,
+                        new_article VARCHAR(64) NOT NULL,
+                        switch_date VARCHAR(32) NOT NULL,
+                        diff_note TEXT,
+                        updated_at VARCHAR(64) NOT NULL,
+                        INDEX idx_succ_old (old_law, old_article),
+                        INDEX idx_succ_new (new_law, new_article)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                # 5. 利益冲突与客户登记表 (kb_client_registry)
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS kb_client_registry (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        client_name VARCHAR(255) NOT NULL UNIQUE,
+                        client_type VARCHAR(128) NOT NULL DEFAULT '本所常年法律顾问客户',
+                        conflict_rules TEXT,
+                        updated_at VARCHAR(64) NOT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                # 6. 特别法与一般法冲突优选规则表 (kb_special_general_relations)
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS kb_special_general_relations (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        special_law VARCHAR(255) NOT NULL,
+                        general_law VARCHAR(255) NOT NULL,
+                        description TEXT,
+                        has_deference TINYINT(1) DEFAULT 1,
+                        updated_at VARCHAR(64) NOT NULL,
+                        UNIQUE KEY uk_spec_gen (special_law, general_law)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                # 7. 法规别名与简称映射表 (kb_law_aliases)
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS kb_law_aliases (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        alias_name VARCHAR(128) NOT NULL UNIQUE,
+                        canonical_name VARCHAR(255) NOT NULL,
+                        updated_at VARCHAR(64) NOT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                # 8. 案由分类规则与事实要件库 (kb_case_type_rules)
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS kb_case_type_rules (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        case_type VARCHAR(128) NOT NULL UNIQUE,
+                        rules_json LONGTEXT NOT NULL,
+                        updated_at VARCHAR(64) NOT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                # 9. 确定性表述模式表 (kb_certainty_patterns)
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS kb_certainty_patterns (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        pattern VARCHAR(255) NOT NULL,
+                        replacement VARCHAR(255) NOT NULL,
+                        updated_at VARCHAR(64) NOT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                # 10. 官方立法新旧法对照集表 (kb_new_old_counterparts)
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS kb_new_old_counterparts (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        current_law VARCHAR(255) NOT NULL,
+                        current_article VARCHAR(64) NOT NULL,
+                        old_law VARCHAR(255) NOT NULL,
+                        old_article VARCHAR(64) NOT NULL,
+                        relation VARCHAR(64) DEFAULT 'one_to_one',
+                        switch_date VARCHAR(32) NOT NULL,
+                        diff_note TEXT,
+                        authority VARCHAR(255) DEFAULT '全国人大常委会法制工作委员会',
+                        updated_at VARCHAR(64) NOT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                # 11. 程序性元引用表 (kb_allowed_procedural_meta_citations)
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS kb_allowed_procedural_meta_citations (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        law_name VARCHAR(255) NOT NULL,
+                        article VARCHAR(64) NOT NULL,
+                        updated_at VARCHAR(64) NOT NULL,
+                        UNIQUE KEY uk_meta_cite (law_name, article)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                # 12. 审核专家与律师注册表 (kb_reviewers_registry)
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS kb_reviewers_registry (
+                        reviewer_id VARCHAR(64) PRIMARY KEY,
+                        name VARCHAR(128) NOT NULL,
+                        license_no VARCHAR(128) NOT NULL,
+                        role VARCHAR(64) NOT NULL,
+                        department VARCHAR(128) DEFAULT '',
+                        info_json TEXT,
+                        updated_at VARCHAR(64) NOT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                # 13. 预置基础法规表 (sample_laws)
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS sample_laws (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        law_name VARCHAR(255) NOT NULL,
+                        document_number VARCHAR(128) DEFAULT '',
+                        hierarchy VARCHAR(64) NOT NULL,
+                        host_law VARCHAR(255) DEFAULT '',
+                        host_hierarchy VARCHAR(64) DEFAULT '',
+                        promulgation_date VARCHAR(32) DEFAULT '',
+                        effective_date VARCHAR(32) DEFAULT '',
+                        effective_to VARCHAR(32) DEFAULT '',
+                        validity VARCHAR(32) NOT NULL DEFAULT '现行有效',
+                        superseded_by VARCHAR(255) DEFAULT '',
+                        article VARCHAR(64) NOT NULL,
+                        paragraph VARCHAR(64) DEFAULT '',
+                        content LONGTEXT NOT NULL,
+                        source VARCHAR(128) DEFAULT '',
+                        category VARCHAR(64) DEFAULT '',
+                        scope VARCHAR(64) DEFAULT '',
+                        partially_invalid TINYINT(1) DEFAULT 0,
+                        invalid_parts VARCHAR(255) DEFAULT '',
+                        trial TINYINT(1) DEFAULT 0,
+                        verified TINYINT(1) DEFAULT 1,
+                        note VARCHAR(255) DEFAULT '',
+                        article_effective_date VARCHAR(32) DEFAULT '',
+                        norm_type VARCHAR(64) DEFAULT 'substantive',
+                        metadata_json LONGTEXT,
+                        created_at VARCHAR(64) DEFAULT '',
+                        INDEX idx_sample_law_art (law_name, article)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                # 14. RBAC 角色表
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS sys_rbac_roles (
+                        role_id VARCHAR(64) PRIMARY KEY,
+                        role_name VARCHAR(128) NOT NULL,
+                        description TEXT,
+                        is_system TINYINT(1) DEFAULT 0,
+                        menus_json TEXT NOT NULL,
+                        kb_permissions_json TEXT NOT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                # 15. RBAC 用户表
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS sys_rbac_users (
+                        user_id VARCHAR(64) PRIMARY KEY,
+                        username VARCHAR(64) NOT NULL UNIQUE,
+                        name VARCHAR(128) NOT NULL,
+                        department VARCHAR(128) DEFAULT '',
+                        license_no VARCHAR(128) DEFAULT '',
+                        roles_json TEXT NOT NULL,
+                        status VARCHAR(32) DEFAULT 'active',
+                        created_at VARCHAR(64) NOT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                # 16. 知识库集合表
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS kb_collections (
+                        collection_id VARCHAR(128) PRIMARY KEY,
+                        name VARCHAR(255) NOT NULL,
+                        description TEXT,
+                        embed_model VARCHAR(128) NOT NULL,
+                        created_at VARCHAR(64) NOT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                # 16.1 法规条文旧式向量兼容表 (kb_articles)
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS kb_articles (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        collection_id VARCHAR(128) NOT NULL,
+                        law_name VARCHAR(255) NOT NULL,
+                        article VARCHAR(128) NOT NULL,
+                        paragraph VARCHAR(128) DEFAULT '',
+                        hierarchy VARCHAR(64) NOT NULL,
+                        validity VARCHAR(64) NOT NULL,
+                        effective_date VARCHAR(64) DEFAULT '',
+                        effective_to VARCHAR(64) DEFAULT '',
+                        category VARCHAR(64) DEFAULT '',
+                        content LONGTEXT NOT NULL,
+                        metadata_json LONGTEXT NOT NULL,
+                        embedding_json LONGTEXT NOT NULL,
+                        embed_backend VARCHAR(128) NOT NULL,
+                        updated_at VARCHAR(64) NOT NULL,
+                        UNIQUE KEY uq_kb_article (law_name, article, paragraph)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                # 17. 法规文档总表
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS law_documents (
+                        doc_id VARCHAR(128) PRIMARY KEY,
+                        title VARCHAR(255) NOT NULL,
+                        kb_type VARCHAR(128) NOT NULL DEFAULT '外规知识库/法律法规',
+                        department VARCHAR(128) DEFAULT '法律合规部',
+                        uploader VARCHAR(128) DEFAULT '系统管理员',
+                        doc_size VARCHAR(64) DEFAULT '0 KB',
+                        doc_format VARCHAR(32) DEFAULT 'TXT',
+                        split_mode VARCHAR(64) NOT NULL DEFAULT 'article',
+                        chunks_count INT DEFAULT 0,
+                        validity_status VARCHAR(64) DEFAULT '有效',
+                        doc_status VARCHAR(64) DEFAULT '已解析',
+                        valid_until VARCHAR(64) DEFAULT '',
+                        created_at VARCHAR(64) NOT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                # 18. 法规分块表
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS law_chunks (
+                        chunk_id VARCHAR(128) PRIMARY KEY,
+                        doc_id VARCHAR(128) NOT NULL,
+                        law_name VARCHAR(255) NOT NULL,
+                        chapter_path TEXT,
+                        article VARCHAR(64) NOT NULL,
+                        paragraph VARCHAR(64) DEFAULT '',
+                        content LONGTEXT NOT NULL,
+                        chunk_type VARCHAR(64) NOT NULL,
+                        parent_chunk_id VARCHAR(128) DEFAULT '',
+                        hierarchy VARCHAR(64) NOT NULL,
+                        effective_date VARCHAR(32) DEFAULT '',
+                        effective_to VARCHAR(32) DEFAULT '',
+                        validity VARCHAR(32) NOT NULL,
+                        metadata_json LONGTEXT NOT NULL,
+                        embedding_json LONGTEXT,
+                        created_at VARCHAR(64) NOT NULL,
+                        INDEX idx_chunk_doc (doc_id),
+                        INDEX idx_chunk_law (law_name)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                # 19. 修正案与生命周期追踪表
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS law_article_revision_log (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        law_name VARCHAR(255) NOT NULL,
+                        article VARCHAR(64) NOT NULL,
+                        paragraph VARCHAR(64) DEFAULT '',
+                        revision_type VARCHAR(64) NOT NULL,
+                        amendment_name VARCHAR(255) NOT NULL,
+                        effective_from VARCHAR(32) NOT NULL,
+                        effective_to VARCHAR(32) DEFAULT '',
+                        old_content LONGTEXT,
+                        new_content LONGTEXT NOT NULL,
+                        diff_summary TEXT,
+                        created_at VARCHAR(64) NOT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                # 20. 知识库目录树节点表
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS kb_tree_nodes (
+                        node_id VARCHAR(128) PRIMARY KEY,
+                        parent_id VARCHAR(128) NOT NULL DEFAULT '',
+                        name VARCHAR(255) NOT NULL,
+                        node_type VARCHAR(64) NOT NULL DEFAULT 'folder',
+                        description TEXT,
+                        sort_order INT DEFAULT 0,
+                        created_at VARCHAR(64) NOT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                # 21. 会话快照存储表
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS session_snapshots (
+                        thread_id VARCHAR(128) PRIMARY KEY,
+                        updated_at VARCHAR(64) NOT NULL,
+                        status VARCHAR(64) NOT NULL,
+                        query TEXT,
+                        act_date VARCHAR(32),
+                        region VARCHAR(64),
+                        confidence VARCHAR(32),
+                        review_level VARCHAR(64),
+                        state_json LONGTEXT NOT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                # 22. 防篡改哈希链审计日志表
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS audit_logs (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        thread_id VARCHAR(128) NOT NULL,
+                        timestamp VARCHAR(64) NOT NULL,
+                        event_type VARCHAR(64) NOT NULL,
+                        reviewer_name VARCHAR(128),
+                        license_no VARCHAR(128),
+                        reviewer_role VARCHAR(64),
+                        decision VARCHAR(64),
+                        comments TEXT,
+                        confidence VARCHAR(32),
+                        review_level VARCHAR(64),
+                        citations_json LONGTEXT,
+                        draft_answer LONGTEXT,
+                        final_answer LONGTEXT,
+                        answer_diff LONGTEXT,
+                        prev_hash VARCHAR(128) NOT NULL,
+                        entry_hash VARCHAR(128) NOT NULL,
+                        INDEX idx_audit_thread (thread_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                # 23. 规则缺口归集表
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS rule_gaps (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        thread_id VARCHAR(128) NOT NULL,
+                        timestamp VARCHAR(64) NOT NULL,
+                        mode VARCHAR(64),
+                        confidence VARCHAR(32),
+                        review_level VARCHAR(64),
+                        reason TEXT,
+                        verify_actions_json TEXT,
+                        query TEXT,
+                        INDEX idx_gap_thread (thread_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                # 24. 规则提案表
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS rule_proposals (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        thread_id VARCHAR(128) NOT NULL,
+                        timestamp VARCHAR(64) NOT NULL,
+                        proposal_type VARCHAR(64) NOT NULL,
+                        proposal_key VARCHAR(128),
+                        proposal_data_json LONGTEXT NOT NULL,
+                        status VARCHAR(64) DEFAULT 'PENDING',
+                        reviewer_name VARCHAR(128),
+                        review_notes TEXT,
+                        adopted_at VARCHAR(64),
+                        query TEXT
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+            else:
+                # SQLite 语法初始化 fallback
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS llm_config (
+                        id INTEGER PRIMARY KEY DEFAULT 1,
+                        mock INTEGER DEFAULT 1,
+                        llm_provider TEXT NOT NULL DEFAULT 'qwen',
+                        llm_api_base TEXT NOT NULL,
+                        llm_model TEXT NOT NULL,
+                        llm_api_key TEXT DEFAULT '',
+                        llm_temperature REAL DEFAULT 0.0,
+                        llm_timeout REAL DEFAULT 30.0,
+                        llm_max_retries INTEGER DEFAULT 2,
+                        embed_enabled INTEGER DEFAULT 1,
+                        embed_api_base TEXT DEFAULT '',
+                        embed_model TEXT DEFAULT 'BAAI/bge-m3',
+                        embed_api_key TEXT DEFAULT '',
+                        embed_dim INTEGER DEFAULT 1024,
+                        hybrid_dense_weight REAL DEFAULT 0.45,
+                        strict_review_auth INTEGER DEFAULT 0,
+                        top_k INTEGER DEFAULT 5,
+                        platform_credentials_json TEXT,
+                        updated_at TEXT NOT NULL
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS kb_legal_synonyms (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        colloquial_term TEXT NOT NULL UNIQUE,
+                        legal_terms TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS kb_cross_references (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        source_law TEXT NOT NULL,
+                        source_article TEXT NOT NULL,
+                        targets_json TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        UNIQUE(source_law, source_article)
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS kb_article_successions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        old_law TEXT NOT NULL,
+                        old_article TEXT NOT NULL,
+                        new_law TEXT NOT NULL,
+                        new_article TEXT NOT NULL,
+                        switch_date TEXT NOT NULL,
+                        diff_note TEXT,
+                        updated_at TEXT NOT NULL
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS kb_client_registry (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        client_name TEXT NOT NULL UNIQUE,
+                        client_type TEXT NOT NULL DEFAULT '本所常年法律顾问客户',
+                        conflict_rules TEXT,
+                        updated_at TEXT NOT NULL
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS kb_special_general_relations (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        special_law TEXT NOT NULL,
+                        general_law TEXT NOT NULL,
+                        description TEXT,
+                        has_deference INTEGER DEFAULT 1,
+                        updated_at TEXT NOT NULL,
+                        UNIQUE(special_law, general_law)
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS kb_law_aliases (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        alias_name TEXT NOT NULL UNIQUE,
+                        canonical_name TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS kb_case_type_rules (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        case_type TEXT NOT NULL UNIQUE,
+                        rules_json TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS kb_certainty_patterns (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        pattern TEXT NOT NULL,
+                        replacement TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS kb_new_old_counterparts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        current_law TEXT NOT NULL,
+                        current_article TEXT NOT NULL,
+                        old_law TEXT NOT NULL,
+                        old_article TEXT NOT NULL,
+                        relation TEXT DEFAULT 'one_to_one',
+                        switch_date TEXT NOT NULL,
+                        diff_note TEXT,
+                        authority TEXT DEFAULT '全国人大常委会法制工作委员会',
+                        updated_at TEXT NOT NULL
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS kb_allowed_procedural_meta_citations (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        law_name TEXT NOT NULL,
+                        article TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        UNIQUE(law_name, article)
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS kb_reviewers_registry (
+                        reviewer_id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        license_no TEXT NOT NULL,
+                        role TEXT NOT NULL,
+                        department TEXT DEFAULT '',
+                        info_json TEXT,
+                        updated_at TEXT NOT NULL
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS sample_laws (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        law_name TEXT NOT NULL,
+                        document_number TEXT DEFAULT '',
+                        hierarchy TEXT NOT NULL,
+                        host_law TEXT DEFAULT '',
+                        host_hierarchy TEXT DEFAULT '',
+                        promulgation_date TEXT DEFAULT '',
+                        effective_date TEXT DEFAULT '',
+                        effective_to TEXT DEFAULT '',
+                        validity TEXT NOT NULL DEFAULT '现行有效',
+                        superseded_by TEXT DEFAULT '',
+                        article TEXT NOT NULL,
+                        paragraph TEXT DEFAULT '',
+                        content TEXT NOT NULL,
+                        source TEXT DEFAULT '',
+                        category TEXT DEFAULT '',
+                        scope TEXT DEFAULT '',
+                        partially_invalid INTEGER DEFAULT 0,
+                        invalid_parts TEXT DEFAULT '',
+                        trial INTEGER DEFAULT 0,
+                        verified INTEGER DEFAULT 1,
+                        note TEXT DEFAULT '',
+                        article_effective_date TEXT DEFAULT '',
+                        norm_type TEXT DEFAULT 'substantive',
+                        metadata_json TEXT,
+                        created_at TEXT DEFAULT ''
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS sys_rbac_roles (
+                        role_id TEXT PRIMARY KEY,
+                        role_name TEXT NOT NULL,
+                        description TEXT,
+                        is_system INTEGER DEFAULT 0,
+                        menus_json TEXT NOT NULL,
+                        kb_permissions_json TEXT NOT NULL
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS sys_rbac_users (
+                        user_id TEXT PRIMARY KEY,
+                        username TEXT NOT NULL UNIQUE,
+                        name TEXT NOT NULL,
+                        department TEXT DEFAULT '',
+                        license_no TEXT DEFAULT '',
+                        roles_json TEXT NOT NULL,
+                        status TEXT DEFAULT 'active',
+                        created_at TEXT NOT NULL
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS kb_collections (
+                        collection_id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        description TEXT,
+                        embed_model TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS kb_articles (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        collection_id TEXT NOT NULL,
+                        law_name TEXT NOT NULL,
+                        article TEXT NOT NULL,
+                        paragraph TEXT DEFAULT '',
+                        hierarchy TEXT NOT NULL,
+                        validity TEXT NOT NULL,
+                        effective_date TEXT DEFAULT '',
+                        effective_to TEXT DEFAULT '',
+                        category TEXT DEFAULT '',
+                        content TEXT NOT NULL,
+                        metadata_json TEXT NOT NULL,
+                        embedding_json TEXT NOT NULL,
+                        embed_backend TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        UNIQUE(law_name, article, paragraph)
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS law_documents (
+                        doc_id TEXT PRIMARY KEY,
+                        title TEXT NOT NULL,
+                        kb_type TEXT NOT NULL DEFAULT '外规知识库/法律法规',
+                        department TEXT DEFAULT '法律合规部',
+                        uploader TEXT DEFAULT '系统管理员',
+                        doc_size TEXT DEFAULT '0 KB',
+                        doc_format TEXT DEFAULT 'TXT',
+                        split_mode TEXT NOT NULL DEFAULT 'article',
+                        chunks_count INTEGER DEFAULT 0,
+                        validity_status TEXT DEFAULT '有效',
+                        doc_status TEXT DEFAULT '已解析',
+                        valid_until TEXT DEFAULT '',
+                        created_at TEXT NOT NULL
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS law_chunks (
+                        chunk_id TEXT PRIMARY KEY,
+                        doc_id TEXT NOT NULL,
+                        law_name TEXT NOT NULL,
+                        chapter_path TEXT DEFAULT '',
+                        article TEXT NOT NULL,
+                        paragraph TEXT DEFAULT '',
+                        content TEXT NOT NULL,
+                        chunk_type TEXT NOT NULL,
+                        parent_chunk_id TEXT DEFAULT '',
+                        hierarchy TEXT NOT NULL,
+                        effective_date TEXT DEFAULT '',
+                        effective_to TEXT DEFAULT '',
+                        validity TEXT NOT NULL,
+                        metadata_json TEXT NOT NULL,
+                        embedding_json TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS law_article_revision_log (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        law_name TEXT NOT NULL,
+                        article TEXT NOT NULL,
+                        paragraph TEXT DEFAULT '',
+                        revision_type TEXT NOT NULL,
+                        amendment_name TEXT NOT NULL,
+                        effective_from TEXT NOT NULL,
+                        effective_to TEXT DEFAULT '',
+                        old_content TEXT DEFAULT '',
+                        new_content TEXT NOT NULL,
+                        diff_summary TEXT DEFAULT '',
+                        created_at TEXT NOT NULL
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS kb_tree_nodes (
+                        node_id TEXT PRIMARY KEY,
+                        parent_id TEXT NOT NULL DEFAULT '',
+                        name TEXT NOT NULL,
+                        node_type TEXT NOT NULL DEFAULT 'folder',
+                        description TEXT DEFAULT '',
+                        sort_order INTEGER DEFAULT 0,
+                        created_at TEXT NOT NULL
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS session_snapshots (
+                        thread_id TEXT PRIMARY KEY,
+                        updated_at TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        query TEXT,
+                        act_date TEXT,
+                        region TEXT,
+                        confidence TEXT,
+                        review_level TEXT,
+                        state_json TEXT NOT NULL
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS audit_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        thread_id TEXT NOT NULL,
+                        timestamp TEXT NOT NULL,
+                        event_type TEXT NOT NULL,
+                        reviewer_name TEXT,
+                        license_no TEXT,
+                        reviewer_role TEXT,
+                        decision TEXT,
+                        comments TEXT,
+                        confidence TEXT,
+                        review_level TEXT,
+                        citations_json TEXT,
+                        draft_answer TEXT,
+                        final_answer TEXT,
+                        answer_diff TEXT,
+                        prev_hash TEXT NOT NULL,
+                        entry_hash TEXT NOT NULL
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS rule_gaps (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        thread_id TEXT NOT NULL,
+                        timestamp TEXT NOT NULL,
+                        mode TEXT,
+                        confidence TEXT,
+                        review_level TEXT,
+                        reason TEXT,
+                        verify_actions_json TEXT,
+                        query TEXT
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS rule_proposals (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        thread_id TEXT NOT NULL,
+                        timestamp TEXT NOT NULL,
+                        proposal_type TEXT NOT NULL,
+                        proposal_key TEXT,
+                        proposal_data_json TEXT NOT NULL,
+                        status TEXT DEFAULT 'PENDING',
+                        reviewer_name TEXT,
+                        review_notes TEXT,
+                        adopted_at TEXT,
+                        query TEXT
+                    )
+                    """
+                )
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"[MySQLStore] 初始化数据库结构失败: {e}")
+            return False
+        finally:
+            cur.close()
+            conn.close()
+
+    def execute(self, sql: str, params: Optional[Sequence[Any] | Dict[str, Any]] = None) -> int:
+        """执行 INSERT / UPDATE / DELETE 语句。"""
+        conn = self.get_connection()
+        cur = conn.cursor()
+        try:
+            adjusted_sql = sql
+            if self.is_mysql:
+                adjusted_sql = adjusted_sql.replace("?", "%s")
+            else:
+                adjusted_sql = adjusted_sql.replace("%s", "?")
+
+            cur.execute(adjusted_sql, params or ())
+            if not self.is_mysql:
+                conn.commit()
+            return cur.rowcount
+        finally:
+            cur.close()
+            conn.close()
+
+    def query(self, sql: str, params: Optional[Sequence[Any] | Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """执行 SELECT 语句，返回字典列表。"""
+        conn = self.get_connection()
+        cur = conn.cursor()
+        try:
+            adjusted_sql = sql
+            if self.is_mysql:
+                adjusted_sql = adjusted_sql.replace("?", "%s")
+            else:
+                adjusted_sql = adjusted_sql.replace("%s", "?")
+
+            cur.execute(adjusted_sql, params or ())
+            rows = cur.fetchall()
+            if self.is_mysql:
+                return list(rows)
+            else:
+                return [dict(r) for r in rows]
+        finally:
+            cur.close()
+            conn.close()
+
+    def query_one(self, sql: str, params: Optional[Sequence[Any] | Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """查询单行记录。"""
+        res = self.query(sql, params)
+        return res[0] if res else None
+
+    # ————————————————————————————————————————————————
+    # 1. 大模型运行时与向量配置表 (llm_config) 专属维护接口
+    # ————————————————————————————————————————————————
+    def get_llm_config(self) -> Optional[Dict[str, Any]]:
+        """从专用表 llm_config 中载入大模型与向量参数。"""
+        row = self.query_one("SELECT * FROM llm_config WHERE id = 1")
+        if not row:
+            return None
+        cfg = dict(row)
+        if "platform_credentials_json" in cfg and cfg["platform_credentials_json"]:
+            try:
+                cfg["platform_credentials"] = json.loads(cfg["platform_credentials_json"])
+            except Exception:
+                cfg["platform_credentials"] = {}
+        cfg["mock"] = bool(cfg.get("mock", True))
+        cfg["embed_enabled"] = bool(cfg.get("embed_enabled", True))
+        cfg["strict_review_auth"] = bool(cfg.get("strict_review_auth", False))
+        return cfg
+
+    def save_llm_config(self, cfg: Dict[str, Any]) -> bool:
+        """持久化保存大模型与向量配置至 llm_config 专用表。"""
+        now_ts = datetime.now(timezone.utc).isoformat()
+        plat_json = json.dumps(cfg.get("platform_credentials", {}), ensure_ascii=False)
+        sql = """
+            REPLACE INTO llm_config (
+                id, mock, llm_provider, llm_api_base, llm_model, llm_api_key,
+                llm_temperature, llm_timeout, llm_max_retries, embed_enabled,
+                embed_api_base, embed_model, embed_api_key, embed_dim,
+                hybrid_dense_weight, strict_review_auth, top_k, platform_credentials_json, updated_at
+            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        params = (
+            1 if cfg.get("mock") else 0,
+            str(cfg.get("llm_provider", "qwen")),
+            str(cfg.get("llm_api_base", "")),
+            str(cfg.get("llm_model", "qwen-plus")),
+            str(cfg.get("llm_api_key", "")),
+            float(cfg.get("llm_temperature", 0.0)),
+            float(cfg.get("llm_timeout", 30.0)),
+            int(cfg.get("llm_max_retries", 2)),
+            1 if cfg.get("embed_enabled", True) else 0,
+            str(cfg.get("embed_api_base", "")),
+            str(cfg.get("embed_model", "BAAI/bge-m3")),
+            str(cfg.get("embed_api_key", "")),
+            int(cfg.get("embed_dim", 1024)),
+            float(cfg.get("hybrid_dense_weight", 0.45)),
+            1 if cfg.get("strict_review_auth") else 0,
+            int(cfg.get("top_k", 5)),
+            plat_json,
+            now_ts,
+        )
+        try:
+            self.execute(sql, params)
+            return True
+        except Exception as e:
+            logger.error(f"[MySQLStore] 保存 llm_config 失败: {e}")
+            return False
+
+    # ————————————————————————————————————————————————
+    # 2. 法律同义词表 (kb_legal_synonyms) 维护接口
+    # ————————————————————————————————————————————————
+    def get_legal_synonyms(self) -> Dict[str, str]:
+        rows = self.query("SELECT colloquial_term, legal_terms FROM kb_legal_synonyms")
+        return {r["colloquial_term"]: r["legal_terms"] for r in rows}
+
+    def save_legal_synonyms(self, syn_map: Dict[str, str]) -> bool:
+        now_ts = datetime.now(timezone.utc).isoformat()
+        try:
+            for term, expansion in syn_map.items():
+                self.execute(
+                    "REPLACE INTO kb_legal_synonyms (colloquial_term, legal_terms, updated_at) VALUES (?, ?, ?)",
+                    (term, expansion, now_ts),
+                )
+            return True
+        except Exception as e:
+            logger.error(f"[MySQLStore] 保存法律同义词表失败: {e}")
+            return False
+
+    # ————————————————————————————————————————————————
+    # 3. 法条引用图谱表 (kb_cross_references) 维护接口
+    # ————————————————————————————————————————————————
+    def get_cross_references(self) -> List[Dict[str, Any]]:
+        rows = self.query("SELECT source_law, source_article, targets_json FROM kb_cross_references")
+        out = []
+        for r in rows:
+            targets = []
+            if r.get("targets_json"):
+                try:
+                    targets = json.loads(r["targets_json"])
+                except Exception:
+                    pass
+            out.append({
+                "source_law": r["source_law"],
+                "source_article": r["source_article"],
+                "targets": targets,
+            })
+        return out
+
+    def save_cross_references(self, refs: List[Dict[str, Any]]) -> bool:
+        now_ts = datetime.now(timezone.utc).isoformat()
+        try:
+            for item in refs:
+                self.execute(
+                    "REPLACE INTO kb_cross_references (source_law, source_article, targets_json, updated_at) VALUES (?, ?, ?, ?)",
+                    (item.get("source_law", ""), item.get("source_article", ""), json.dumps(item.get("targets", []), ensure_ascii=False), now_ts),
+                )
+            return True
+        except Exception as e:
+            logger.error(f"[MySQLStore] 保存法条引用图谱失败: {e}")
+            return False
+
+    # ————————————————————————————————————————————————
+    # 4. 新旧法对照表 (kb_article_successions) 维护接口
+    # ————————————————————————————————————————————————
+    def get_article_successions(self) -> List[Dict[str, Any]]:
+        return self.query("SELECT old_law, old_article, new_law, new_article, switch_date, diff_note FROM kb_article_successions")
+
+    def save_article_successions(self, succ_list: List[Dict[str, Any]]) -> bool:
+        now_ts = datetime.now(timezone.utc).isoformat()
+        try:
+            for s in succ_list:
+                self.execute(
+                    """
+                    INSERT INTO kb_article_successions (old_law, old_article, new_law, new_article, switch_date, diff_note, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (s.get("old_law", ""), s.get("old_article", ""), s.get("new_law", ""), s.get("new_article", ""), s.get("switch_date", ""), s.get("diff_note", ""), now_ts),
+                )
+            return True
+        except Exception as e:
+            logger.error(f"[MySQLStore] 保存新旧法对照表失败: {e}")
+            return False
+
+    # ————————————————————————————————————————————————
+    # 5. 利益冲突与客户库 (kb_client_registry) 维护接口
+    # ————————————————————————————————————————————————
+    def get_client_registry(self) -> Dict[str, str]:
+        rows = self.query("SELECT client_name, client_type FROM kb_client_registry")
+        return {r["client_name"]: r["client_type"] for r in rows}
+
+    def save_client_registry(self, clients: Dict[str, str]) -> bool:
+        now_ts = datetime.now(timezone.utc).isoformat()
+        try:
+            for name, desc in clients.items():
+                self.execute(
+                    "REPLACE INTO kb_client_registry (client_name, client_type, updated_at) VALUES (?, ?, ?)",
+                    (name, desc, now_ts),
+                )
+            return True
+        except Exception as e:
+            logger.error(f"[MySQLStore] 保存利益冲突客户库失败: {e}")
+            return False
+
+    # ————————————————————————————————————————————————
+    # 6. 特别法与一般法冲突优选表 (kb_special_general_relations)
+    # ————————————————————————————————————————————————
+    def get_special_general_relations(self) -> List[Dict[str, Any]]:
+        return self.query("SELECT special_law, general_law, description, has_deference FROM kb_special_general_relations")
+
+    def save_special_general_relations(self, relations: List[Dict[str, Any]]) -> bool:
+        now_ts = datetime.now(timezone.utc).isoformat()
+        try:
+            for r in relations:
+                self.execute(
+                    """
+                    REPLACE INTO kb_special_general_relations (special_law, general_law, description, has_deference, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (r.get("special_law", ""), r.get("general_law", ""), r.get("description", ""), 1 if r.get("has_deference", True) else 0, now_ts),
+                )
+            return True
+        except Exception as e:
+            logger.error(f"[MySQLStore] 保存特别法一般法关系失败: {e}")
+            return False
+
+    # ————————————————————————————————————————————————
+    # 7. 法律别名表 (kb_law_aliases)
+    # ————————————————————————————————————————————————
+    def get_law_aliases(self) -> Dict[str, str]:
+        rows = self.query("SELECT alias_name, canonical_name FROM kb_law_aliases")
+        return {r["alias_name"]: r["canonical_name"] for r in rows}
+
+    def save_law_aliases(self, aliases: Dict[str, str]) -> bool:
+        now_ts = datetime.now(timezone.utc).isoformat()
+        try:
+            for alias, canon in aliases.items():
+                self.execute(
+                    "REPLACE INTO kb_law_aliases (alias_name, canonical_name, updated_at) VALUES (?, ?, ?)",
+                    (alias, canon, now_ts),
+                )
+            return True
+        except Exception as e:
+            logger.error(f"[MySQLStore] 保存法规别名表失败: {e}")
+            return False
+
+    # ————————————————————————————————————————————————
+    # 8. 知识中心聚合视图获取与写回（全面兼容 KnowledgeCenter）
+    # ————————————————————————————————————————————————
+    def get_full_knowledge_config(self) -> Optional[Dict[str, Any]]:
+        """从拆分后的各专用表聚合成完整的知识中心字典对象。"""
+        syns = self.get_legal_synonyms()
+        if not syns:
+            return None
+
+        refs = self.get_cross_references()
+        succs = self.get_article_successions()
+        spec_gen = self.get_special_general_relations()
+        aliases = self.get_law_aliases()
+        clients = self.get_client_registry()
+
+        # 读取案由规则
+        case_rules = {}
+        for r in self.query("SELECT case_type, rules_json FROM kb_case_type_rules"):
+            try:
+                case_rules[r["case_type"]] = json.loads(r["rules_json"])
+            except Exception:
+                pass
+
+        # 读取确定性模式
+        certainty = []
+        for r in self.query("SELECT pattern, replacement FROM kb_certainty_patterns"):
+            certainty.append([r["pattern"], r["replacement"]])
+
+        # 读取立法对照表
+        new_old_cps = self.query("SELECT current_law, current_article, old_law, old_article, relation, switch_date, diff_note, authority FROM kb_new_old_counterparts")
+
+        # 读取程序性条文
+        allowed_procedural = []
+        for r in self.query("SELECT law_name, article FROM kb_allowed_procedural_meta_citations"):
+            allowed_procedural.append([r["law_name"], r["article"]])
+
+        # 读取审核员
+        reviewers = {}
+        for r in self.query("SELECT reviewer_id, name, license_no, role, department, info_json FROM kb_reviewers_registry"):
+            info = {}
+            if r.get("info_json"):
+                try:
+                    info = json.loads(r["info_json"])
+                except Exception:
+                    pass
+            reviewers[r["reviewer_id"]] = {
+                "name": r["name"],
+                "license_no": r["license_no"],
+                "role": r["role"],
+                "department": r["department"],
+                **info,
+            }
+
+        return {
+            "legal_synonym_map": syns,
+            "cross_reference_graph": refs,
+            "article_succession_list": succs,
+            "special_general_relations": spec_gen,
+            "law_aliases": aliases,
+            "client_registry": clients,
+            "case_type_rules": case_rules,
+            "certainty_patterns": certainty,
+            "new_old_counterparts": new_old_cps,
+            "allowed_procedural_meta_citations": allowed_procedural,
+            "reviewers_registry": reviewers,
+        }
+
+    def save_full_knowledge_config(self, data: Dict[str, Any]) -> bool:
+        """将完整知识中心字典结构拆分持久化至各专用表中。"""
+        now_ts = datetime.now(timezone.utc).isoformat()
+        try:
+            if "legal_synonym_map" in data:
+                self.save_legal_synonyms(data["legal_synonym_map"])
+            if "cross_reference_graph" in data:
+                self.save_cross_references(data["cross_reference_graph"])
+            if "article_succession_list" in data:
+                self.save_article_successions(data["article_succession_list"])
+            if "special_general_relations" in data:
+                self.save_special_general_relations(data["special_general_relations"])
+            if "law_aliases" in data:
+                self.save_law_aliases(data["law_aliases"])
+            if "client_registry" in data:
+                self.save_client_registry(data["client_registry"])
+            if "case_type_rules" in data:
+                for ct, rules in data["case_type_rules"].items():
+                    self.execute(
+                        "REPLACE INTO kb_case_type_rules (case_type, rules_json, updated_at) VALUES (?, ?, ?)",
+                        (ct, json.dumps(rules, ensure_ascii=False), now_ts),
+                    )
+            if "certainty_patterns" in data:
+                for pat, rep in data["certainty_patterns"]:
+                    self.execute(
+                        "INSERT INTO kb_certainty_patterns (pattern, replacement, updated_at) VALUES (?, ?, ?)",
+                        (pat, rep, now_ts),
+                    )
+            if "new_old_counterparts" in data:
+                for cp in data["new_old_counterparts"]:
+                    self.execute(
+                        """
+                        INSERT INTO kb_new_old_counterparts (current_law, current_article, old_law, old_article, relation, switch_date, diff_note, authority, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (cp.get("current_law", ""), cp.get("current_article", ""), cp.get("old_law", ""), cp.get("old_article", ""), cp.get("relation", "one_to_one"), cp.get("switch_date", ""), cp.get("diff_note", ""), cp.get("authority", ""), now_ts),
+                    )
+            if "allowed_procedural_meta_citations" in data:
+                for item in data["allowed_procedural_meta_citations"]:
+                    if isinstance(item, (list, tuple)) and len(item) >= 2:
+                        self.execute(
+                            "REPLACE INTO kb_allowed_procedural_meta_citations (law_name, article, updated_at) VALUES (?, ?, ?)",
+                            (item[0], item[1], now_ts),
+                        )
+            if "reviewers_registry" in data:
+                for rid, rinfo in data["reviewers_registry"].items():
+                    self.execute(
+                        """
+                        REPLACE INTO kb_reviewers_registry (reviewer_id, name, license_no, role, department, info_json, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (rid, rinfo.get("name", ""), rinfo.get("license_no", ""), rinfo.get("role", ""), rinfo.get("department", ""), json.dumps(rinfo, ensure_ascii=False), now_ts),
+                    )
+            return True
+        except Exception as e:
+            logger.error(f"[MySQLStore] 保存知识中心拆分表失败: {e}")
+            return False
+
+
+# 全局单例
+mysql_store = MySQLStore()
+try:
+    settings.load_from_disk()
+except Exception:
+    pass

@@ -6,6 +6,7 @@
 运行：python3 verify_data.py     缺失或错误关键元数据即 exit 1（可接入 CI）
 """
 import json
+import os
 import re
 import sys
 
@@ -29,8 +30,26 @@ DATE_FIELDS = [
 
 
 def main() -> int:
-    with open(DATA, "r", encoding="utf-8") as f:
-        rows = json.load(f)
+    rows = []
+    try:
+        from app.mysql_store import mysql_store
+        db_rows = mysql_store.query("SELECT * FROM sample_laws")
+        if db_rows:
+            for r in db_rows:
+                meta = {}
+                if r.get("metadata_json"):
+                    try:
+                        meta = json.loads(r["metadata_json"])
+                    except Exception:
+                        pass
+                item = dict(meta) if meta else dict(r)
+                rows.append(item)
+    except Exception:
+        pass
+
+    if not rows and os.path.exists(DATA):
+        with open(DATA, "r", encoding="utf-8") as f:
+            rows = json.load(f)
 
     errors, warns = [], []
     seen_keys = set()

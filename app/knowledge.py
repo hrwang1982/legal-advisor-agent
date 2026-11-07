@@ -27,53 +27,34 @@ class KnowledgeCenter:
     """支持文件修改时间（mtime）感知的热加载与在线持久化知识配置管理器。"""
 
     def __init__(self, path: Optional[str] = None):
-        self._explicit_path = path
-        self._cached_mtime: float = -1.0
         self._data: Dict[str, Any] = {}
 
-    @property
-    def config_path(self) -> str:
-        return self._explicit_path or settings.knowledge_config_path
-
     def _ensure_loaded(self) -> Dict[str, Any]:
-        p = self.config_path
-        try:
-            mtime = os.path.getmtime(p)
-        except OSError:
-            mtime = 0.0
-
-        if not self._data or mtime != self._cached_mtime:
+        if not self._data:
             self.reload()
         return self._data
 
     def reload(self) -> Dict[str, Any]:
-        """强制从磁盘重新读取知识配置 JSON。"""
-        p = self.config_path
-        if os.path.exists(p):
-            with open(p, "r", encoding="utf-8") as f:
-                self._data = json.load(f)
-            try:
-                self._cached_mtime = os.path.getmtime(p)
-            except OSError:
-                self._cached_mtime = 0.0
-        else:
-            self._data = {}
-            self._cached_mtime = 0.0
+        """从 MySQL 数据库各知识专用拆分表（同义词/图谱/新旧法/客户库等）加载全量业务知识配置。"""
+        try:
+            from app.mysql_store import mysql_store
+            db_data = mysql_store.get_full_knowledge_config()
+            if db_data:
+                self._data = db_data
+                return self._data
+        except Exception:
+            pass
         return self._data
 
     def save(self, new_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """将更新后的知识配置写回 JSON 文件并刷新缓存（立即热生效）。"""
+        """将更新后的知识配置拆分持久化写入 MySQL 各专用表（kb_legal_synonyms、kb_cross_references 等）。"""
         if new_data is not None:
             self._data = new_data
-        p = self.config_path
-        parent = os.path.dirname(os.path.abspath(p))
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump(self._data, f, ensure_ascii=False, indent=2)
+
         try:
-            self._cached_mtime = os.path.getmtime(p)
-        except OSError:
+            from app.mysql_store import mysql_store
+            mysql_store.save_full_knowledge_config(self._data)
+        except Exception:
             pass
         return self._data
 

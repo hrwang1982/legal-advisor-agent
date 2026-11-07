@@ -443,7 +443,26 @@ def infer_dynamic_elements(query: str) -> Dict[str, Any]:
         pass
 
     # 失败时回退到启发式通用兜底
-    return infer_dynamic_elements(query)
+    for kw_group, res in _DYNAMIC_FALLBACK_HEURISTICS:
+        if any(k in text for k in kw_group):
+            return dict(res)
+    return {
+        "inferred_case_type": "一般民商事权益争议（动态推导）",
+        "core_elements": ["原告权利基础与合同/侵权法律事实要件", "相对人违法违约行为与过错要件", "损害后果与因果关系要件"],
+        "missing_facts": [
+            "确认争议双方的身份关系与法律关系性质凭证",
+            "确认相对人实施违法、违约或损害行为的具体表现与举证凭证",
+            "确认损害结果及具体诉请主张金额的计算依据",
+        ],
+        "clarification_questions": [
+            "请问双方之间是否存在书面协议、往来函件或即时通讯沟通记录？",
+            "请问本案主张损害赔偿或违约责任的具体金额及计算依据是什么？",
+        ],
+        "procedural_notes": [
+            "【诉讼时效】民事权利请求保护普通诉讼时效为 3 年（《民法典》第188条），自知道或者应当知道权利受损及义务人之日起算。",
+        ],
+        "suggested_citations": ["中华人民共和国民法典|第188条"],
+    }
 
 
 def _render_structured_template_answer(

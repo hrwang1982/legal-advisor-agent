@@ -48,8 +48,7 @@ class NationalLawDatabaseMonitor:
         revision_logs_created: List[str] = []
         now_str = datetime.now(timezone.utc).isoformat()
 
-        conn = kb_store._conn()
-        cur = conn.cursor()
+        from app.mysql_store import mysql_store
 
         for b in bulletins:
             action = b.get("action")  # "repeal" / "amend" / "promulgate"
@@ -61,7 +60,7 @@ class NationalLawDatabaseMonitor:
             # A. 废止公告 (如某法被新法废止)
             if action == "repeal" and target_law and effective_date:
                 calc_effective_to = _day_before(effective_date)
-                cur.execute(
+                mysql_store.execute(
                     """
                     UPDATE kb_articles
                     SET validity = '已废止', effective_to = ?, updated_at = ?
@@ -69,7 +68,7 @@ class NationalLawDatabaseMonitor:
                     """,
                     (calc_effective_to, now_str, target_law),
                 )
-                cur.execute(
+                mysql_store.execute(
                     """
                     UPDATE law_chunks
                     SET validity = '已废止', effective_to = ?
@@ -77,11 +76,19 @@ class NationalLawDatabaseMonitor:
                     """,
                     (calc_effective_to, target_law),
                 )
-                cur.execute(
+                mysql_store.execute(
                     """
                     UPDATE law_documents
                     SET validity_status = '已废止', valid_until = ?
                     WHERE title = ?
+                    """,
+                    (calc_effective_to, target_law),
+                )
+                mysql_store.execute(
+                    """
+                    UPDATE sample_laws
+                    SET validity = '已废止', effective_to = ?
+                    WHERE law_name = ? AND validity = '现行有效'
                     """,
                     (calc_effective_to, target_law),
                 )
@@ -105,10 +112,6 @@ class NationalLawDatabaseMonitor:
                             diff_summary=diff_note,
                         )
                         revision_logs_created.append(f"《{target_law}》{art_no}（修正案: {amendment_name}，生效日: {eff_from}）")
-
-        conn.commit()
-        if kb_store._mem_conn is None:
-            conn.close()
 
         # 触发全系统缓存失效
         if updated_laws or revision_logs_created:

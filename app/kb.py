@@ -12,7 +12,6 @@ import json
 import math
 import os
 import re
-import sqlite3
 import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -329,141 +328,17 @@ def parse_external_regulation_text(
 
 
 class KnowledgeBaseStore:
-    """持久化 RAG 法规知识库与 BGE-M3 向量索引存储（SQLite）。"""
+    """持久化 RAG 法规知识库与 BGE-M3 向量索引存储（MySQL）。"""
 
     def __init__(self, db_path: Optional[str] = None):
-        self._explicit_db_path = db_path
-        self._mem_conn: Optional[sqlite3.Connection] = None
         self.embedder = BGEM3Embedder()
         self.version_counter: int = 0
         self._init_db()
 
-    @property
-    def db_path(self) -> str:
-        return self._explicit_db_path or settings.kb_db_path
-
-    def _conn(self) -> sqlite3.Connection:
-        if self.db_path == ":memory:":
-            if self._mem_conn is None:
-                self._mem_conn = sqlite3.connect(":memory:", check_same_thread=False)
-            return self._mem_conn
-        parent = os.path.dirname(os.path.abspath(self.db_path))
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-        return sqlite3.connect(self.db_path, check_same_thread=False)
-
     def _init_db(self) -> None:
-        conn = self._conn()
-        cur = conn.cursor()
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS kb_collections (
-                collection_id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                description TEXT,
-                embed_model TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-            """
-        )
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS kb_articles (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                collection_id TEXT NOT NULL,
-                law_name TEXT NOT NULL,
-                article TEXT NOT NULL,
-                paragraph TEXT DEFAULT '',
-                hierarchy TEXT NOT NULL,
-                validity TEXT NOT NULL,
-                effective_date TEXT DEFAULT '',
-                effective_to TEXT DEFAULT '',
-                category TEXT DEFAULT '',
-                content TEXT NOT NULL,
-                metadata_json TEXT NOT NULL,
-                embedding_json TEXT NOT NULL,
-                embed_backend TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                UNIQUE(law_name, article, paragraph)
-            )
-            """
-        )
-        # 1. 法规文档总表 (对标「AI法盾」知识库管理列表)
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS law_documents (
-                doc_id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                kb_type TEXT NOT NULL DEFAULT '外规知识库/法律法规',
-                department TEXT DEFAULT '法律合规部',
-                uploader TEXT DEFAULT '系统管理员',
-                doc_size TEXT DEFAULT '0 KB',
-                doc_format TEXT DEFAULT 'TXT',
-                split_mode TEXT NOT NULL DEFAULT 'article',
-                chunks_count INTEGER DEFAULT 0,
-                validity_status TEXT DEFAULT '有效',
-                doc_status TEXT DEFAULT '已解析',
-                valid_until TEXT DEFAULT '',
-                created_at TEXT NOT NULL
-            )
-            """
-        )
-        # 2. 法规分块表 (支持自动、法条、文档分层三种模式)
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS law_chunks (
-                chunk_id TEXT PRIMARY KEY,
-                doc_id TEXT NOT NULL,
-                law_name TEXT NOT NULL,
-                chapter_path TEXT DEFAULT '',
-                article TEXT NOT NULL,
-                paragraph TEXT DEFAULT '',
-                content TEXT NOT NULL,
-                chunk_type TEXT NOT NULL,
-                parent_chunk_id TEXT DEFAULT '',
-                hierarchy TEXT NOT NULL,
-                effective_date TEXT DEFAULT '',
-                effective_to TEXT DEFAULT '',
-                validity TEXT NOT NULL,
-                metadata_json TEXT NOT NULL,
-                embedding_json TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-            """
-        )
-        # 3. 条文粒度修正与生命周期追踪表
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS law_article_revision_log (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                law_name TEXT NOT NULL,
-                article TEXT NOT NULL,
-                paragraph TEXT DEFAULT '',
-                revision_type TEXT NOT NULL,
-                amendment_name TEXT NOT NULL,
-                effective_from TEXT NOT NULL,
-                effective_to TEXT DEFAULT '',
-                old_content TEXT DEFAULT '',
-                new_content TEXT NOT NULL,
-                diff_summary TEXT DEFAULT '',
-                created_at TEXT NOT NULL
-            )
-            """
-        )
-        # 4. 知识库与层级目录树表 (支持创建知识库、层级目录、改名、删除)
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS kb_tree_nodes (
-                node_id TEXT PRIMARY KEY,
-                parent_id TEXT NOT NULL DEFAULT '',
-                name TEXT NOT NULL,
-                node_type TEXT NOT NULL DEFAULT 'folder',
-                description TEXT DEFAULT '',
-                sort_order INTEGER DEFAULT 0,
-                created_at TEXT NOT NULL
-            )
-            """
-        )
+        from app.mysql_store import mysql_store
+        mysql_store.init_schema()
+
         # 预置初始层级知识库与目录（匹配「AI法盾」标准目录树）
         default_nodes = [
             ("kb_internal", "", "内规知识库", "kb", "企业内部规章制度与合规政策", 1),
@@ -475,18 +350,17 @@ class KnowledgeBaseStore:
         ]
         now_ts = datetime.now(timezone.utc).isoformat()
         for nid, pid, nname, ntype, ndesc, nsort in default_nodes:
-            cur.execute(
+            mysql_store.execute(
                 """
-                INSERT OR IGNORE INTO kb_tree_nodes (node_id, parent_id, name, node_type, description, sort_order, created_at)
+                REPLACE INTO kb_tree_nodes (node_id, parent_id, name, node_type, description, sort_order, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (nid, pid, nname, ntype, ndesc, nsort, now_ts),
             )
-        # 确保默认集合存在
         now = datetime.now(timezone.utc).isoformat()
-        cur.execute(
+        mysql_store.execute(
             """
-            INSERT OR IGNORE INTO kb_collections (collection_id, name, description, embed_model, created_at)
+            REPLACE INTO kb_collections (collection_id, name, description, embed_model, created_at)
             VALUES (?, ?, ?, ?, ?)
             """,
             (
@@ -497,9 +371,6 @@ class KnowledgeBaseStore:
                 now,
             ),
         )
-        conn.commit()
-        if self._mem_conn is None:
-            conn.close()
 
     def create_collection(
         self,
@@ -509,35 +380,26 @@ class KnowledgeBaseStore:
         embed_model: Optional[str] = None,
     ) -> Dict[str, Any]:
         """创建一个新的 RAG 法规知识库集合。"""
+        from app.mysql_store import mysql_store
         cid = (collection_id or "").strip() or f"kb_{int(datetime.now().timestamp())}"
         now = datetime.now(timezone.utc).isoformat()
         em = (embed_model or settings.embed_model or "BAAI/bge-m3").strip()
-        conn = self._conn()
-        cur = conn.cursor()
-        cur.execute(
+        mysql_store.execute(
             """
-            INSERT INTO kb_collections (collection_id, name, description, embed_model, created_at)
+            REPLACE INTO kb_collections (collection_id, name, description, embed_model, created_at)
             VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(collection_id) DO UPDATE SET
-                name=excluded.name,
-                description=excluded.description,
-                embed_model=excluded.embed_model
             """,
             (cid, name, description, em, now),
         )
-        # 同步登记到目录树根节点
-        cur.execute("SELECT node_id FROM kb_tree_nodes WHERE name = ?", (name,))
-        if not cur.fetchone():
-            cur.execute(
+        existing = mysql_store.query_one("SELECT node_id FROM kb_tree_nodes WHERE name = ?", (name,))
+        if not existing:
+            mysql_store.execute(
                 """
-                INSERT OR IGNORE INTO kb_tree_nodes (node_id, parent_id, name, node_type, description, sort_order, created_at)
+                REPLACE INTO kb_tree_nodes (node_id, parent_id, name, node_type, description, sort_order, created_at)
                 VALUES (?, '', ?, 'kb', ?, 99, ?)
                 """,
                 (cid, name, description, now),
             )
-        conn.commit()
-        if self._mem_conn is None:
-            conn.close()
         return {
             "collection_id": cid,
             "name": name,
@@ -547,9 +409,8 @@ class KnowledgeBaseStore:
         }
 
     def list_collections(self) -> List[Dict[str, Any]]:
-        conn = self._conn()
-        cur = conn.cursor()
-        cur.execute(
+        from app.mysql_store import mysql_store
+        rows = mysql_store.query(
             """
             SELECT c.collection_id, c.name, c.description, c.embed_model, c.created_at,
                    COUNT(a.id) AS article_count
@@ -559,17 +420,14 @@ class KnowledgeBaseStore:
             ORDER BY c.created_at ASC
             """
         )
-        rows = cur.fetchall()
-        if self._mem_conn is None:
-            conn.close()
         return [
             {
-                "collection_id": r[0],
-                "name": r[1],
-                "description": r[2],
-                "embed_model": r[3],
-                "created_at": r[4],
-                "article_count": r[5],
+                "collection_id": r["collection_id"],
+                "name": r["name"],
+                "description": r.get("description") or "",
+                "embed_model": r["embed_model"],
+                "created_at": r["created_at"],
+                "article_count": r.get("article_count", 0),
             }
             for r in rows
         ]
@@ -591,8 +449,7 @@ class KnowledgeBaseStore:
         vectors, backend = self.embedder.embed_texts(texts_for_embed)
         now = datetime.now(timezone.utc).isoformat()
 
-        conn = self._conn()
-        cur = conn.cursor()
+        from app.mysql_store import mysql_store
         ingested = 0
         for art, vec in zip(articles, vectors):
             law_name = (art.get("law_name") or "").strip()
@@ -601,25 +458,13 @@ class KnowledgeBaseStore:
             if not law_name or not article_no or not art.get("content"):
                 continue
             art["article"] = article_no
-            cur.execute(
+            mysql_store.execute(
                 """
-                INSERT INTO kb_articles (
+                REPLACE INTO kb_articles (
                     collection_id, law_name, article, paragraph, hierarchy, validity,
                     effective_date, effective_to, category, content, metadata_json,
                     embedding_json, embed_backend, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(law_name, article, paragraph) DO UPDATE SET
-                    collection_id=excluded.collection_id,
-                    hierarchy=excluded.hierarchy,
-                    validity=excluded.validity,
-                    effective_date=excluded.effective_date,
-                    effective_to=excluded.effective_to,
-                    category=excluded.category,
-                    content=excluded.content,
-                    metadata_json=excluded.metadata_json,
-                    embedding_json=excluded.embedding_json,
-                    embed_backend=excluded.embed_backend,
-                    updated_at=excluded.updated_at
                 """,
                 (
                     collection_id,
@@ -640,9 +485,6 @@ class KnowledgeBaseStore:
             )
             ingested += 1
 
-        conn.commit()
-        if self._mem_conn is None:
-            conn.close()
         self.version_counter += 1
         return {
             "ingested_count": ingested,
@@ -675,32 +517,28 @@ class KnowledgeBaseStore:
 
     def load_all_kb_rows(self) -> List[Dict[str, Any]]:
         """加载动态知识库中存储的全部法规条文（含 kb_articles 与 law_chunks）。"""
-        conn = self._conn()
-        cur = conn.cursor()
+        from app.mysql_store import mysql_store
         out: List[Dict[str, Any]] = []
 
         # 1. 兼容原 kb_articles
-        cur.execute("SELECT metadata_json, embedding_json FROM kb_articles ORDER BY id ASC")
-        for meta_str, emb_str in cur.fetchall():
+        rows_art = mysql_store.query("SELECT metadata_json, embedding_json FROM kb_articles ORDER BY id ASC")
+        for r in rows_art:
             try:
-                item = json.loads(meta_str)
-                item["_embedding"] = json.loads(emb_str)
+                item = json.loads(r["metadata_json"])
+                item["_embedding"] = json.loads(r["embedding_json"])
                 out.append(item)
             except Exception:
                 continue
 
         # 2. 载入 law_chunks (只取非 parent 的条文块，避免大块上下文与单条重复)
-        cur.execute("SELECT metadata_json, embedding_json FROM law_chunks WHERE chunk_type != 'hierarchical_parent' ORDER BY created_at ASC")
-        for meta_str, emb_str in cur.fetchall():
+        rows_chunk = mysql_store.query("SELECT metadata_json, embedding_json FROM law_chunks WHERE chunk_type != 'hierarchical_parent' ORDER BY created_at ASC")
+        for r in rows_chunk:
             try:
-                item = json.loads(meta_str)
-                item["_embedding"] = json.loads(emb_str)
+                item = json.loads(r["metadata_json"])
+                item["_embedding"] = json.loads(r["embedding_json"])
                 out.append(item)
             except Exception:
                 continue
-
-        if self._mem_conn is None:
-            conn.close()
 
         today_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         for item in out:
@@ -731,7 +569,7 @@ class KnowledgeBaseStore:
         """对标「AI法盾」企业级两步上传与三模式切分入库流水线：
         1. 抽取纯文本
         2. 根据 split_mode 执行切分算法 (自动 / 法条 / 分层)
-        3. 批量生成 BGE-M3 向量并写入 law_chunks
+        3. 批量生成 BGE-M3 向量并写入 law_chunks (MySQL)
         4. 同步至 Elasticsearch 8.x 混合索引库
         5. 登记至 law_documents 文档列表
         """
@@ -743,6 +581,7 @@ class KnowledgeBaseStore:
             split_hierarchical,
         )
         from app.es_store import es_vector_store
+        from app.mysql_store import mysql_store
 
         text = ""
         doc_size = "0 KB"
@@ -788,13 +627,10 @@ class KnowledgeBaseStore:
         ]
         vectors, backend = self.embedder.embed_texts(texts_for_embed)
 
-        conn = self._conn()
-        cur = conn.cursor()
-
         # 写入 law_documents 主表
-        cur.execute(
+        mysql_store.execute(
             """
-            INSERT INTO law_documents (
+            REPLACE INTO law_documents (
                 doc_id, title, kb_type, department, uploader, doc_size, doc_format,
                 split_mode, chunks_count, validity_status, doc_status, valid_until, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -845,9 +681,9 @@ class KnowledgeBaseStore:
                 "note": f"［{split_mode}切分］",
             }
             c["content_vector"] = vec
-            cur.execute(
+            mysql_store.execute(
                 """
-                INSERT INTO law_chunks (
+                REPLACE INTO law_chunks (
                     chunk_id, doc_id, law_name, chapter_path, article, paragraph, content,
                     chunk_type, parent_chunk_id, hierarchy, effective_date, effective_to,
                     validity, metadata_json, embedding_json, created_at
@@ -872,10 +708,6 @@ class KnowledgeBaseStore:
                     now,
                 ),
             )
-
-        conn.commit()
-        if self._mem_conn is None:
-            conn.close()
 
         # 同步写入 Elasticsearch 8.x
         es_indexed_count = 0
@@ -907,45 +739,38 @@ class KnowledgeBaseStore:
         """递归获取节点的完整层级路径（如: '外规知识库/法律法规'）。"""
         if not node_id:
             return ""
-        conn = self._conn()
-        cur = conn.cursor()
+        from app.mysql_store import mysql_store
         parts = []
         cur_id = node_id
         while cur_id:
-            cur.execute("SELECT parent_id, name FROM kb_tree_nodes WHERE node_id = ?", (cur_id,))
-            row = cur.fetchone()
+            row = mysql_store.query_one("SELECT parent_id, name FROM kb_tree_nodes WHERE node_id = ?", (cur_id,))
             if not row:
                 break
-            p_id, n_name = row
+            p_id = row["parent_id"]
+            n_name = row["name"]
             parts.insert(0, n_name)
             cur_id = p_id
-        if self._mem_conn is None:
-            conn.close()
         return "/".join(parts)
 
     def get_kb_tree(self) -> List[Dict[str, Any]]:
         """获取层级知识库与目录树（含各级节点下的文档统计数）。"""
-        conn = self._conn()
-        cur = conn.cursor()
-        cur.execute("SELECT node_id, parent_id, name, node_type, description, sort_order, created_at FROM kb_tree_nodes ORDER BY sort_order ASC, created_at ASC")
-        rows = cur.fetchall()
+        from app.mysql_store import mysql_store
+        rows = mysql_store.query("SELECT node_id, parent_id, name, node_type, description, sort_order, created_at FROM kb_tree_nodes ORDER BY sort_order ASC, created_at ASC")
 
-        cur.execute("SELECT kb_type, COUNT(*) FROM law_documents GROUP BY kb_type")
-        doc_counts = dict(cur.fetchall())
-        if self._mem_conn is None:
-            conn.close()
+        doc_counts_rows = mysql_store.query("SELECT kb_type, COUNT(*) AS cnt FROM law_documents GROUP BY kb_type")
+        doc_counts = {r["kb_type"]: r["cnt"] for r in doc_counts_rows}
 
         nodes_map: Dict[str, Dict[str, Any]] = {}
         for r in rows:
-            nid, pid, nname, ntype, ndesc, nsort, ntime = r
+            nid = r["node_id"]
             nodes_map[nid] = {
                 "node_id": nid,
-                "parent_id": pid or "",
-                "name": nname,
-                "node_type": ntype,
-                "description": ndesc or "",
-                "sort_order": nsort,
-                "created_at": ntime,
+                "parent_id": r.get("parent_id") or "",
+                "name": r["name"],
+                "node_type": r["node_type"],
+                "description": r.get("description") or "",
+                "sort_order": r.get("sort_order", 0),
+                "created_at": r.get("created_at") or "",
                 "children": [],
                 "doc_count": 0,
             }
@@ -979,6 +804,7 @@ class KnowledgeBaseStore:
     ) -> Dict[str, Any]:
         """创建知识库（parent_id 为空）或层级子目录。"""
         import uuid
+        from app.mysql_store import mysql_store
         clean_name = (name or "").strip()
         if not clean_name:
             raise ValueError("知识库或目录名称不能为空")
@@ -987,29 +813,24 @@ class KnowledgeBaseStore:
         actual_type = "kb" if not parent_id else node_type
         now_ts = datetime.now(timezone.utc).isoformat()
 
-        conn = self._conn()
-        cur = conn.cursor()
-        cur.execute("SELECT MAX(sort_order) FROM kb_tree_nodes WHERE parent_id = ?", (parent_id or "",))
-        max_sort = cur.fetchone()[0] or 0
+        row = mysql_store.query_one("SELECT MAX(sort_order) AS max_sort FROM kb_tree_nodes WHERE parent_id = ?", (parent_id or "",))
+        max_sort = (row["max_sort"] if row and row.get("max_sort") is not None else 0) or 0
 
-        cur.execute(
+        mysql_store.execute(
             """
-            INSERT INTO kb_tree_nodes (node_id, parent_id, name, node_type, description, sort_order, created_at)
+            REPLACE INTO kb_tree_nodes (node_id, parent_id, name, node_type, description, sort_order, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (nid, parent_id or "", clean_name, actual_type, description or "", max_sort + 1, now_ts),
         )
         if actual_type == "kb":
-            cur.execute(
+            mysql_store.execute(
                 """
-                INSERT OR IGNORE INTO kb_collections (collection_id, name, description, embed_model, created_at)
+                REPLACE INTO kb_collections (collection_id, name, description, embed_model, created_at)
                 VALUES (?, ?, ?, ?, ?)
                 """,
                 (nid, clean_name, description or "", settings.embed_model, now_ts),
             )
-        conn.commit()
-        if self._mem_conn is None:
-            conn.close()
 
         full_path = self.get_node_path(nid)
         return {
@@ -1023,40 +844,33 @@ class KnowledgeBaseStore:
 
     def rename_kb_tree_node(self, node_id: str, new_name: str) -> bool:
         """重命名知识库或层级目录，并同步更新关联文档的 kb_type 路径。"""
+        from app.mysql_store import mysql_store
         clean_name = (new_name or "").strip()
         if not clean_name:
             raise ValueError("新名称不能为空")
         old_path = self.get_node_path(node_id)
 
-        conn = self._conn()
-        cur = conn.cursor()
-        cur.execute("UPDATE kb_tree_nodes SET name = ? WHERE node_id = ?", (clean_name, node_id))
-        conn.commit()
-
+        mysql_store.execute("UPDATE kb_tree_nodes SET name = ? WHERE node_id = ?", (clean_name, node_id))
         new_path = self.get_node_path(node_id)
         if old_path and new_path and old_path != new_path:
-            cur.execute(
+            mysql_store.execute(
                 "UPDATE law_documents SET kb_type = ? WHERE kb_type = ?",
                 (new_path, old_path),
             )
-            cur.execute(
-                "UPDATE law_documents SET kb_type = ? || SUBSTR(kb_type, ?) WHERE kb_type LIKE ?",
-                (new_path, len(old_path) + 1, old_path + "/%"),
-            )
-            conn.commit()
+            docs = mysql_store.query("SELECT doc_id, kb_type FROM law_documents WHERE kb_type LIKE ?", (old_path + "/%",))
+            for d in docs:
+                sub_path = new_path + d["kb_type"][len(old_path):]
+                mysql_store.execute("UPDATE law_documents SET kb_type = ? WHERE doc_id = ?", (sub_path, d["doc_id"]))
 
-        if self._mem_conn is None:
-            conn.close()
         return True
 
     def delete_kb_tree_node(self, node_id: str) -> bool:
         """删除知识库或层级目录（递归删除所有子目录和挂在该目录下的文档与切片）。"""
-        conn = self._conn()
-        cur = conn.cursor()
+        from app.mysql_store import mysql_store
 
         def _collect_descendants(nid: str) -> List[str]:
-            cur.execute("SELECT node_id FROM kb_tree_nodes WHERE parent_id = ?", (nid,))
-            children = [r[0] for r in cur.fetchall()]
+            children_rows = mysql_store.query("SELECT node_id FROM kb_tree_nodes WHERE parent_id = ?", (nid,))
+            children = [r["node_id"] for r in children_rows]
             all_ids = list(children)
             for c in children:
                 all_ids.extend(_collect_descendants(c))
@@ -1065,33 +879,28 @@ class KnowledgeBaseStore:
         all_to_del = [node_id] + _collect_descendants(node_id)
         node_path = self.get_node_path(node_id)
 
-        placeholders = ",".join("?" for _ in all_to_del)
-        cur.execute(f"DELETE FROM kb_tree_nodes WHERE node_id IN ({placeholders})", all_to_del)
+        for nid in all_to_del:
+            mysql_store.execute("DELETE FROM kb_tree_nodes WHERE node_id = ?", (nid,))
 
         if node_path:
-            cur.execute(
+            doc_rows = mysql_store.query(
                 "SELECT doc_id FROM law_documents WHERE kb_type = ? OR kb_type LIKE ?",
                 (node_path, node_path + "/%"),
             )
-            doc_ids = [r[0] for r in cur.fetchall()]
-            if doc_ids:
-                doc_placeholders = ",".join("?" for _ in doc_ids)
-                cur.execute(f"DELETE FROM law_documents WHERE doc_id IN ({doc_placeholders})", doc_ids)
-                cur.execute(f"DELETE FROM law_chunks WHERE doc_id IN ({doc_placeholders})", doc_ids)
+            doc_ids = [r["doc_id"] for r in doc_rows]
+            for did in doc_ids:
+                mysql_store.execute("DELETE FROM law_documents WHERE doc_id = ?", (did,))
+                mysql_store.execute("DELETE FROM law_chunks WHERE doc_id = ?", (did,))
 
-        conn.commit()
-        if self._mem_conn is None:
-            conn.close()
         self.version_counter += 1
         return True
 
     def list_law_documents(self, kb_type: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
         """获取法规文档列表（支持根据所属知识库或层级目录路径筛选）。"""
-        conn = self._conn()
-        cur = conn.cursor()
+        from app.mysql_store import mysql_store
         if kb_type and kb_type != "all":
             clean_kb = kb_type.strip()
-            cur.execute(
+            return mysql_store.query(
                 """
                 SELECT doc_id, title, kb_type, department, uploader, doc_size, doc_format,
                        split_mode, chunks_count, validity_status, doc_status, valid_until, created_at
@@ -1102,7 +911,7 @@ class KnowledgeBaseStore:
                 (clean_kb, clean_kb + "/%", limit),
             )
         else:
-            cur.execute(
+            return mysql_store.query(
                 """
                 SELECT doc_id, title, kb_type, department, uploader, doc_size, doc_format,
                        split_mode, chunks_count, validity_status, doc_status, valid_until, created_at
@@ -1111,24 +920,12 @@ class KnowledgeBaseStore:
                 """,
                 (limit,),
             )
-        rows = cur.fetchall()
-        if self._mem_conn is None:
-            conn.close()
-        cols = [
-            "doc_id", "title", "kb_type", "department", "uploader", "doc_size", "doc_format",
-            "split_mode", "chunks_count", "validity_status", "doc_status", "valid_until", "created_at",
-        ]
-        return [dict(zip(cols, r)) for r in rows]
 
     def delete_law_document(self, doc_id: str) -> bool:
         """删除指定法规文档及其所有条文分段。"""
-        conn = self._conn()
-        cur = conn.cursor()
-        cur.execute("DELETE FROM law_documents WHERE doc_id = ?", (doc_id,))
-        cur.execute("DELETE FROM law_chunks WHERE doc_id = ?", (doc_id,))
-        conn.commit()
-        if self._mem_conn is None:
-            conn.close()
+        from app.mysql_store import mysql_store
+        mysql_store.execute("DELETE FROM law_documents WHERE doc_id = ?", (doc_id,))
+        mysql_store.execute("DELETE FROM law_chunks WHERE doc_id = ?", (doc_id,))
         self.version_counter += 1
         return True
 
@@ -1146,10 +943,9 @@ class KnowledgeBaseStore:
         diff_summary: str = "",
     ) -> int:
         """记录细粒度（条、款、项）法律修改日志。"""
+        from app.mysql_store import mysql_store
         now = datetime.now(timezone.utc).isoformat()
-        conn = self._conn()
-        cur = conn.cursor()
-        cur.execute(
+        mysql_store.execute(
             """
             INSERT INTO law_article_revision_log (
                 law_name, article, paragraph, revision_type, amendment_name,
@@ -1170,11 +966,8 @@ class KnowledgeBaseStore:
                 now,
             ),
         )
-        new_id = cur.lastrowid
-        conn.commit()
-        if self._mem_conn is None:
-            conn.close()
-        return new_id
+        max_row = mysql_store.query_one("SELECT MAX(id) AS id FROM law_article_revision_log")
+        return int(max_row["id"]) if max_row and max_row.get("id") else 0
 
     def list_article_revisions(
         self,
@@ -1182,10 +975,9 @@ class KnowledgeBaseStore:
         article: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """查询条文粒度的修改日志列表。"""
-        conn = self._conn()
-        cur = conn.cursor()
+        from app.mysql_store import mysql_store
         if law_name and article:
-            cur.execute(
+            return mysql_store.query(
                 """
                 SELECT id, law_name, article, paragraph, revision_type, amendment_name,
                        effective_from, effective_to, old_content, new_content, diff_summary, created_at
@@ -1196,7 +988,7 @@ class KnowledgeBaseStore:
                 (law_name.strip().strip("《》"), normalize_article_id(article)),
             )
         elif law_name:
-            cur.execute(
+            return mysql_store.query(
                 """
                 SELECT id, law_name, article, paragraph, revision_type, amendment_name,
                        effective_from, effective_to, old_content, new_content, diff_summary, created_at
@@ -1207,7 +999,7 @@ class KnowledgeBaseStore:
                 (law_name.strip().strip("《》"),),
             )
         else:
-            cur.execute(
+            return mysql_store.query(
                 """
                 SELECT id, law_name, article, paragraph, revision_type, amendment_name,
                        effective_from, effective_to, old_content, new_content, diff_summary, created_at
@@ -1215,41 +1007,29 @@ class KnowledgeBaseStore:
                 ORDER BY id DESC LIMIT 50
                 """
             )
-        rows = cur.fetchall()
-        if self._mem_conn is None:
-            conn.close()
-        cols = [
-            "id", "law_name", "article", "paragraph", "revision_type", "amendment_name",
-            "effective_from", "effective_to", "old_content", "new_content", "diff_summary", "created_at",
-        ]
-        return [dict(zip(cols, r)) for r in rows]
 
     def delete_law(self, law_name: str, article: Optional[str] = None) -> int:
         """删除某部法规或某条具体条文。"""
-        conn = self._conn()
-        cur = conn.cursor()
+        from app.mysql_store import mysql_store
+        deleted = 0
         if article:
-            cur.execute(
+            deleted += mysql_store.execute(
                 "DELETE FROM kb_articles WHERE law_name = ? AND article = ?",
                 (law_name.strip().strip("《》"), normalize_article_id(article)),
             )
-            cur.execute(
+            deleted += mysql_store.execute(
                 "DELETE FROM law_chunks WHERE law_name = ? AND article = ?",
                 (law_name.strip().strip("《》"), normalize_article_id(article)),
             )
         else:
-            cur.execute(
+            deleted += mysql_store.execute(
                 "DELETE FROM kb_articles WHERE law_name = ?",
                 (law_name.strip().strip("《》"),),
             )
-            cur.execute(
+            deleted += mysql_store.execute(
                 "DELETE FROM law_chunks WHERE law_name = ?",
                 (law_name.strip().strip("《》"),),
             )
-        deleted = cur.rowcount
-        conn.commit()
-        if self._mem_conn is None:
-            conn.close()
         if deleted > 0:
             self.version_counter += 1
         return deleted

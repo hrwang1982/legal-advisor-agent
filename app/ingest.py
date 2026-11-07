@@ -190,36 +190,39 @@ class _BM25:
         return total
 
 
-def _resolve_data_paths(data_path: str) -> List[str]:
-    """单文件 / 目录 自适应：文件直接返回；目录返回其中全部 .json。"""
-    if os.path.isdir(data_path):
-        return sorted(
-            os.path.join(data_path, f)
-            for f in os.listdir(data_path)
-            if f.endswith(".json") and not f.endswith("knowledge_config.json")
-        )
-    return [data_path] if os.path.exists(data_path) else []
-
-
 def _load_rows() -> List[dict]:
-    """读取法规原始条目：合并静态 JSON 法规库 + 动态导入的 SQLite 外规知识库（同条文以最新导入为准）。"""
-    paths = _resolve_data_paths(settings.data_path)
+    """读取法规原始条目：完全从 MySQL 数据库加载基础法规与外规知识库条文。"""
     merged: Dict[Tuple[str, str, str], dict] = {}
-    for p in paths:
-        with open(p, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        rows = data if isinstance(data, list) else (data.get("laws", []) if isinstance(data, dict) else [])
-        for r in rows:
-            if not isinstance(r, dict):
-                continue
-            key = (
-                r.get("law_name", ""),
-                normalize_article_id(r.get("article", "")),
-                r.get("paragraph", ""),
-            )
-            merged[key] = r
 
-    # 合并动态 RAG 知识库中导入的外规条文
+    # 1. 从 MySQL 数据库读取 sample_laws 表
+    try:
+        from app.mysql_store import mysql_store
+        db_rows = mysql_store.query("SELECT * FROM sample_laws")
+        if db_rows:
+            for r in db_rows:
+                meta = {}
+                if r.get("metadata_json"):
+                    try:
+                        meta = json.loads(r["metadata_json"])
+                    except Exception:
+                        pass
+                item = dict(meta) if meta else dict(r)
+                item["law_name"] = r.get("law_name", item.get("law_name", ""))
+                item["article"] = r.get("article", item.get("article", ""))
+                item["paragraph"] = r.get("paragraph", item.get("paragraph", ""))
+                item["content"] = r.get("content", item.get("content", ""))
+                item["hierarchy"] = r.get("hierarchy", item.get("hierarchy", "法律"))
+                item["validity"] = r.get("validity", item.get("validity", "现行有效"))
+                key = (
+                    item.get("law_name", ""),
+                    normalize_article_id(item.get("article", "")),
+                    item.get("paragraph", ""),
+                )
+                merged[key] = item
+    except Exception:
+        pass
+
+    # 2. 合并动态 RAG 知识库中导入的外规条文（来自 MySQL law_chunks）
     try:
         for kb_row in kb_store.load_all_kb_rows():
             key = (
@@ -253,14 +256,7 @@ _CACHE_STATE: Dict[str, Any] = {
 
 
 def _current_data_signature() -> Tuple[Any, ...]:
-    paths = _resolve_data_paths(settings.data_path)
-    mtimes = []
-    for p in paths:
-        try:
-            mtimes.append((p, os.path.getmtime(p)))
-        except OSError:
-            pass
-    return (tuple(mtimes), kb_store.version_counter, settings.data_path)
+    return (kb_store.version_counter,)
 
 
 def invalidate_cache() -> None:
@@ -413,6 +409,40 @@ class _Retriever:
             if q_vecs:
                 q_vec = q_vecs[0]
 
+        # 1. 优先尝试调用 Elasticsearch 8.x 原生多字段 BM25 与 kNN 向量联合粗排 (Coarse Ranking)
+        try:
+            from app.es_store import es_vector_store
+            if es_vector_store.ping():
+                es_hits = es_vector_store.coarse_rank(
+                    query=expanded,
+                    query_vector=q_vec,
+                    top_k=max(self.top_k * 2, 20),
+                )
+                if es_hits:
+                    hit_map = {}
+                    for h in es_hits:
+                        k = (
+                            h.get("law_name", ""),
+                            normalize_article_id(h.get("article", "")),
+                        )
+                        hit_map[k] = max(hit_map.get(k, 0.0), float(h.get("_score", 1.0)))
+
+                    es_scored: List[RetrievalResult] = []
+                    for n in self.nodes:
+                        meta = n.metadata or {}
+                        k = (
+                            meta.get("law_name", ""),
+                            normalize_article_id(meta.get("article", "")),
+                        )
+                        if k in hit_map:
+                            es_scored.append(RetrievalResult(n, hit_map[k]))
+                    if es_scored:
+                        es_scored.sort(key=lambda x: x.score, reverse=True)
+                        return es_scored[: self.top_k]
+        except Exception:
+            pass
+
+        # 2. 回退机制：使用内置内存 BM25 + 本地余弦相似度粗排引擎
         scored: List[RetrievalResult] = []
         for n, dt in zip(self.nodes, self._doc_tokens):
             base_s = self._bm25.score(qt, dt)
