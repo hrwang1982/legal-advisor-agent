@@ -565,13 +565,24 @@ if _HAS_FASTAPI:
         return {"status": "ok", "message": msg}
 
     # ————————————————————————————————————————————————
-    # 标准 RBAC 权限与用户中心管理接口
+    # 标准 RBAC 权限与三级组织机构用户中心管理接口
     # ————————————————————————————————————————————————
+    class DeptReq(BaseModel):
+        dept_id: Optional[str] = ""
+        dept_name: str
+        parent_id: Optional[str] = None
+        sort_order: Optional[int] = 1
+        leader: Optional[str] = ""
+        phone: Optional[str] = ""
+        status: Optional[str] = "active"
+
     class UserReq(BaseModel):
         user_id: Optional[str] = ""
         username: str
         name: str
-        department: Optional[str] = "业务部"
+        dept_id: Optional[str] = "dept_hq"
+        department: Optional[str] = "集团总部"
+        post_title: Optional[str] = ""
         license_no: Optional[str] = ""
         roles: List[str] = Field(default_factory=lambda: ["user"])
         status: Optional[str] = "active"
@@ -591,6 +602,40 @@ if _HAS_FASTAPI:
             "kb_collections": ALL_KB_COLLECTIONS,
         }
 
+    @app.get("/rbac/departments")
+    def rbac_list_departments():
+        """获取平铺部门列表"""
+        return {"departments": rbac_manager.get_departments()}
+
+    @app.get("/rbac/departments/tree")
+    def rbac_get_department_tree():
+        """获取三级组织架构树（含各级子部门及累计人数）"""
+        return {"tree": rbac_manager.get_department_tree()}
+
+    @app.post("/rbac/departments")
+    def rbac_save_department(req: DeptReq, x_user_role: Optional[str] = Header(None), x_user_id: Optional[str] = Header(None)):
+        """创建或编辑部门（支持最高 3 级）"""
+        check_admin_permission(x_user_role or x_user_id)
+        ok, res = rbac_manager.save_department(req.model_dump())
+        if not ok:
+            raise HTTPException(status_code=400, detail=str(res))
+        return {"status": "ok", "department": res}
+
+    @app.delete("/rbac/departments/{dept_id}")
+    def rbac_delete_department(dept_id: str, x_user_role: Optional[str] = Header(None), x_user_id: Optional[str] = Header(None)):
+        """删除部门节点（含总部保护、子部门级联校验与在职员工拦截）"""
+        check_admin_permission(x_user_role or x_user_id)
+        ok, msg = rbac_manager.delete_department(dept_id)
+        if not ok:
+            raise HTTPException(status_code=400, detail=msg)
+        return {"status": "ok", "message": msg}
+
+    @app.get("/rbac/departments/{dept_id}/users")
+    def rbac_get_department_users(dept_id: str, include_children: bool = True):
+        """按部门获取员工列表（支持递归包含子部门成员）"""
+        users = rbac_manager.get_department_users(dept_id, include_children=include_children)
+        return {"dept_id": dept_id, "total": len(users), "users": users}
+
     @app.get("/rbac/current")
     def rbac_current_user(x_user_id: Optional[str] = Header(None), x_user_role: Optional[str] = Header(None)):
         """获取当前会话用户的详细信息及计算后的有效菜单权限与可维护知识库列表"""
@@ -598,21 +643,25 @@ if _HAS_FASTAPI:
         return rbac_manager.get_user_effective_permissions(ident)
 
     @app.get("/rbac/users")
-    def rbac_list_users():
-        """获取用户列表"""
-        return {"users": rbac_manager.get_users()}
+    def rbac_list_users(dept_id: Optional[str] = None, include_children: bool = True):
+        """获取用户列表，支持按组织部门筛选"""
+        if dept_id:
+            users = rbac_manager.get_department_users(dept_id, include_children=include_children)
+        else:
+            users = rbac_manager.get_users()
+        return {"users": users}
 
     @app.post("/rbac/users")
-    def rbac_save_user(req: UserReq, x_user_role: Optional[str] = Header(None)):
-        """创建或编辑用户及其关联角色"""
-        check_admin_permission(x_user_role)
+    def rbac_save_user(req: UserReq, x_user_role: Optional[str] = Header(None), x_user_id: Optional[str] = Header(None)):
+        """创建或编辑用户及其关联角色与三级组织部门"""
+        check_admin_permission(x_user_role or x_user_id)
         saved = rbac_manager.save_user(req.model_dump())
         return {"status": "ok", "user": saved}
 
     @app.delete("/rbac/users/{user_id}")
-    def rbac_delete_user(user_id: str, x_user_role: Optional[str] = Header(None)):
+    def rbac_delete_user(user_id: str, x_user_role: Optional[str] = Header(None), x_user_id: Optional[str] = Header(None)):
         """删除用户"""
-        check_admin_permission(x_user_role)
+        check_admin_permission(x_user_role or x_user_id)
         ok, msg = rbac_manager.delete_user(user_id)
         if not ok:
             raise HTTPException(status_code=400, detail=msg)

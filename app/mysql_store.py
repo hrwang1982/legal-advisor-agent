@@ -341,11 +341,43 @@ class MySQLStore:
                         user_id VARCHAR(64) PRIMARY KEY,
                         username VARCHAR(64) NOT NULL UNIQUE,
                         name VARCHAR(128) NOT NULL,
+                        dept_id VARCHAR(64) DEFAULT 'dept_hq',
                         department VARCHAR(128) DEFAULT '',
+                        post_title VARCHAR(64) DEFAULT '',
                         license_no VARCHAR(128) DEFAULT '',
                         roles_json TEXT NOT NULL,
                         status VARCHAR(32) DEFAULT 'active',
-                        created_at VARCHAR(64) NOT NULL
+                        created_at VARCHAR(64) NOT NULL,
+                        INDEX idx_user_dept (dept_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                )
+                try:
+                    cur.execute("ALTER TABLE sys_rbac_users ADD COLUMN dept_id VARCHAR(64) DEFAULT 'dept_hq'")
+                except Exception:
+                    pass
+                try:
+                    cur.execute("ALTER TABLE sys_rbac_users ADD COLUMN post_title VARCHAR(64) DEFAULT ''")
+                except Exception:
+                    pass
+
+                # 15.1 组织机构部门表 (三级树状结构: 总部 -> 二级部室 -> 三级科室)
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS sys_org_departments (
+                        dept_id VARCHAR(64) PRIMARY KEY,
+                        dept_name VARCHAR(128) NOT NULL,
+                        parent_id VARCHAR(64) DEFAULT NULL,
+                        level INT NOT NULL DEFAULT 1,
+                        dept_path VARCHAR(256) NOT NULL,
+                        sort_order INT NOT NULL DEFAULT 0,
+                        leader VARCHAR(64) DEFAULT '',
+                        phone VARCHAR(32) DEFAULT '',
+                        status VARCHAR(16) NOT NULL DEFAULT 'active',
+                        created_at VARCHAR(64) NOT NULL,
+                        updated_at VARCHAR(64) NOT NULL,
+                        INDEX idx_dept_parent (parent_id),
+                        INDEX idx_dept_level (level)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
                     """
                 )
@@ -745,11 +777,40 @@ class MySQLStore:
                         user_id TEXT PRIMARY KEY,
                         username TEXT NOT NULL UNIQUE,
                         name TEXT NOT NULL,
+                        dept_id TEXT DEFAULT 'dept_hq',
                         department TEXT DEFAULT '',
+                        post_title TEXT DEFAULT '',
                         license_no TEXT DEFAULT '',
                         roles_json TEXT NOT NULL,
                         status TEXT DEFAULT 'active',
                         created_at TEXT NOT NULL
+                    )
+                    """
+                )
+                try:
+                    cur.execute("ALTER TABLE sys_rbac_users ADD COLUMN dept_id TEXT DEFAULT 'dept_hq'")
+                except Exception:
+                    pass
+                try:
+                    cur.execute("ALTER TABLE sys_rbac_users ADD COLUMN post_title TEXT DEFAULT ''")
+                except Exception:
+                    pass
+
+                # 15.1 组织机构部门表 (SQLite 镜像)
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS sys_org_departments (
+                        dept_id TEXT PRIMARY KEY,
+                        dept_name TEXT NOT NULL,
+                        parent_id TEXT DEFAULT NULL,
+                        level INTEGER NOT NULL DEFAULT 1,
+                        dept_path TEXT NOT NULL,
+                        sort_order INTEGER NOT NULL DEFAULT 0,
+                        leader TEXT DEFAULT '',
+                        phone TEXT DEFAULT '',
+                        status TEXT NOT NULL DEFAULT 'active',
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
                     )
                     """
                 )
@@ -1310,9 +1371,72 @@ class MySQLStore:
             logger.error(f"[MySQLStore] 保存知识中心拆分表失败: {e}")
             return False
 
+    # ————————————————————————————————————————————————
+    # 25. 组织机构三级部门 (sys_org_departments)
+    # ————————————————————————————————————————————————
+    def get_departments(self) -> List[Dict[str, Any]]:
+        rows = self.query(
+            """
+            SELECT dept_id, dept_name, parent_id, level, dept_path, sort_order, leader, phone, status, created_at, updated_at
+            FROM sys_org_departments
+            ORDER BY level ASC, sort_order ASC, dept_id ASC
+            """
+        )
+        return rows
+
+    def get_department_by_id(self, dept_id: str) -> Optional[Dict[str, Any]]:
+        rows = self.query(
+            """
+            SELECT dept_id, dept_name, parent_id, level, dept_path, sort_order, leader, phone, status, created_at, updated_at
+            FROM sys_org_departments
+            WHERE dept_id = ?
+            """,
+            (dept_id,),
+        )
+        return rows[0] if rows else None
+
+    def save_department(self, dept: Dict[str, Any]) -> bool:
+        now_ts = datetime.now(timezone.utc).isoformat()
+        try:
+            self.execute(
+                """
+                REPLACE INTO sys_org_departments (dept_id, dept_name, parent_id, level, dept_path, sort_order, leader, phone, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    dept.get("dept_id"),
+                    dept.get("dept_name"),
+                    dept.get("parent_id") or None,
+                    int(dept.get("level") or 1),
+                    dept.get("dept_path") or dept.get("dept_id"),
+                    int(dept.get("sort_order") or 0),
+                    dept.get("leader") or "",
+                    dept.get("phone") or "",
+                    dept.get("status") or "active",
+                    dept.get("created_at") or now_ts,
+                    now_ts,
+                ),
+            )
+            return True
+        except Exception as e:
+            logger.error(f"[MySQLStore] 保存部门失败: {e}")
+            return False
+
+    def delete_department(self, dept_id: str) -> bool:
+        try:
+            self.execute("DELETE FROM sys_org_departments WHERE dept_id = ?", (dept_id,))
+            return True
+        except Exception as e:
+            logger.error(f"[MySQLStore] 删除部门失败: {e}")
+            return False
+
 
 # 全局单例
 mysql_store = MySQLStore()
+try:
+    mysql_store.init_schema()
+except Exception as e:
+    logger.debug(f"[MySQLStore] 自动执行 init_schema 提示: {e}")
 try:
     settings.load_from_disk()
 except Exception:
