@@ -1555,13 +1555,13 @@
             <textarea class="qa-textarea" id="qaInput" placeholder="请输入您想要问的问题..." rows="2" oninput="onQaInputChange()" onkeydown="handleInputKeydown(event)"></textarea>
             <div class="qa-input-footer">
               <div class="qa-controls-left">
-                <!-- 优化项 2: 支持选择生效的模型 (对标截图红框) -->
+                <!-- 优化项 2: 支持选择生效的真实可用大模型 -->
                 <select class="model-selector" id="modelSelect" onchange="onQaModelSelectChange(this.value)" title="选择当前生效的大模型">
-                  <option value="qwen3.8-flash">qwen3.8-flash ∨</option>
-                  <option value="qwen3.6-plus">qwen3.6-plus ∨</option>
-                  <option value="qwen-plus">qwen-plus ∨</option>
-                  <option value="qwen-max">qwen-max ∨</option>
-                  <option value="qwen-turbo">qwen-turbo ∨</option>
+                  <option value="qwen-plus">qwen-plus (均衡旗舰 · 推荐) ∨</option>
+                  <option value="qwen-max">qwen-max (复杂推理 · 深度法理) ∨</option>
+                  <option value="qwen-long">qwen-long (超长案卷 · 法规解析) ∨</option>
+                  <option value="qwen3.6-plus">qwen3.6-plus (新一代旗舰) ∨</option>
+                  <option value="qwen3.8-flash">qwen3.8-flash (新一代极速) ∨</option>
                   <option value="deepseek-chat">deepseek-chat ∨</option>
                   <option value="deepseek-reasoner">deepseek-reasoner ∨</option>
                   <option value="local_openai">本地大模型 (Ollama) ∨</option>
@@ -1743,7 +1743,7 @@
             </div>
             <div class="form-group">
               <label class="form-label">运行模式</label>
-              <select class="filter-select" id="cfgMockSelect">
+              <select class="filter-select" id="cfgMockSelect" onchange="onLlmConfigFieldChange()">
                 <option value="true">MOCK 模式（确定性高保真演示 · 零外部依赖）</option>
                 <option value="false">真实大模型模式（调用远程/本地 API）</option>
               </select>
@@ -1758,18 +1758,22 @@
             <h3 style="font-size:15px; color:var(--primary); margin-bottom:12px;">🤖 1. LLM 法律大模型推理参数</h3>
             <div class="form-group" style="margin-bottom:12px;">
               <label class="form-label">LLM API Base 地址</label>
-              <input type="text" class="filter-input" id="cfgLlmApiBase" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1" />
+              <input type="text" class="filter-input" id="cfgLlmApiBase" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1" oninput="onLlmConfigFieldChange()" />
             </div>
             <div class="form-group" style="margin-bottom:12px;">
               <label class="form-label">LLM 模型名称 (Model)</label>
-              <input type="text" class="filter-input" id="cfgLlmModel" placeholder="qwen-plus" />
+              <input type="text" class="filter-input" id="cfgLlmModel" placeholder="qwen-plus" oninput="onLlmConfigFieldChange()" />
+              <div style="margin-top:6px; font-size:12px; color:#64748b;">
+                <span style="font-weight:500;">💡 当前平台官方推荐可用真实模型（点击快速选用）：</span>
+                <div id="cfgModelQuickTags" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:6px;"></div>
+              </div>
             </div>
             <div class="form-group">
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
                 <label class="form-label" style="margin-bottom:0;">LLM API Key</label>
                 <a href="javascript:void(0)" onclick="toggleApiKeyVisibility()" id="btnToggleKeyVis" style="font-size:12px; color:var(--primary); text-decoration:none; cursor:pointer;">👁️ 显示明文</a>
               </div>
-              <input type="password" class="filter-input" id="cfgLlmApiKey" placeholder="sk-..." />
+              <input type="password" class="filter-input" id="cfgLlmApiKey" placeholder="sk-..." oninput="onLlmConfigFieldChange()" />
               <div class="form-hint" id="cfgLlmKeyStatus" style="color:#52c41a; font-size:11.5px;"></div>
             </div>
           </div>
@@ -3740,7 +3744,7 @@
       }
     });
 
-    // 优化项 2: 支持选择生效的大模型即时切换
+    // 优化项 2: 支持选择生效的大模型即时切换并双向同步配置
     async function onQaModelSelectChange(modelVal) {
       try {
         let payload = {};
@@ -3759,6 +3763,17 @@
         });
         if (res.ok) {
           showToast(`🎉 当前配置生效模型已即时切换为：[${modelVal}]`);
+          const modelInp = document.getElementById("cfgLlmModel");
+          if (modelInp && modelVal !== "mock") modelInp.value = modelVal;
+          const mockSel = document.getElementById("cfgMockSelect");
+          if (mockSel) mockSel.value = (modelVal === "mock") ? "true" : "false";
+          const tags = document.querySelectorAll("#cfgModelQuickTags button");
+          tags.forEach(t => {
+            const isMatch = (t.textContent === modelVal);
+            t.style.border = isMatch ? "1px solid #d32029" : "1px solid #d9d9d9";
+            t.style.background = isMatch ? "#fff1f0" : "#fafafa";
+            t.style.color = isMatch ? "#d32029" : "#434343";
+          });
         }
       } catch (e) {
         console.warn("更新运行时模型配置异常", e);
@@ -4881,8 +4896,11 @@
       }
     }
 
-    // 大模型配置
+    // 大模型配置与多平台独立凭据状态
     let cachedPresets = {};
+    let cachedPlatformCredentials = {};
+    let CURRENT_EDITING_PROVIDER = "qwen";
+    let IS_CURRENT_CONFIG_TESTED_OK = false;
 
     function toggleApiKeyVisibility() {
       const inp = document.getElementById("cfgLlmApiKey");
@@ -4897,26 +4915,127 @@
       }
     }
 
-    async function loadLlmConfig() {
-      // 1. 优先读取客户端本地持久化缓存，保障页面切换时瞬间回显
-      try {
-        const localSaved = localStorage.getItem("ai_fadun_llm_cfg");
-        if (localSaved) {
-          const loc = JSON.parse(localSaved);
-          if (loc.llm_model) document.getElementById("cfgLlmModel").value = loc.llm_model;
-          if (loc.llm_api_base) document.getElementById("cfgLlmApiBase").value = loc.llm_api_base;
-          if (loc.llm_api_key !== undefined) document.getElementById("cfgLlmApiKey").value = loc.llm_api_key;
-          if (loc.embed_api_base) document.getElementById("cfgEmbedApiBase").value = loc.embed_api_base;
-          if (loc.embed_model) document.getElementById("cfgEmbedModel").value = loc.embed_model;
-          if (loc.mock !== undefined) document.getElementById("cfgMockSelect").value = String(loc.mock);
-        }
-      } catch (e) {}
+    // 输入框变动监听：当用户修改了Key、地址、模型名或运行模式时，重置测试状态并给予警示
+    function onLlmConfigFieldChange() {
+      const isMock = document.getElementById("cfgMockSelect").value === "true";
+      const keyVal = (document.getElementById("cfgLlmApiKey").value || "").trim();
+      const modelVal = (document.getElementById("cfgLlmModel").value || "").trim();
+      const keyStat = document.getElementById("cfgLlmKeyStatus");
+      const statusBox = document.getElementById("llmHealthStatus");
 
-      // 2. 向后端请求最新已持久化的配置
+      IS_CURRENT_CONFIG_TESTED_OK = false;
+
+      if (isMock) {
+        if (keyStat) {
+          keyStat.textContent = "当前为 MOCK 模式（无需配置外部 Key）";
+          keyStat.style.color = "#1890ff";
+        }
+        if (statusBox) {
+          statusBox.innerHTML = `
+            <div style="background:#f6ffed; border:1px solid #b7eb8f; padding:9px 14px; border-radius:6px; color:#389e0d; font-size:12.5px;">
+              ✓ 当前为 MOCK 演示模式，点击「保存并热生效配置」即可生效。
+            </div>
+          `;
+        }
+        return;
+      }
+
+      if (keyStat) {
+        if (keyVal) {
+          keyStat.textContent = "已输入新密钥（待测试验证，测试通过并保存后方可使用）";
+          keyStat.style.color = "#faad14";
+        } else {
+          keyStat.textContent = "未配置密钥 (当前模版模型不可用，需填入对应 Key 测试通过后保存)";
+          keyStat.style.color = "#cf1322";
+        }
+      }
+
+      if (statusBox) {
+        statusBox.innerHTML = `
+          <div style="background:#fffbe6; border:1px solid #ffe58f; padding:9px 14px; border-radius:6px; color:#d48806; font-size:12.5px;">
+            ⚠️ 配置参数已发生修改，当前测试状态已失效。请点击右侧「测试服务连通性」重新验证，测试通过并保存后方可在「智能问答」中生效。
+          </div>
+        `;
+      }
+    }
+
+    // 动态渲染模型配置中心中的真实可用模型标签（点击快速填入）
+    function renderModelQuickTags(models, activeModel) {
+      const container = document.getElementById("cfgModelQuickTags");
+      if (!container) return;
+      container.innerHTML = "";
+      if (!models || !Array.isArray(models) || models.length === 0) {
+        container.innerHTML = `<span style="color:#94a3b8; font-size:11.5px;">暂无预置模型列表</span>`;
+        return;
+      }
+      models.forEach(m => {
+        const tag = document.createElement("button");
+        tag.type = "button";
+        const isActive = (m.id === activeModel);
+        tag.style.cssText = `
+          padding: 3px 9px;
+          font-size: 11.5px;
+          border-radius: 4px;
+          border: 1px solid ${isActive ? "#d32029" : "#d9d9d9"};
+          background: ${isActive ? "#fff1f0" : "#fafafa"};
+          color: ${isActive ? "#d32029" : "#334155"};
+          cursor: pointer;
+          transition: all 0.2s;
+          white-space: nowrap;
+          font-weight: ${isActive ? "600" : "normal"};
+        `;
+        tag.textContent = m.id;
+        tag.title = m.name || m.id;
+        tag.onclick = (e) => {
+          e.preventDefault();
+          const inp = document.getElementById("cfgLlmModel");
+          if (inp) {
+            inp.value = m.id;
+            renderModelQuickTags(models, m.id);
+            onLlmConfigFieldChange();
+            showToast(`已选定模型：${m.id} (修改后请重新测试连通性)`);
+          }
+        };
+        container.appendChild(tag);
+      });
+    }
+
+    // 动态同步智能问答底部的模型选择下拉框（只有填写key且测试通过保存的模型才显示）
+    function syncQaModelOptions(currentModel, availableModels, isMock) {
+      const qaSelect = document.getElementById("modelSelect");
+      if (!qaSelect) return;
+      if (!availableModels || !Array.isArray(availableModels) || availableModels.length === 0) return;
+
+      qaSelect.innerHTML = "";
+      availableModels.forEach(m => {
+        const opt = document.createElement("option");
+        opt.value = m.id;
+        opt.textContent = `${m.name || m.id} ∨`;
+        qaSelect.appendChild(opt);
+      });
+
+      if (isMock) {
+        qaSelect.value = "mock";
+      } else if (currentModel && Array.from(qaSelect.options).some(o => o.value === currentModel)) {
+        qaSelect.value = currentModel;
+      } else if (qaSelect.options.length > 0) {
+        qaSelect.selectedIndex = 0;
+      }
+    }
+
+    async function loadLlmConfig() {
       try {
         const res = await fetch("/config/llm");
         const d = await res.json();
         cachedPresets = d.presets || {};
+        cachedPlatformCredentials = d.platform_credentials || {};
+        CURRENT_EDITING_PROVIDER = d.llm_provider || "qwen";
+
+        // 同步预设下拉框选择
+        const presetSel = document.getElementById("llmPresetSelect");
+        if (presetSel && d.llm_provider) {
+          presetSel.value = d.llm_provider;
+        }
 
         document.getElementById("cfgMockSelect").value = String(d.mock);
         document.getElementById("cfgLlmApiBase").value = d.llm_api_base || "";
@@ -4927,46 +5046,48 @@
         document.getElementById("cfgDenseWeight").value = d.hybrid_dense_weight !== undefined ? d.hybrid_dense_weight : 0.45;
         document.getElementById("cfgStrictReview").value = String(d.strict_review_auth || false);
 
-        // 回显真实保存的 API Key
-        if (d.llm_api_key !== undefined) {
-          document.getElementById("cfgLlmApiKey").value = d.llm_api_key || "";
+        // 回显当前正在生效的平台的 Key
+        const pCred = cachedPlatformCredentials[CURRENT_EDITING_PROVIDER] || {};
+        const keyInp = document.getElementById("cfgLlmApiKey");
+        if (keyInp) {
+          keyInp.value = d.llm_api_key || pCred.api_key || "";
         }
 
         const keyStat = document.getElementById("cfgLlmKeyStatus");
         if (d.llm_api_key_configured) {
-          keyStat.textContent = `已安全配置密钥：${d.llm_api_key_masked || '已配置'}`;
-          keyStat.style.color = "#52c41a";
+          const isVer = pCred.verified;
+          keyStat.textContent = isVer ? `✓ 已安全配置密钥并测试通过：${d.llm_api_key_masked || '已配置'}` : `已填入密钥（尚未测试通过）：${d.llm_api_key_masked || '已配置'}`;
+          keyStat.style.color = isVer ? "#52c41a" : "#faad14";
+          IS_CURRENT_CONFIG_TESTED_OK = isVer;
         } else {
-          keyStat.textContent = "未配置密钥 (MOCK 模式无需填写)";
+          keyStat.textContent = "未配置密钥 (当前模版模型不可用，需填入对应 Key 测试通过后保存)";
           keyStat.style.color = "#8f959e";
+          IS_CURRENT_CONFIG_TESTED_OK = false;
         }
 
-        // 同步更新一份到本地浏览器缓存作为备用
-        try {
-          localStorage.setItem("ai_fadun_llm_cfg", JSON.stringify({
-            mock: d.mock,
-            llm_api_base: d.llm_api_base,
-            llm_model: d.llm_model,
-            llm_api_key: d.llm_api_key || "",
-            embed_api_base: d.embed_api_base,
-            embed_model: d.embed_model,
-          }));
-        } catch (e) {}
+        // 渲染模型配置中心的快捷模型标签
+        const currentPreset = cachedPresets[CURRENT_EDITING_PROVIDER] || cachedPresets["qwen"] || {};
+        const platformModels = (currentPreset && currentPreset.models) ? currentPreset.models : [];
+        renderModelQuickTags(platformModels, d.llm_model);
 
-        // 智能问答底部的模型选择器同步当前真实生效模型
-        const qaModelSelect = document.getElementById("modelSelect");
-        if (qaModelSelect) {
-          if (d.mock) {
-            qaModelSelect.value = "mock";
-          } else if (d.llm_model) {
-            const exists = Array.from(qaModelSelect.options).some(o => o.value === d.llm_model);
-            if (!exists) {
-              const newOpt = document.createElement("option");
-              newOpt.value = d.llm_model;
-              newOpt.textContent = `${d.llm_model} ∨`;
-              qaModelSelect.insertBefore(newOpt, qaModelSelect.firstChild);
-            }
-            qaModelSelect.value = d.llm_model;
+        // 智能问答底部的模型选择器动态同步真实通过测试并保存的模型
+        syncQaModelOptions(d.llm_model, d.available_models, d.mock);
+
+        // 状态栏回显当前连通情况
+        const statusBox = document.getElementById("llmHealthStatus");
+        if (statusBox) {
+          if (pCred.verified) {
+            statusBox.innerHTML = `
+              <div style="background:#f6ffed; border:1px solid #b7eb8f; padding:9px 14px; border-radius:6px; color:#389e0d; font-size:12.5px;">
+                ✓ 当前模型 <strong>[${d.llm_model}]</strong> 已验证测试通过并已保存，已在「智能问答」列表中可用生效。
+              </div>
+            `;
+          } else {
+            statusBox.innerHTML = `
+              <div style="background:#fffbe6; border:1px solid #ffe58f; padding:9px 14px; border-radius:6px; color:#d48806; font-size:12.5px;">
+                ⚠️ 提示：当没有选择模版填入 key 保存时，对应的模版模型不可用；请填写该平台的 API Key 和模型名，点击「测试服务连通性」测试通过并保存后，模型方可在「智能问答」中选用。
+              </div>
+            `;
           }
         }
       } catch (e) {
@@ -4974,29 +5095,172 @@
       }
     }
 
+    // 切换模版预设 (核心修复：彻底解决串用其他平台 Key 的问题，各个模版 Key 独立加载)
     function applyLlmPreset(presetKey) {
       if (!presetKey || !cachedPresets[presetKey]) return;
+      CURRENT_EDITING_PROVIDER = presetKey;
       const p = cachedPresets[presetKey];
       if (p.llm_api_base) document.getElementById("cfgLlmApiBase").value = p.llm_api_base;
       if (p.llm_model) document.getElementById("cfgLlmModel").value = p.llm_model;
       if (p.embed_api_base) document.getElementById("cfgEmbedApiBase").value = p.embed_api_base;
       if (p.embed_model) document.getElementById("cfgEmbedModel").value = p.embed_model;
-      showToast(`已加载「${p.name || presetKey}」参数预设`);
+
+      // 提取该平台之前保存过的独立凭据，避免错带其他平台的 Key
+      const pCred = (cachedPlatformCredentials && cachedPlatformCredentials[presetKey]) || {};
+      const keyInp = document.getElementById("cfgLlmApiKey");
+      const keyStat = document.getElementById("cfgLlmKeyStatus");
+      if (keyInp) {
+        keyInp.value = pCred.api_key || "";
+      }
+      if (keyStat) {
+        if (pCred.api_key) {
+          keyStat.textContent = pCred.verified ? `✓ 已配置该模版密钥并测试通过：${pCred.api_key_masked || '已配置'}` : `已填入密钥（尚未测试通过）：${pCred.api_key_masked || '已配置'}`;
+          keyStat.style.color = pCred.verified ? "#52c41a" : "#faad14";
+        } else {
+          keyStat.textContent = `未配置【${p.name || presetKey}】密钥 (请填入对应的 API Key 并测试通过后保存)`;
+          keyStat.style.color = "#cf1322";
+        }
+      }
+
+      // 重置本次测试连通状态为该模版固有的验证状态
+      IS_CURRENT_CONFIG_TESTED_OK = !!pCred.verified;
+      const statusBox = document.getElementById("llmHealthStatus");
+      if (statusBox) {
+        if (pCred.verified) {
+          statusBox.innerHTML = `<div style="background:#f6ffed; border:1px solid #b7eb8f; padding:9px 14px; border-radius:6px; color:#389e0d; font-size:12.5px;">✓ 当前模版【${p.name || presetKey}】处于已验证可用状态。</div>`;
+        } else {
+          statusBox.innerHTML = `<div style="background:#fffbe6; border:1px solid #ffe58f; padding:9px 14px; border-radius:6px; color:#d48806; font-size:12.5px;">⚠️ 当前模版尚未填入对应 Key 或尚未测试通过。该模版的模型目前处于<strong>不可用</strong>状态。请填入 Key 并点击「测试服务连通性」，测试通过并保存后才会显示在智能问答列表中。</div>`;
+        }
+      }
+
+      if (p.models && Array.isArray(p.models)) {
+        renderModelQuickTags(p.models, p.llm_model);
+      }
+      showToast(`已切换至「${p.name || presetKey}」模板`);
     }
 
+    // 真实测试服务连通性（向后端探测接口发真实探活）
+    async function testLlmHealth() {
+      const box = document.getElementById("llmHealthStatus");
+      if (box) box.innerHTML = `<span style="color:#1890ff;">⏳ 正在向大模型接口发送探测请求，实时测试连通性与密钥有效性...</span>`;
+
+      const provider = CURRENT_EDITING_PROVIDER || "qwen";
+      const api_base = document.getElementById("cfgLlmApiBase").value.trim();
+      const model = document.getElementById("cfgLlmModel").value.trim();
+      const api_key = document.getElementById("cfgLlmApiKey").value.trim();
+      const isMock = document.getElementById("cfgMockSelect").value === "true";
+
+      if (isMock) {
+        box.innerHTML = `
+          <div style="background:#f6ffed; border:1px solid #b7eb8f; padding:9px 14px; border-radius:6px; color:#389e0d; font-size:12.5px;">
+            ✓ MOCK 模式（确定性高保真演示）：零外部依赖，检测通过！保存后可在智能问答中使用。
+          </div>
+        `;
+        IS_CURRENT_CONFIG_TESTED_OK = true;
+        showToast("✓ MOCK 模式测试通过！");
+        return true;
+      }
+
+      if (!api_base) {
+        box.innerHTML = `<div style="background:#fff2f0; border:1px solid #ffccc7; padding:9px 14px; border-radius:6px; color:#cf1322; font-size:12.5px;">❌ 测试失败：未配置 LLM API Base 地址</div>`;
+        IS_CURRENT_CONFIG_TESTED_OK = false;
+        showToast("请填写 API Base 地址");
+        return false;
+      }
+      if (!model) {
+        box.innerHTML = `<div style="background:#fff2f0; border:1px solid #ffccc7; padding:9px 14px; border-radius:6px; color:#cf1322; font-size:12.5px;">❌ 测试失败：未指定 LLM 模型名称</div>`;
+        IS_CURRENT_CONFIG_TESTED_OK = false;
+        showToast("请填写模型名称");
+        return false;
+      }
+      const isLocal = api_base.includes("localhost") || api_base.includes("127.0.0.1");
+      if (!isLocal && !api_key) {
+        box.innerHTML = `<div style="background:#fff2f0; border:1px solid #ffccc7; padding:9px 14px; border-radius:6px; color:#cf1322; font-size:12.5px;">❌ 测试失败：当前远程大模型未填写 API Key，请填入该模版对应的有效 Key！</div>`;
+        IS_CURRENT_CONFIG_TESTED_OK = false;
+        showToast("请填入该模版对应的 API Key");
+        return false;
+      }
+
+      try {
+        const res = await fetch("/config/llm/test", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-User-Id": RBAC_STATE.currentUser },
+          body: JSON.stringify({
+            llm_provider: provider,
+            llm_api_base: api_base,
+            llm_model: model,
+            llm_api_key: api_key
+          })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          box.innerHTML = `
+            <div style="background:#f6ffed; border:1px solid #b7eb8f; padding:9px 14px; border-radius:6px; color:#389e0d; font-size:12.5px;">
+              ✓ <strong>测试通过！</strong> ${data.message}。请点击右侧「保存并热生效配置」，保存后该模版模型即可在「智能问答」下拉列表中选用。
+            </div>
+          `;
+          IS_CURRENT_CONFIG_TESTED_OK = true;
+          showToast("✓ 连通性测试通过！请保存以激活模型");
+          return true;
+        } else {
+          box.innerHTML = `
+            <div style="background:#fff2f0; border:1px solid #ffccc7; padding:9px 14px; border-radius:6px; color:#cf1322; font-size:12.5px;">
+              ❌ <strong>测试失败：</strong> ${data.message}
+            </div>
+          `;
+          IS_CURRENT_CONFIG_TESTED_OK = false;
+          showToast("❌ 连通测试未通过，请检查 Key 或模型名称");
+          return false;
+        }
+      } catch (err) {
+        box.innerHTML = `<div style="background:#fff2f0; border:1px solid #ffccc7; padding:9px 14px; border-radius:6px; color:#cf1322; font-size:12.5px;">❌ 测试异常：无法访问测试接口 (${err.message})</div>`;
+        IS_CURRENT_CONFIG_TESTED_OK = false;
+        return false;
+      }
+    }
+
+    // 保存并热生效配置 (严格控制：未填 key 或测试未通过的模版不可激活)
     async function saveLlmConfig() {
+      const isMock = document.getElementById("cfgMockSelect").value === "true";
+      const provider = CURRENT_EDITING_PROVIDER || "qwen";
+      const api_base = document.getElementById("cfgLlmApiBase").value.trim();
+      const model = document.getElementById("cfgLlmModel").value.trim();
+      const keyVal = document.getElementById("cfgLlmApiKey").value.trim();
+
+      if (!isMock) {
+        const isLocal = api_base.includes("localhost") || api_base.includes("127.0.0.1");
+        if (!isLocal && !keyVal) {
+          showToast("❌ 保存失败：未填入该平台的 API Key，模型不可用！");
+          return;
+        }
+        if (!model) {
+          showToast("❌ 保存失败：未指定模型名称！");
+          return;
+        }
+        // 若当前未测试通过，先自动发起一次连通测试验证
+        if (!IS_CURRENT_CONFIG_TESTED_OK) {
+          showToast("⏳ 正在验证大模型连通性...");
+          const testOk = await testLlmHealth();
+          if (!testOk) {
+            showToast("❌ 连通测试未通过，模型不可用，无法保存激活！");
+            return;
+          }
+        }
+      }
+
       const payload = {
-        mock: document.getElementById("cfgMockSelect").value === "true",
-        llm_api_base: document.getElementById("cfgLlmApiBase").value.trim(),
-        llm_model: document.getElementById("cfgLlmModel").value.trim(),
+        mock: isMock,
+        llm_provider: provider,
+        llm_api_base: api_base,
+        llm_model: model,
+        llm_api_key: keyVal,
         embed_api_base: document.getElementById("cfgEmbedApiBase").value.trim(),
         embed_model: document.getElementById("cfgEmbedModel").value.trim(),
         top_k: parseInt(document.getElementById("cfgTopK").value, 10) || 5,
         hybrid_dense_weight: parseFloat(document.getElementById("cfgDenseWeight").value) || 0.45,
         strict_review_auth: document.getElementById("cfgStrictReview").value === "true",
+        verified: isMock ? true : IS_CURRENT_CONFIG_TESTED_OK
       };
-      const keyVal = document.getElementById("cfgLlmApiKey").value.trim();
-      payload.llm_api_key = keyVal;
 
       try {
         const res = await fetch("/config/llm", {
@@ -5008,37 +5272,10 @@
           showToast("权限拒绝：模型配置需要管理员权限！");
           return;
         }
-        try {
-          localStorage.setItem("ai_fadun_llm_cfg", JSON.stringify({
-            mock: payload.mock,
-            llm_api_base: payload.llm_api_base,
-            llm_model: payload.llm_model,
-            llm_api_key: payload.llm_api_key,
-            embed_api_base: payload.embed_api_base,
-            embed_model: payload.embed_model,
-          }));
-        } catch (e) {}
-
-        showToast("🎉 大模型与向量配置已保存并热生效！");
-        loadLlmConfig();
+        showToast("🎉 大模型配置已测试通过并保存！已同步更新至「智能问答」");
+        await loadLlmConfig();
       } catch (e) {
         showToast("保存失败");
-      }
-    }
-
-    async function testLlmHealth() {
-      const box = document.getElementById("llmHealthStatus");
-      box.innerHTML = "正在测试服务连通性与法规向量索引...";
-      try {
-        const res = await fetch("/health");
-        const data = await res.json();
-        box.innerHTML = `
-          <div style="background:#f6ffed; border:1px solid #b7eb8f; padding:10px 14px; border-radius:6px; color:#389e0d;">
-            ✓ 服务状态: <strong>${data.status}</strong> | 运行模式: <strong>${data.mode}</strong> | 大模型: <strong>${data.llm_model}</strong> | 向量模型: <strong>${data.embed_model}</strong> | 已索引法条: <strong>${data.total_articles_indexed}条</strong> | 哈希链: <strong>${data.audit_chain_message}</strong>
-          </div>
-        `;
-      } catch (err) {
-        box.innerHTML = `<span style="color:#f5222d;">检测失败：无法连接后端服务</span>`;
       }
     }
 

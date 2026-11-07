@@ -117,6 +117,14 @@ class LLMSettingsUpdateReq(BaseModel):
     hybrid_dense_weight: Optional[float] = None
     strict_review_auth: Optional[bool] = None
     top_k: Optional[int] = None
+    verified: Optional[bool] = None
+
+
+class LLMTestReq(BaseModel):
+    llm_provider: Optional[str] = "qwen"
+    llm_api_base: Optional[str] = ""
+    llm_model: Optional[str] = ""
+    llm_api_key: Optional[str] = ""
 
 
 def _snapshot(config, thread_id: str):
@@ -458,6 +466,17 @@ if _HAS_FASTAPI:
         updated = settings.update_runtime(clean_updates)
         invalidate_cache()
         return {"status": "ok", "settings": updated}
+
+    @app.post("/config/llm/test")
+    def test_llm_settings(req: LLMTestReq, x_user_role: Optional[str] = Header(None)):
+        check_admin_permission(x_user_role)
+        res = settings.test_connection(
+            api_base=req.llm_api_base or "",
+            model=req.llm_model or "",
+            api_key=req.llm_api_key or "",
+            provider=req.llm_provider or "qwen",
+        )
+        return res
 
     @app.get("/session/{thread_id}")
     def get_session(thread_id: str):

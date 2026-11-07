@@ -14,7 +14,7 @@ def _bool(v: str | None, default: bool = False) -> bool:
     return str(v).strip().lower() in ("1", "true", "yes", "y", "on")
 
 
-# 常用大模型与向量模型平台预设（供前端一键切换或配置参考）
+# 常用大模型与向量模型平台预设（供前端一键切换或配置参考，提供官方真实可用模型列表）
 LLM_PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
     "qwen": {
         "name": "阿里云百炼 / 通义千问 (DashScope OpenAI兼容)",
@@ -22,6 +22,13 @@ LLM_PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
         "llm_model": "qwen-plus",
         "embed_api_base": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         "embed_model": "text-embedding-v3",
+        "models": [
+            {"id": "qwen-plus", "name": "qwen-plus (均衡旗舰 · 推荐法律问答)"},
+            {"id": "qwen-max", "name": "qwen-max (复杂推理 · 深度法理分析)"},
+            {"id": "qwen-long", "name": "qwen-long (超长案卷 · 百万字法规解析)"},
+            {"id": "qwen3.6-plus", "name": "qwen3.6-plus (新一代旗舰 · 复杂问答推荐)"},
+            {"id": "qwen3.8-flash", "name": "qwen3.8-flash (新一代极速 · 毫秒级流式响应)"},
+        ],
     },
     "local_openai": {
         "name": "本地 OpenAI 兼容服务 (vLLM / Ollama / Xinference + bge-m3)",
@@ -29,6 +36,11 @@ LLM_PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
         "llm_model": "qwen2.5:14b",
         "embed_api_base": "http://localhost:11434/v1",
         "embed_model": "BAAI/bge-m3",
+        "models": [
+            {"id": "qwen2.5:14b", "name": "qwen2.5:14b (本地 Ollama 推荐)"},
+            {"id": "qwen2.5:7b", "name": "qwen2.5:7b (轻量本地测试)"},
+            {"id": "qwen2.5:32b", "name": "qwen2.5:32b (本地高阶推理)"},
+        ],
     },
     "deepseek": {
         "name": "DeepSeek 官方 API + BGE-M3 向量",
@@ -36,6 +48,10 @@ LLM_PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
         "llm_model": "deepseek-chat",
         "embed_api_base": "http://localhost:11434/v1",
         "embed_model": "BAAI/bge-m3",
+        "models": [
+            {"id": "deepseek-chat", "name": "deepseek-chat (DeepSeek-V3 官方通用)"},
+            {"id": "deepseek-reasoner", "name": "deepseek-reasoner (DeepSeek-R1 深度思考推理)"},
+        ],
     },
     "siliconflow": {
         "name": "SiliconFlow (Qwen + BAAI/bge-m3 在线兼容接口)",
@@ -43,6 +59,11 @@ LLM_PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
         "llm_model": "Qwen/Qwen2.5-72B-Instruct",
         "embed_api_base": "https://api.siliconflow.cn/v1",
         "embed_model": "BAAI/bge-m3",
+        "models": [
+            {"id": "Qwen/Qwen2.5-72B-Instruct", "name": "Qwen/Qwen2.5-72B-Instruct (硅基流动千问)"},
+            {"id": "deepseek-ai/DeepSeek-V3", "name": "deepseek-ai/DeepSeek-V3 (硅基流动 V3)"},
+            {"id": "deepseek-ai/DeepSeek-R1", "name": "deepseek-ai/DeepSeek-R1 (硅基流动 R1)"},
+        ],
     },
 }
 
@@ -102,6 +123,140 @@ class Settings:
     host: str = os.getenv("HOST", "0.0.0.0")
     port: int = int(os.getenv("PORT", "8000"))
 
+    # 各平台独立凭据与测试验证状态（核心：未填 key 或未测试通过的模版不可用）
+    platform_credentials: Dict[str, Dict[str, Any]] = {
+        "qwen": {
+            "api_base": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "api_key": os.getenv("LLM_API_KEY", os.getenv("DASHSCOPE_API_KEY", "sk-56cfaaa8be4b45c1aa047a74a6762dc0")),
+            "model": "qwen-plus",
+            "verified": bool(os.getenv("LLM_API_KEY", os.getenv("DASHSCOPE_API_KEY", "sk-56cfaaa8be4b45c1aa047a74a6762dc0"))),
+        },
+        "deepseek": {
+            "api_base": "https://api.deepseek.com/v1",
+            "api_key": "",
+            "model": "deepseek-chat",
+            "verified": False,
+        },
+        "siliconflow": {
+            "api_base": "https://api.siliconflow.cn/v1",
+            "api_key": "",
+            "model": "Qwen/Qwen2.5-72B-Instruct",
+            "verified": False,
+        },
+        "local_openai": {
+            "api_base": "http://localhost:11434/v1",
+            "api_key": "",
+            "model": "qwen2.5:14b",
+            "verified": False,
+        },
+    }
+
+    def test_connection(
+        self,
+        api_base: str,
+        model: str,
+        api_key: str,
+        provider: str = "qwen",
+    ) -> Dict[str, Any]:
+        """真实探测大模型连通性与密钥有效性。"""
+        api_base = (api_base or "").strip().rstrip("/")
+        model = (model or "").strip()
+        api_key = (api_key or "").strip()
+
+        if model.lower() == "mock":
+            return {"ok": True, "message": "MOCK 模式检测通过（零外部依赖）"}
+
+        if not api_base:
+            return {"ok": False, "message": "测试失败：未配置 API Base 地址"}
+        if not model:
+            return {"ok": False, "message": "测试失败：未指定 LLM 模型名称"}
+
+        is_local = "localhost" in api_base or "127.0.0.1" in api_base
+        if not is_local and not api_key:
+            return {"ok": False, "message": "测试失败：当前平台必须填入对应的有效 API Key"}
+
+        url = f"{api_base}/chat/completions"
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 10,
+        }
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        import time
+        import urllib.request
+        import urllib.error
+        import json
+
+        t0 = time.time()
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15.0) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+            latency_ms = int((time.time() - t0) * 1000)
+            choices = body.get("choices") or []
+            if choices:
+                return {
+                    "ok": True,
+                    "message": f"连通测试通过！模型 [{model}] 响应正常（耗时 {latency_ms}ms）",
+                    "latency_ms": latency_ms,
+                }
+            return {
+                "ok": False,
+                "message": f"测试异常：接口返回了空响应结构: {body}",
+            }
+        except urllib.error.HTTPError as e:
+            err_body = ""
+            try:
+                err_body = e.read().decode("utf-8", errors="ignore")
+            except Exception:
+                pass
+            if e.code == 401:
+                return {
+                    "ok": False,
+                    "code": 401,
+                    "message": f"测试失败：API Key 无效或未授权 (HTTP 401)。请核对该平台的密钥是否正确。",
+                }
+            elif e.code in (400, 404):
+                return {
+                    "ok": False,
+                    "code": e.code,
+                    "message": f"测试失败：模型 [{model}] 不存在或平台不支持 (HTTP {e.code})。详情: {err_body[:100]}",
+                }
+            return {
+                "ok": False,
+                "code": e.code,
+                "message": f"测试失败：服务端返回 HTTP {e.code}。详情: {err_body[:100]}",
+            }
+        except Exception as e:
+            err_msg = str(e)
+            if "nodename nor servname provided" in err_msg or "Name or service not known" in err_msg:
+                return {
+                    "ok": False,
+                    "message": f"测试失败：无法解析 API Base 域名 ({api_base})，请检查网络或地址拼写。",
+                }
+            elif "Connection refused" in err_msg:
+                return {
+                    "ok": False,
+                    "message": f"测试失败：连接被拒绝 ({url})。若为本地模型，请确认 Ollama/vLLM 服务已启动。",
+                }
+            elif "timed out" in err_msg or "Timeout" in err_msg:
+                return {
+                    "ok": False,
+                    "message": f"测试失败：请求超时（超过 15 秒未响应），请检查网络连接。",
+                }
+            return {
+                "ok": False,
+                "message": f"测试失败：连接异常 ({err_msg})",
+            }
+
     def to_public_dict(self) -> Dict[str, Any]:
         """导出当前运行时配置（包括前端回显所需的模型信息与密钥字段）。"""
         def _mask_key(k: str) -> str:
@@ -110,6 +265,40 @@ class Settings:
             if len(k) <= 8:
                 return "***"
             return f"{k[:4]}...{k[-4:]}"
+
+        # 计算已通过测试并保存的有效模型列表
+        # 核心规则：只有配置了 key 且测试通过 (verified=True) 的模版模型才进入可用列表
+        available_models = []
+        for p_key, p_cfg in self.platform_credentials.items():
+            if p_cfg.get("verified"):
+                preset = LLM_PROVIDER_PRESETS.get(p_key, {})
+                for m in preset.get("models", []):
+                    if not any(x["id"] == m["id"] for x in available_models):
+                        available_models.append(dict(m))
+                cur_m = p_cfg.get("model")
+                if cur_m and not any(x["id"] == cur_m for x in available_models) and cur_m != "mock":
+                    available_models.append({"id": cur_m, "name": f"{cur_m} ({preset.get('name', p_key)})"})
+
+        # 若当前活动模型已有配置且已验证
+        if self.llm_model and self.llm_model != "mock":
+            cur_provider_cfg = self.platform_credentials.get(self.llm_provider, {})
+            if cur_provider_cfg.get("verified") and not any(x["id"] == self.llm_model for x in available_models):
+                available_models.insert(0, {"id": self.llm_model, "name": f"{self.llm_model} (当前生效)"})
+
+        # 始终提供 MOCK 模式作为确定性演示保障
+        available_models.append({"id": "mock", "name": "MOCK 确定性演示 (零依赖)"})
+
+        # 各平台的凭据脱敏副本（用于前端在切换预设时准确回显各个平台专有 Key，绝不串用）
+        public_credentials = {}
+        for p_key, p_cfg in self.platform_credentials.items():
+            k_val = p_cfg.get("api_key", "")
+            public_credentials[p_key] = {
+                "api_base": p_cfg.get("api_base", ""),
+                "api_key": k_val,
+                "api_key_masked": _mask_key(k_val),
+                "model": p_cfg.get("model", ""),
+                "verified": bool(p_cfg.get("verified", False)),
+            }
 
         return {
             "mock": self.mock,
@@ -136,6 +325,8 @@ class Settings:
             "llm_config_path": self.llm_config_path,
             "kb_db_path": self.kb_db_path,
             "presets": LLM_PROVIDER_PRESETS,
+            "available_models": available_models,
+            "platform_credentials": public_credentials,
         }
 
     def save_to_disk(self) -> None:
@@ -160,6 +351,7 @@ class Settings:
                 "hybrid_dense_weight": self.hybrid_dense_weight,
                 "strict_review_auth": self.strict_review_auth,
                 "top_k": self.top_k,
+                "platform_credentials": self.platform_credentials,
             }
             with open(target_path, "w", encoding="utf-8") as f:
                 json.dump(cfg, f, ensure_ascii=False, indent=2)
@@ -203,6 +395,12 @@ class Settings:
                     self.strict_review_auth = bool(data["strict_review_auth"])
                 if "top_k" in data and data["top_k"] is not None:
                     self.top_k = int(data["top_k"])
+                if "platform_credentials" in data and isinstance(data["platform_credentials"], dict):
+                    for pk, pv in data["platform_credentials"].items():
+                        if pk in self.platform_credentials and isinstance(pv, dict):
+                            self.platform_credentials[pk].update(pv)
+                        else:
+                            self.platform_credentials[pk] = pv
         except Exception as e:
             print(f"[Settings] 从 {target_path} 加载配置异常: {e}")
 
@@ -216,6 +414,10 @@ class Settings:
             self.llm_model = preset["llm_model"]
             self.embed_api_base = preset["embed_api_base"]
             self.embed_model = preset["embed_model"]
+            # 自动加载该平台的独立凭据
+            p_cred = self.platform_credentials.get(preset_key, {})
+            if p_cred.get("api_key"):
+                self.llm_api_key = p_cred["api_key"]
 
         if "mock" in updates and updates["mock"] is not None:
             self.mock = _bool(str(updates["mock"]), self.mock)
@@ -224,11 +426,24 @@ class Settings:
         if "llm_api_base" in updates and updates["llm_api_base"] is not None:
             self.llm_api_base = str(updates["llm_api_base"]).strip()
         if "llm_model" in updates and updates["llm_model"]:
-            self.llm_model = str(updates["llm_model"]).strip()
+            m_name = str(updates["llm_model"]).strip()
+            self.llm_model = m_name
+            # 智能联动：如果未显式指定 llm_api_base，且模型名明确属于其他平台预设，自动匹配对应的 provider 与 api_base
+            if "llm_api_base" not in updates:
+                if "deepseek" in m_name.lower() and self.llm_provider != "deepseek":
+                    if "deepseek" in LLM_PROVIDER_PRESETS:
+                        self.llm_provider = "deepseek"
+                        self.llm_api_base = LLM_PROVIDER_PRESETS["deepseek"]["llm_api_base"]
+                elif (m_name.startswith("qwen") or "qwen" in m_name.lower()) and "11434" not in self.llm_api_base and self.llm_provider != "qwen":
+                    if "qwen" in LLM_PROVIDER_PRESETS:
+                        self.llm_provider = "qwen"
+                        self.llm_api_base = LLM_PROVIDER_PRESETS["qwen"]["llm_api_base"]
         if "llm_api_key" in updates and updates["llm_api_key"] is not None:
             val = str(updates["llm_api_key"]).strip()
             if val and "..." not in val:
                 self.llm_api_key = val
+            elif not val:
+                self.llm_api_key = ""
         if "llm_temperature" in updates and updates["llm_temperature"] is not None:
             self.llm_temperature = float(updates["llm_temperature"])
         if "embed_enabled" in updates and updates["embed_enabled"] is not None:
@@ -247,6 +462,16 @@ class Settings:
             self.strict_review_auth = _bool(str(updates["strict_review_auth"]), self.strict_review_auth)
         if "top_k" in updates and updates["top_k"] is not None:
             self.top_k = max(1, int(updates["top_k"]))
+
+        # 同步更新对应当前平台的凭据字典
+        cur_p = self.llm_provider
+        if cur_p not in self.platform_credentials:
+            self.platform_credentials[cur_p] = {}
+        self.platform_credentials[cur_p]["api_base"] = self.llm_api_base
+        self.platform_credentials[cur_p]["model"] = self.llm_model
+        self.platform_credentials[cur_p]["api_key"] = self.llm_api_key
+        if "verified" in updates:
+            self.platform_credentials[cur_p]["verified"] = bool(updates["verified"])
 
         # 持久化保存至本地磁盘，确保下一次打开页面或重启服务后配置依然存在
         self.save_to_disk()
