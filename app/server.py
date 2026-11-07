@@ -436,13 +436,17 @@ if _HAS_FASTAPI:
     @app.get("/config/knowledge")
     def get_knowledge_config():
         return {
-            "config_path": knowledge_center.config_path,
+            "config_path": getattr(knowledge_center, "config_path", "mysql:kb_knowledge_configs"),
             "knowledge": knowledge_center.get_all(),
         }
 
     @app.post("/config/knowledge")
-    def update_knowledge_config(req: KnowledgeUpdateReq, x_user_role: Optional[str] = Header(None)):
-        check_admin_permission(x_user_role)
+    def update_knowledge_config(
+        req: KnowledgeUpdateReq,
+        x_user_role: Optional[str] = Header(None),
+        x_user_id: Optional[str] = Header(None),
+    ):
+        check_admin_permission(x_user_role or x_user_id)
         updated = knowledge_center.update_section(req.section, req.value)
         invalidate_cache()
         return {

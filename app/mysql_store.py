@@ -1050,6 +1050,7 @@ class MySQLStore:
     def save_legal_synonyms(self, syn_map: Dict[str, str]) -> bool:
         now_ts = datetime.now(timezone.utc).isoformat()
         try:
+            self.execute("DELETE FROM kb_legal_synonyms")
             for term, expansion in syn_map.items():
                 self.execute(
                     "REPLACE INTO kb_legal_synonyms (colloquial_term, legal_terms, updated_at) VALUES (?, ?, ?)",
@@ -1083,6 +1084,7 @@ class MySQLStore:
     def save_cross_references(self, refs: List[Dict[str, Any]]) -> bool:
         now_ts = datetime.now(timezone.utc).isoformat()
         try:
+            self.execute("DELETE FROM kb_cross_references")
             for item in refs:
                 self.execute(
                     "REPLACE INTO kb_cross_references (source_law, source_article, targets_json, updated_at) VALUES (?, ?, ?, ?)",
@@ -1102,6 +1104,7 @@ class MySQLStore:
     def save_article_successions(self, succ_list: List[Dict[str, Any]]) -> bool:
         now_ts = datetime.now(timezone.utc).isoformat()
         try:
+            self.execute("DELETE FROM kb_article_successions")
             for s in succ_list:
                 self.execute(
                     """
@@ -1125,6 +1128,7 @@ class MySQLStore:
     def save_client_registry(self, clients: Dict[str, str]) -> bool:
         now_ts = datetime.now(timezone.utc).isoformat()
         try:
+            self.execute("DELETE FROM kb_client_registry")
             for name, desc in clients.items():
                 self.execute(
                     "REPLACE INTO kb_client_registry (client_name, client_type, updated_at) VALUES (?, ?, ?)",
@@ -1144,6 +1148,7 @@ class MySQLStore:
     def save_special_general_relations(self, relations: List[Dict[str, Any]]) -> bool:
         now_ts = datetime.now(timezone.utc).isoformat()
         try:
+            self.execute("DELETE FROM kb_special_general_relations")
             for r in relations:
                 self.execute(
                     """
@@ -1167,6 +1172,7 @@ class MySQLStore:
     def save_law_aliases(self, aliases: Dict[str, str]) -> bool:
         now_ts = datetime.now(timezone.utc).isoformat()
         try:
+            self.execute("DELETE FROM kb_law_aliases")
             for alias, canon in aliases.items():
                 self.execute(
                     "REPLACE INTO kb_law_aliases (alias_name, canonical_name, updated_at) VALUES (?, ?, ?)",
@@ -1261,6 +1267,7 @@ class MySQLStore:
             if "client_registry" in data:
                 self.save_client_registry(data["client_registry"])
             if "case_type_rules" in data:
+                self.execute("DELETE FROM kb_case_type_rules")
                 for ct, rules in data["case_type_rules"].items():
                     self.execute(
                         "REPLACE INTO kb_case_type_rules (case_type, rules_json, updated_at) VALUES (?, ?, ?)",
@@ -1289,6 +1296,7 @@ class MySQLStore:
                             (item[0], item[1], now_ts),
                         )
             if "reviewers_registry" in data:
+                self.execute("DELETE FROM kb_reviewers_registry")
                 for rid, rinfo in data["reviewers_registry"].items():
                     self.execute(
                         """

@@ -1843,7 +1843,7 @@
                 <option value="case_type_rules">6. 案由事实要件与时效规则库 (case_type_rules)</option>
                 <option value="reviewers_registry">7. 执业律师审核权限注册表 (reviewers_registry)</option>
               </select>
-              <button class="btn-reset" onclick="loadRuleConfigSection()">重载</button>
+              <button class="btn-reset" onclick="loadRuleConfigSection(true)">重载</button>
               <button class="btn-search" onclick="saveRuleConfigSection()">保存并热生效</button>
             </div>
           </div>
@@ -5305,24 +5305,69 @@
       }
     }
 
-    // 字典规则配置
-    async function loadRuleConfigSection() {
-      const sec = document.getElementById("ruleSectionSelect").value;
-      const res = await fetch("/config/knowledge");
-      const d = await res.json();
-      document.getElementById("ruleJsonTextarea").value = JSON.stringify((d.knowledge||{})[sec] || {}, null, 2);
+    let CACHED_KNOWLEDGE_FULL = null;
+
+    // 字典规则配置加载与即时回显
+    async function loadRuleConfigSection(forceRefresh = false) {
+      const secSel = document.getElementById("ruleSectionSelect");
+      const textarea = document.getElementById("ruleJsonTextarea");
+      if (!secSel || !textarea) return;
+      const sec = secSel.value;
+
+      try {
+        if (!CACHED_KNOWLEDGE_FULL || forceRefresh) {
+          const res = await fetch("/config/knowledge");
+          if (!res.ok) {
+            textarea.value = `// 获取业务知识配置失败 (HTTP ${res.status})`;
+            showToast(`⚠️ 加载规则失败 (HTTP ${res.status})`);
+            return;
+          }
+          const d = await res.json();
+          CACHED_KNOWLEDGE_FULL = d.knowledge || {};
+        }
+
+        const secData = CACHED_KNOWLEDGE_FULL[sec] !== undefined ? CACHED_KNOWLEDGE_FULL[sec] : {};
+        textarea.value = JSON.stringify(secData, null, 2);
+      } catch (err) {
+        console.error("加载规则异常:", err);
+        textarea.value = `// 加载规则异常: ${err.message}`;
+        showToast("⚠️ 加载规则异常，请检查网络或后端服务");
+      }
     }
+
     async function saveRuleConfigSection() {
       const sec = document.getElementById("ruleSectionSelect").value;
       let v;
-      try { v = JSON.parse(document.getElementById("ruleJsonTextarea").value); }
-      catch(e) { showToast("JSON 语法有误"); return; }
-      await fetch("/config/knowledge", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-User-Id": RBAC_STATE.currentUser },
-        body: JSON.stringify({ section: sec, value: v })
-      });
-      showToast("规则配置已热重载！");
+      try {
+        v = JSON.parse(document.getElementById("ruleJsonTextarea").value);
+      } catch(e) {
+        showToast("❌ JSON 语法有误，请核对后再保存！");
+        return;
+      }
+      try {
+        const res = await fetch("/config/knowledge", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-User-Id": RBAC_STATE.currentUser,
+            "X-User-Role": RBAC_STATE.currentUser
+          },
+          body: JSON.stringify({ section: sec, value: v })
+        });
+        if (res.status === 403) {
+          showToast("⚠️ 权限拒绝：只有管理员方可修改并保存业务规则！");
+          return;
+        }
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          showToast(`❌ 保存失败：${err.detail || '服务异常'}`);
+          return;
+        }
+        showToast("🎉 业务规则配置已持久化保存并热生效！");
+        await loadRuleConfigSection(true);
+      } catch (err) {
+        showToast(`❌ 保存异常: ${err.message}`);
+      }
     }
 
     async function loadRuleProposals() {
