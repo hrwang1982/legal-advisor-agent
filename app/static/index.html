@@ -1555,17 +1555,9 @@
             <textarea class="qa-textarea" id="qaInput" placeholder="请输入您想要问的问题..." rows="2" oninput="onQaInputChange()" onkeydown="handleInputKeydown(event)"></textarea>
             <div class="qa-input-footer">
               <div class="qa-controls-left">
-                <!-- 优化项 2: 支持选择生效的真实可用大模型 -->
+                <!-- 优化项 2: 支持选择生效的真实可用大模型（严格白名单控制，未测通绝不展示） -->
                 <select class="model-selector" id="modelSelect" onchange="onQaModelSelectChange(this.value)" title="选择当前生效的大模型">
-                  <option value="qwen-plus">qwen-plus (均衡旗舰 · 推荐) ∨</option>
-                  <option value="qwen-max">qwen-max (复杂推理 · 深度法理) ∨</option>
-                  <option value="qwen-long">qwen-long (超长案卷 · 法规解析) ∨</option>
-                  <option value="qwen3.6-plus">qwen3.6-plus (新一代旗舰) ∨</option>
-                  <option value="qwen3.8-flash">qwen3.8-flash (新一代极速) ∨</option>
-                  <option value="deepseek-chat">deepseek-chat ∨</option>
-                  <option value="deepseek-reasoner">deepseek-reasoner ∨</option>
-                  <option value="local_openai">本地大模型 (Ollama) ∨</option>
-                  <option value="mock">MOCK 确定性演示 ∨</option>
+                  <option value="mock">MOCK 确定性演示 (零依赖) ∨</option>
                 </select>
                 <label class="switch-label">
                   <input type="checkbox" id="deepThinkingToggle" checked style="display:none;" />
@@ -3744,6 +3736,8 @@
       }
     });
 
+    let MODEL_PROVIDER_MAP = {}; // 记录模型所属平台，支持精准路由
+
     // 优化项 2: 支持选择生效的大模型即时切换并双向同步配置
     async function onQaModelSelectChange(modelVal) {
       try {
@@ -3752,9 +3746,16 @@
           payload = { mock: true };
         } else {
           payload = { mock: false, llm_model: modelVal };
-          if (modelVal.startsWith("qwen")) payload.llm_provider = "qwen";
-          else if (modelVal.startsWith("deepseek")) payload.llm_provider = "deepseek";
-          else if (modelVal.includes("local") || modelVal.includes("14b")) payload.llm_provider = "local_openai";
+          const p = MODEL_PROVIDER_MAP[modelVal];
+          if (p && p !== "mock") {
+            payload.llm_provider = p;
+          } else if (modelVal.startsWith("qwen")) {
+            payload.llm_provider = "qwen";
+          } else if (modelVal.startsWith("deepseek")) {
+            payload.llm_provider = "deepseek";
+          } else if (modelVal.includes("local") || modelVal.includes("14b")) {
+            payload.llm_provider = "local_openai";
+          }
         }
         const res = await fetch("/config/llm", {
           method: "POST",
@@ -4925,6 +4926,15 @@
 
       IS_CURRENT_CONFIG_TESTED_OK = false;
 
+      // 实时保存到当前正在编辑平台的缓存中，确保切换模板时不串用、不丢失
+      if (CURRENT_EDITING_PROVIDER) {
+        if (!cachedPlatformCredentials[CURRENT_EDITING_PROVIDER]) {
+          cachedPlatformCredentials[CURRENT_EDITING_PROVIDER] = {};
+        }
+        cachedPlatformCredentials[CURRENT_EDITING_PROVIDER].api_key = keyVal;
+        cachedPlatformCredentials[CURRENT_EDITING_PROVIDER].verified = false;
+      }
+
       if (isMock) {
         if (keyStat) {
           keyStat.textContent = "当前为 MOCK 模式（无需配置外部 Key）";
@@ -4953,7 +4963,7 @@
       if (statusBox) {
         statusBox.innerHTML = `
           <div style="background:#fffbe6; border:1px solid #ffe58f; padding:9px 14px; border-radius:6px; color:#d48806; font-size:12.5px;">
-            ⚠️ 配置参数已发生修改，当前测试状态已失效。请点击右侧「测试服务连通性」重新验证，测试通过并保存后方可在「智能问答」中生效。
+            ⚠️ 配置参数已发生修改，当前测试状态已失效。根据白名单机制，该模版模型目前<strong>绝不展示</strong>在智能问答列表中。请点击右侧「测试服务连通性」重新验证，测试通过并保存后方可在「智能问答」中生效。
           </div>
         `;
       }
@@ -5000,17 +5010,27 @@
       });
     }
 
-    // 动态同步智能问答底部的模型选择下拉框（只有填写key且测试通过保存的模型才显示）
+    // 动态同步智能问答底部的模型选择下拉框（严格白名单机制：未测通的模型，绝不展示在智能问答的模型列表中）
     function syncQaModelOptions(currentModel, availableModels, isMock) {
       const qaSelect = document.getElementById("modelSelect");
       if (!qaSelect) return;
-      if (!availableModels || !Array.isArray(availableModels) || availableModels.length === 0) return;
+      MODEL_PROVIDER_MAP = {};
+
+      if (!availableModels || !Array.isArray(availableModels) || availableModels.length === 0) {
+        qaSelect.innerHTML = `<option value="mock" data-provider="mock">MOCK 确定性演示 (零依赖) ∨</option>`;
+        MODEL_PROVIDER_MAP["mock"] = "mock";
+        return;
+      }
 
       qaSelect.innerHTML = "";
       availableModels.forEach(m => {
         const opt = document.createElement("option");
         opt.value = m.id;
         opt.textContent = `${m.name || m.id} ∨`;
+        if (m.provider) {
+          opt.dataset.provider = m.provider;
+          MODEL_PROVIDER_MAP[m.id] = m.provider;
+        }
         qaSelect.appendChild(opt);
       });
 
@@ -5046,22 +5066,24 @@
         document.getElementById("cfgDenseWeight").value = d.hybrid_dense_weight !== undefined ? d.hybrid_dense_weight : 0.45;
         document.getElementById("cfgStrictReview").value = String(d.strict_review_auth || false);
 
-        // 回显当前正在生效的平台的 Key
+        // 回显当前正在生效平台的专属 Key（绝不能跨平台 fallback，未配置时置空）
         const pCred = cachedPlatformCredentials[CURRENT_EDITING_PROVIDER] || {};
         const keyInp = document.getElementById("cfgLlmApiKey");
+        const curKey = (pCred.api_key || "").trim();
         if (keyInp) {
-          keyInp.value = d.llm_api_key || pCred.api_key || "";
+          keyInp.value = curKey;
+          keyInp.placeholder = curKey ? "已配置专属密钥" : `未配置密钥，请填入专属 API Key (sk-...)`;
         }
 
         const keyStat = document.getElementById("cfgLlmKeyStatus");
-        if (d.llm_api_key_configured) {
-          const isVer = pCred.verified;
-          keyStat.textContent = isVer ? `✓ 已安全配置密钥并测试通过：${d.llm_api_key_masked || '已配置'}` : `已填入密钥（尚未测试通过）：${d.llm_api_key_masked || '已配置'}`;
+        if (curKey) {
+          const isVer = !!pCred.verified;
+          keyStat.textContent = isVer ? `✓ 已安全配置密钥并测试通过：${pCred.api_key_masked || '已配置'}` : `已填入密钥（尚未测试通过）：${pCred.api_key_masked || '已配置'}`;
           keyStat.style.color = isVer ? "#52c41a" : "#faad14";
           IS_CURRENT_CONFIG_TESTED_OK = isVer;
         } else {
           keyStat.textContent = "未配置密钥 (当前模版模型不可用，需填入对应 Key 测试通过后保存)";
-          keyStat.style.color = "#8f959e";
+          keyStat.style.color = "#cf1322";
           IS_CURRENT_CONFIG_TESTED_OK = false;
         }
 
@@ -5070,7 +5092,7 @@
         const platformModels = (currentPreset && currentPreset.models) ? currentPreset.models : [];
         renderModelQuickTags(platformModels, d.llm_model);
 
-        // 智能问答底部的模型选择器动态同步真实通过测试并保存的模型
+        // 智能问答底部的模型选择器动态同步真实通过测试并保存的白名单模型
         syncQaModelOptions(d.llm_model, d.available_models, d.mock);
 
         // 状态栏回显当前连通情况
@@ -5079,13 +5101,13 @@
           if (pCred.verified) {
             statusBox.innerHTML = `
               <div style="background:#f6ffed; border:1px solid #b7eb8f; padding:9px 14px; border-radius:6px; color:#389e0d; font-size:12.5px;">
-                ✓ 当前模型 <strong>[${d.llm_model}]</strong> 已验证测试通过并已保存，已在「智能问答」列表中可用生效。
+                ✓ 当前模型 <strong>[${d.llm_model}]</strong> 已验证测试通过并已保存，已在「智能问答」白名单列表中可用生效。
               </div>
             `;
           } else {
             statusBox.innerHTML = `
               <div style="background:#fffbe6; border:1px solid #ffe58f; padding:9px 14px; border-radius:6px; color:#d48806; font-size:12.5px;">
-                ⚠️ 提示：当没有选择模版填入 key 保存时，对应的模版模型不可用；请填写该平台的 API Key 和模型名，点击「测试服务连通性」测试通过并保存后，模型方可在「智能问答」中选用。
+                ⚠️ 提示：当前模版未填入 key 或尚未测试通过，对应的模版模型<strong>绝不展示</strong>在智能问答列表中；请填写该平台的 API Key 和模型名，点击「测试服务连通性」测试通过并保存后方可加入列表。
               </div>
             `;
           }
@@ -5095,7 +5117,7 @@
       }
     }
 
-    // 切换模版预设 (核心修复：彻底解决串用其他平台 Key 的问题，各个模版 Key 独立加载)
+    // 切换模版预设 (各平台凭据物理隔离，各个模版 Key 独立加载，未配置时坚决置空并提示)
     function applyLlmPreset(presetKey) {
       if (!presetKey || !cachedPresets[presetKey]) return;
       CURRENT_EDITING_PROVIDER = presetKey;
@@ -5105,31 +5127,35 @@
       if (p.embed_api_base) document.getElementById("cfgEmbedApiBase").value = p.embed_api_base;
       if (p.embed_model) document.getElementById("cfgEmbedModel").value = p.embed_model;
 
-      // 提取该平台之前保存过的独立凭据，避免错带其他平台的 Key
+      // 提取该平台之前保存过的独立专属凭据，绝不混用其他平台的 Key
       const pCred = (cachedPlatformCredentials && cachedPlatformCredentials[presetKey]) || {};
       const keyInp = document.getElementById("cfgLlmApiKey");
       const keyStat = document.getElementById("cfgLlmKeyStatus");
+      const pKey = (pCred.api_key || "").trim();
+
       if (keyInp) {
-        keyInp.value = pCred.api_key || "";
+        // 核心：只回显该平台的专属 Key，若未配置则坚决置空！
+        keyInp.value = pKey;
+        keyInp.placeholder = pKey ? "已配置专属密钥" : `未配置密钥，请填入【${p.name || presetKey}】的专属 API Key (sk-...)`;
       }
       if (keyStat) {
-        if (pCred.api_key) {
-          keyStat.textContent = pCred.verified ? `✓ 已配置该模版密钥并测试通过：${pCred.api_key_masked || '已配置'}` : `已填入密钥（尚未测试通过）：${pCred.api_key_masked || '已配置'}`;
+        if (pKey) {
+          keyStat.textContent = pCred.verified ? `✓ 已配置【${p.name || presetKey}】专属密钥并测试通过：${pCred.api_key_masked || '已配置'}` : `已填入密钥（尚未测试通过）：${pCred.api_key_masked || '已配置'}`;
           keyStat.style.color = pCred.verified ? "#52c41a" : "#faad14";
         } else {
-          keyStat.textContent = `未配置【${p.name || presetKey}】密钥 (请填入对应的 API Key 并测试通过后保存)`;
+          keyStat.textContent = `⚠️ 未配置【${p.name || presetKey}】专属密钥 (请填入对应的 API Key 并点击测试服务连通性)`;
           keyStat.style.color = "#cf1322";
         }
       }
 
       // 重置本次测试连通状态为该模版固有的验证状态
-      IS_CURRENT_CONFIG_TESTED_OK = !!pCred.verified;
+      IS_CURRENT_CONFIG_TESTED_OK = !!(pKey && pCred.verified);
       const statusBox = document.getElementById("llmHealthStatus");
       if (statusBox) {
-        if (pCred.verified) {
-          statusBox.innerHTML = `<div style="background:#f6ffed; border:1px solid #b7eb8f; padding:9px 14px; border-radius:6px; color:#389e0d; font-size:12.5px;">✓ 当前模版【${p.name || presetKey}】处于已验证可用状态。</div>`;
+        if (pKey && pCred.verified) {
+          statusBox.innerHTML = `<div style="background:#f6ffed; border:1px solid #b7eb8f; padding:9px 14px; border-radius:6px; color:#389e0d; font-size:12.5px;">✓ 当前模版【${p.name || presetKey}】处于已验证可用状态，模型已在智能问答白名单中生效。</div>`;
         } else {
-          statusBox.innerHTML = `<div style="background:#fffbe6; border:1px solid #ffe58f; padding:9px 14px; border-radius:6px; color:#d48806; font-size:12.5px;">⚠️ 当前模版尚未填入对应 Key 或尚未测试通过。该模版的模型目前处于<strong>不可用</strong>状态。请填入 Key 并点击「测试服务连通性」，测试通过并保存后才会显示在智能问答列表中。</div>`;
+          statusBox.innerHTML = `<div style="background:#fffbe6; border:1px solid #ffe58f; padding:9px 14px; border-radius:6px; color:#d48806; font-size:12.5px;">⚠️ 当前模版尚未填入对应 Key 或尚未测试通过。根据白名单机制，该模版的所有模型目前<strong>绝不展示</strong>在智能问答列表中。请填入 Key 并点击「测试服务连通性」，测试通过并保存后才会显示在智能问答列表中。</div>`;
         }
       }
 

@@ -269,27 +269,38 @@ class Settings:
                 return "***"
             return f"{k[:4]}...{k[-4:]}"
 
-        # 计算已通过测试并保存的有效模型列表
-        # 核心规则：只有配置了 key 且测试通过 (verified=True) 的模版模型才进入可用列表
+        # 计算已通过测试并保存的有效模型列表（白名单机制）
+        # 核心规则：未测通的模型，绝不展示在智能问答的模型列表中
         available_models = []
         for p_key, p_cfg in self.platform_credentials.items():
-            if p_cfg.get("verified"):
+            # 严格判定平台是否已测通：必须 verified 为 True，且远程服务必须具备有效 API Key
+            api_base = (p_cfg.get("api_base") or "").strip()
+            is_local = "localhost" in api_base or "127.0.0.1" in api_base
+            has_valid_key = is_local or bool(p_cfg.get("api_key"))
+            is_verified = bool(p_cfg.get("verified")) and has_valid_key
+
+            if is_verified:
                 preset = LLM_PROVIDER_PRESETS.get(p_key, {})
                 for m in preset.get("models", []):
                     if not any(x["id"] == m["id"] for x in available_models):
-                        available_models.append(dict(m))
+                        item = dict(m)
+                        item["provider"] = p_key
+                        available_models.append(item)
                 cur_m = p_cfg.get("model")
                 if cur_m and not any(x["id"] == cur_m for x in available_models) and cur_m != "mock":
-                    available_models.append({"id": cur_m, "name": f"{cur_m} ({preset.get('name', p_key)})"})
+                    available_models.append({"id": cur_m, "name": f"{cur_m} ({preset.get('name', p_key)})", "provider": p_key})
 
-        # 若当前活动模型已有配置且已验证
+        # 若当前活动模型所在的平台已测通且自身已验证
         if self.llm_model and self.llm_model != "mock":
             cur_provider_cfg = self.platform_credentials.get(self.llm_provider, {})
-            if cur_provider_cfg.get("verified") and not any(x["id"] == self.llm_model for x in available_models):
-                available_models.insert(0, {"id": self.llm_model, "name": f"{self.llm_model} (当前生效)"})
+            cur_is_local = "localhost" in self.llm_api_base or "127.0.0.1" in self.llm_api_base
+            cur_has_key = cur_is_local or bool(self.llm_api_key)
+            if cur_provider_cfg.get("verified") and cur_has_key:
+                if not any(x["id"] == self.llm_model for x in available_models):
+                    available_models.insert(0, {"id": self.llm_model, "name": f"{self.llm_model} (当前生效)", "provider": self.llm_provider})
 
-        # 始终提供 MOCK 模式作为确定性演示保障
-        available_models.append({"id": "mock", "name": "MOCK 确定性演示 (零依赖)"})
+        # 始终提供 MOCK 模式作为确定性演示保障（零依赖）
+        available_models.append({"id": "mock", "name": "MOCK 确定性演示 (零依赖)", "provider": "mock"})
 
         # 各平台的凭据脱敏副本（用于前端在切换预设时准确回显各个平台专有 Key，绝不串用）
         public_credentials = {}
@@ -400,52 +411,98 @@ class Settings:
             if "top_k" in data and data["top_k"] is not None:
                 self.top_k = int(data["top_k"])
             if "platform_credentials" in data and isinstance(data["platform_credentials"], dict):
+                qwen_key_default = self.platform_credentials.get("qwen", {}).get("api_key", "")
+                qwen_key_db = data["platform_credentials"].get("qwen", {}).get("api_key", "")
+                qwen_keys = {k for k in [qwen_key_default, qwen_key_db, self.llm_api_key] if k}
+
+                needs_cleanup_resave = False
                 for pk, pv in data["platform_credentials"].items():
                     if pk in self.platform_credentials and isinstance(pv, dict):
+                        # 物理隔离防污染净化：非 qwen 平台（如 local_openai、siliconflow 等）若被错误串入了 qwen 默认 key 或测试假数据，坚决清空
+                        cur_key = pv.get("api_key", "")
+                        if pk != "qwen" and cur_key:
+                            if cur_key in qwen_keys or cur_key.startswith("sk-56cfaa") or "fake" in cur_key:
+                                pv["api_key"] = ""
+                                pv["verified"] = False
+                                needs_cleanup_resave = True
                         self.platform_credentials[pk].update(pv)
                     else:
                         self.platform_credentials[pk] = pv
+                
+                # 如果净化了被历史污染的凭据，同步持久化回写 MySQL 数据库
+                if needs_cleanup_resave:
+                    self.save_to_disk()
 
     def update_runtime(self, updates: Dict[str, Any]) -> Dict[str, Any]:
-        """支持在线热更新大模型与检索配置（无需重启服务，并自动持久化写入本地磁盘）。"""
+        """支持在线热更新大模型与检索配置（物理隔离各平台凭据，并自动持久化写入 MySQL 数据库）。"""
+        # 1. 识别当前目标平台 target_provider
+        prev_provider = self.llm_provider
+        target_provider = prev_provider
         if "provider_preset" in updates and updates["provider_preset"] in LLM_PROVIDER_PRESETS:
-            preset_key = updates["provider_preset"]
-            preset = LLM_PROVIDER_PRESETS[preset_key]
-            self.llm_provider = preset_key
-            self.llm_api_base = preset["llm_api_base"]
-            self.llm_model = preset["llm_model"]
+            target_provider = str(updates["provider_preset"]).strip()
+        elif "llm_provider" in updates and updates["llm_provider"]:
+            target_provider = str(updates["llm_provider"]).strip()
+
+        # 确保 target_provider 在 platform_credentials 中有独立隔离槽位
+        if target_provider not in self.platform_credentials:
+            preset = LLM_PROVIDER_PRESETS.get(target_provider, {})
+            self.platform_credentials[target_provider] = {
+                "api_base": preset.get("llm_api_base", ""),
+                "model": preset.get("llm_model", ""),
+                "api_key": "",
+                "verified": False,
+            }
+
+        # 2. 标记是否发生了平台切换
+        is_provider_switched = (target_provider != prev_provider)
+        self.llm_provider = target_provider
+        target_cred = self.platform_credentials[target_provider]
+
+        # 3. 处理预设加载
+        if "provider_preset" in updates and updates["provider_preset"] in LLM_PROVIDER_PRESETS:
+            preset = LLM_PROVIDER_PRESETS[target_provider]
+            self.llm_api_base = updates.get("llm_api_base") or target_cred.get("api_base") or preset["llm_api_base"]
+            self.llm_model = updates.get("llm_model") or target_cred.get("model") or preset["llm_model"]
             self.embed_api_base = preset["embed_api_base"]
             self.embed_model = preset["embed_model"]
-            # 自动加载该平台的独立凭据
-            p_cred = self.platform_credentials.get(preset_key, {})
-            if p_cred.get("api_key"):
-                self.llm_api_key = p_cred["api_key"]
+            # 物理隔离核心：只回显该平台的专属 key，未配置时坚决置空，绝不串用！
+            self.llm_api_key = target_cred.get("api_key", "")
 
+        # 4. 如果没传 provider_preset，但切换了 llm_provider
+        elif is_provider_switched:
+            preset = LLM_PROVIDER_PRESETS.get(target_provider, {})
+            if "llm_api_base" not in updates:
+                self.llm_api_base = target_cred.get("api_base") or preset.get("llm_api_base", "")
+            if "llm_model" not in updates:
+                self.llm_model = target_cred.get("model") or preset.get("llm_model", "")
+            # 若 updates 未显式提供 llm_api_key，强制回显该平台原本已保存的专属 key，坚决置空未配置者
+            if "llm_api_key" not in updates:
+                self.llm_api_key = target_cred.get("api_key", "")
+
+        # 5. 更新普通基础字段
         if "mock" in updates and updates["mock"] is not None:
             self.mock = _bool(str(updates["mock"]), self.mock)
-        if "llm_provider" in updates and updates["llm_provider"]:
-            self.llm_provider = str(updates["llm_provider"]).strip()
         if "llm_api_base" in updates and updates["llm_api_base"] is not None:
             self.llm_api_base = str(updates["llm_api_base"]).strip()
         if "llm_model" in updates and updates["llm_model"]:
             m_name = str(updates["llm_model"]).strip()
             self.llm_model = m_name
-            # 智能联动：如果未显式指定 llm_api_base，且模型名明确属于其他平台预设，自动匹配对应的 provider 与 api_base
-            if "llm_api_base" not in updates:
-                if "deepseek" in m_name.lower() and self.llm_provider != "deepseek":
-                    if "deepseek" in LLM_PROVIDER_PRESETS:
-                        self.llm_provider = "deepseek"
-                        self.llm_api_base = LLM_PROVIDER_PRESETS["deepseek"]["llm_api_base"]
-                elif (m_name.startswith("qwen") or "qwen" in m_name.lower()) and "11434" not in self.llm_api_base and self.llm_provider != "qwen":
-                    if "qwen" in LLM_PROVIDER_PRESETS:
-                        self.llm_provider = "qwen"
-                        self.llm_api_base = LLM_PROVIDER_PRESETS["qwen"]["llm_api_base"]
+
+        # 6. 处理 API Key 更新（严格只更新当前 target_provider）
         if "llm_api_key" in updates and updates["llm_api_key"] is not None:
-            val = str(updates["llm_api_key"]).strip()
-            if val and "..." not in val:
-                self.llm_api_key = val
-            elif not val:
+            raw_key = str(updates["llm_api_key"]).strip()
+            # 只有当用户输入了非脱敏的新 key 时更新；若为空字符串则清空
+            if "..." not in raw_key:
+                self.llm_api_key = raw_key
+                self.platform_credentials[target_provider]["api_key"] = raw_key
+            elif not raw_key:
                 self.llm_api_key = ""
+                self.platform_credentials[target_provider]["api_key"] = ""
+        else:
+            # 未提供 llm_api_key 时，保持与当前目标平台的专属 key 一致
+            self.llm_api_key = target_cred.get("api_key", "")
+
+        # 7. 更新其他运行时参数
         if "llm_temperature" in updates and updates["llm_temperature"] is not None:
             self.llm_temperature = float(updates["llm_temperature"])
         if "embed_enabled" in updates and updates["embed_enabled"] is not None:
@@ -465,19 +522,19 @@ class Settings:
         if "top_k" in updates and updates["top_k"] is not None:
             self.top_k = max(1, int(updates["top_k"]))
 
-        # 同步更新对应当前平台的凭据字典
-        cur_p = self.llm_provider
-        if cur_p not in self.platform_credentials:
-            self.platform_credentials[cur_p] = {}
-        self.platform_credentials[cur_p]["api_base"] = self.llm_api_base
-        self.platform_credentials[cur_p]["model"] = self.llm_model
-        self.platform_credentials[cur_p]["api_key"] = self.llm_api_key
-        if "verified" in updates:
-            self.platform_credentials[cur_p]["verified"] = bool(updates["verified"])
+        # 8. 同步维护 target_provider 的独立凭据对象
+        self.platform_credentials[target_provider]["api_base"] = self.llm_api_base
+        self.platform_credentials[target_provider]["model"] = self.llm_model
+        if "verified" in updates and updates["verified"] is not None:
+            self.platform_credentials[target_provider]["verified"] = bool(updates["verified"])
 
-        # 持久化保存至本地磁盘，确保下一次打开页面或重启服务后配置依然存在
+        # 安全防线：对于非本地服务，如果该平台的 api_key 为空，强制 verified = False，绝不允许未测通模型进入可用列表
+        is_local = "localhost" in self.llm_api_base or "127.0.0.1" in self.llm_api_base
+        if not is_local and not self.platform_credentials[target_provider].get("api_key"):
+            self.platform_credentials[target_provider]["verified"] = False
+
+        # 9. 持久化保存至 MySQL 数据库专用表 llm_config
         self.save_to_disk()
-
         return self.to_public_dict()
 
 
