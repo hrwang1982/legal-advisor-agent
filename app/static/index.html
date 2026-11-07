@@ -648,6 +648,19 @@
       background: #fff1f0;
       border-color: #ffccc7;
     }
+    .transfer-right-tree-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 3px 6px;
+      border-radius: 4px;
+      margin-bottom: 2px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .transfer-right-tree-row:hover {
+      background: #f7f9fa;
+    }
     .transfer-remove-btn {
       color: #94a3b8;
       cursor: pointer;
@@ -3016,6 +3029,7 @@
     let CURRENT_RANGE_TYPE = "kb"; // "kb" (多知识库) | "doc" (多文档)
     const TRANSFER_LEFT_CHECKED = new Set();
     const TRANSFER_RIGHT_CHECKED = new Set();
+    const TRANSFER_RIGHT_EXPANDED = new Set();
     let TRANSFER_SEARCH_KEYWORD = "";
 
     // 监听输入框打字变动，动态点亮右下角提问按钮 (解决无法点击感知问题)
@@ -3108,6 +3122,9 @@
         await loadAdvancedDocuments();
       }
 
+      // 初始化右侧已选节点的默认展开状态
+      initTransferRightExpanded();
+
       renderTransferLeft();
       renderTransferRight();
       updateCustomSelectedCount();
@@ -3125,6 +3142,7 @@
     function onScopeRangeTypeChange(type) {
       CURRENT_RANGE_TYPE = type;
       TRANSFER_LEFT_CHECKED.clear();
+      TRANSFER_RIGHT_CHECKED.clear();
       const leftHeader = document.getElementById("transferLeftHeader");
       const rightHeader = document.getElementById("transferRightHeader");
       if (type === "doc") {
@@ -3173,7 +3191,73 @@
       return null;
     }
 
-    // 切换树节点展开收起
+    // 递归获取某个节点的所有祖先节点 ID
+    function getAncestorNodeIds(nodes, targetId) {
+      let ancestors = [];
+      function dfs(list, currentPath) {
+        if (!list || !Array.isArray(list)) return false;
+        for (const node of list) {
+          const nid = node.node_id || node.id;
+          if (nid === targetId) {
+            ancestors = [...currentPath];
+            return true;
+          }
+          if (node.children && node.children.length > 0) {
+            if (dfs(node.children, [...currentPath, nid])) {
+              return true;
+            }
+          }
+        }
+        return false;
+      }
+      dfs(nodes, []);
+      return ancestors;
+    }
+
+    // 递归构建右侧“已选知识库”的树形层级结构
+    function buildSelectedKbTree(nodes, selectedIdSet) {
+      if (!nodes || !Array.isArray(nodes)) return [];
+      const result = [];
+      nodes.forEach(node => {
+        const nid = node.node_id || node.id;
+        const filteredChildren = (node.children && node.children.length > 0)
+          ? buildSelectedKbTree(node.children, selectedIdSet)
+          : [];
+        const isSelfSelected = selectedIdSet.has(nid);
+        const hasSelectedDescendants = filteredChildren.length > 0;
+
+        if (isSelfSelected || hasSelectedDescendants) {
+          result.push({
+            ...node,
+            node_id: nid,
+            id: nid,
+            isSelfSelected: isSelfSelected,
+            children: filteredChildren
+          });
+        }
+      });
+      return result;
+    }
+
+    // 初始化右侧已选树节点的默认展开
+    function initTransferRightExpanded() {
+      const realTree = (Array.isArray(KB_TREE_DATA) && KB_TREE_DATA.length > 0)
+        ? KB_TREE_DATA
+        : DEFAULT_STATIC_TREE;
+      function mark(list) {
+        if (!list || !Array.isArray(list)) return;
+        list.forEach(n => {
+          const nid = n.node_id || n.id;
+          if (n.children && n.children.length > 0) {
+            TRANSFER_RIGHT_EXPANDED.add(nid);
+            mark(n.children);
+          }
+        });
+      }
+      mark(realTree);
+    }
+
+    // 切换左侧树节点展开收起
     function toggleTransferNodeExpand(nodeId, e) {
       if (e) e.stopPropagation();
       function findAndToggle(nodes) {
@@ -3193,18 +3277,51 @@
       renderTransferLeft();
     }
 
-    // 勾选/取消勾选待选节点 (关键优化：上层选中/取消时联动下层所有子知识库)
+    // 切换右侧树节点展开收起
+    function toggleTransferRightNodeExpand(nodeId, e) {
+      if (e) e.stopPropagation();
+      if (TRANSFER_RIGHT_EXPANDED.has(nodeId)) {
+        TRANSFER_RIGHT_EXPANDED.delete(nodeId);
+      } else {
+        TRANSFER_RIGHT_EXPANDED.add(nodeId);
+      }
+      renderTransferRight();
+    }
+
+    // 左侧检查上级祖先全选联动状态
+    function checkLeftParentSelectionStatus(nodes, nodeId) {
+      const ancestors = getAncestorNodeIds(nodes, nodeId);
+      for (let i = ancestors.length - 1; i >= 0; i--) {
+        const pId = ancestors[i];
+        const pNode = findNodeInRealTree(nodes, pId);
+        if (pNode && pNode.children && pNode.children.length > 0) {
+          const allChildrenChecked = pNode.children.every(c => TRANSFER_LEFT_CHECKED.has(c.node_id || c.id));
+          if (allChildrenChecked) {
+            TRANSFER_LEFT_CHECKED.add(pId);
+          } else {
+            TRANSFER_LEFT_CHECKED.delete(pId);
+          }
+        }
+      }
+    }
+
+    // 勾选/取消勾选左侧待选节点 (双向联动：勾选父级全选子级，取消父级取消子级，子级变动同步父级)
     function onTransferLeftCheck(nodeId, checked, e) {
       if (e) e.stopPropagation();
 
       if (CURRENT_RANGE_TYPE === "doc") {
         if (checked) TRANSFER_LEFT_CHECKED.add(nodeId);
         else TRANSFER_LEFT_CHECKED.delete(nodeId);
+        renderTransferLeft();
         return;
       }
 
+      const realTree = (Array.isArray(KB_TREE_DATA) && KB_TREE_DATA.length > 0)
+        ? KB_TREE_DATA
+        : DEFAULT_STATIC_TREE;
+
       // 联动找到当前真实节点及其所有子代节点
-      const targetNode = findNodeInRealTree(KB_TREE_DATA, nodeId);
+      const targetNode = findNodeInRealTree(realTree, nodeId);
       const targetIds = [nodeId];
       if (targetNode) {
         targetIds.push(...getSubtreeNodeIds(targetNode));
@@ -3216,10 +3333,17 @@
         } else {
           TRANSFER_LEFT_CHECKED.delete(id);
         }
-        // 实时同步更新页面复选框打勾状态
-        const chk = document.getElementById("chk_left_" + id);
-        if (chk) chk.checked = checked;
       });
+
+      // 祖先父级联动
+      if (!checked) {
+        const ancestors = getAncestorNodeIds(realTree, nodeId);
+        ancestors.forEach(aid => TRANSFER_LEFT_CHECKED.delete(aid));
+      } else {
+        checkLeftParentSelectionStatus(realTree, nodeId);
+      }
+
+      renderTransferLeft();
     }
 
     // 渲染图2左侧待选区 (直接使用真实的知识库管理树)
@@ -3316,7 +3440,70 @@
       }
     }
 
-    // 渲染图2右侧已选区
+    // 右侧检查上级祖先在已选子树中的联动状态
+    function checkRightParentSelectionStatus(nodes, nodeId) {
+      const ancestors = getAncestorNodeIds(nodes, nodeId);
+      const selectedIdSet = new Set(CUSTOM_SELECTED_SCOPES.map(i => i.id || i.node_id));
+      const selectedTree = buildSelectedKbTree(nodes, selectedIdSet);
+
+      for (let i = ancestors.length - 1; i >= 0; i--) {
+        const pId = ancestors[i];
+        const pNodeInSelected = findNodeInRealTree(selectedTree, pId);
+        if (pNodeInSelected && pNodeInSelected.children && pNodeInSelected.children.length > 0) {
+          const allChildrenChecked = pNodeInSelected.children.every(c => TRANSFER_RIGHT_CHECKED.has(c.node_id || c.id));
+          if (allChildrenChecked) {
+            TRANSFER_RIGHT_CHECKED.add(pId);
+          } else {
+            TRANSFER_RIGHT_CHECKED.delete(pId);
+          }
+        }
+      }
+    }
+
+    // 勾选/取消勾选右侧已选项 (支持层级联动：勾选父级全选子级，取消父级取消子级，子级变动同步父级)
+    function onTransferRightCheck(id, checked, e) {
+      if (e) e.stopPropagation();
+
+      if (CURRENT_RANGE_TYPE === "doc") {
+        if (checked) {
+          TRANSFER_RIGHT_CHECKED.add(id);
+        } else {
+          TRANSFER_RIGHT_CHECKED.delete(id);
+        }
+        renderTransferRight();
+        return;
+      }
+
+      const realTree = (Array.isArray(KB_TREE_DATA) && KB_TREE_DATA.length > 0)
+        ? KB_TREE_DATA
+        : DEFAULT_STATIC_TREE;
+
+      const targetNode = findNodeInRealTree(realTree, id);
+      const targetIds = [id];
+      if (targetNode) {
+        targetIds.push(...getSubtreeNodeIds(targetNode));
+      }
+
+      targetIds.forEach(subId => {
+        if (checked) {
+          TRANSFER_RIGHT_CHECKED.add(subId);
+        } else {
+          TRANSFER_RIGHT_CHECKED.delete(subId);
+        }
+      });
+
+      // 祖先父级联动
+      if (!checked) {
+        const ancestors = getAncestorNodeIds(realTree, id);
+        ancestors.forEach(aid => TRANSFER_RIGHT_CHECKED.delete(aid));
+      } else {
+        checkRightParentSelectionStatus(realTree, id);
+      }
+
+      renderTransferRight();
+    }
+
+    // 渲染右侧已选区 (优化核心：多知识库模式下支持像图1一样的树形层级展示与层级操作)
     function renderTransferRight() {
       const container = document.getElementById("transferRightBody");
       if (!container) return;
@@ -3327,36 +3514,93 @@
         return;
       }
 
-      CUSTOM_SELECTED_SCOPES.forEach(item => {
-        const isChecked = TRANSFER_RIGHT_CHECKED.has(item.id);
-        const itemDiv = document.createElement("div");
-        itemDiv.className = "transfer-right-item";
-        itemDiv.innerHTML = `
-          <div style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" ${isChecked ? "checked" : ""} onchange="onTransferRightCheck('${item.id}', this.checked, event)" style="cursor:pointer;" />
-            <span>${item.type === "doc" ? "📄" : "📁"} ${item.name}</span>
-          </div>
-          <span class="transfer-remove-btn" onclick="removeTransferItem('${item.id}', event)" title="移除此项">×</span>
-        `;
-        container.appendChild(itemDiv);
-      });
-    }
-
-    // 勾选/取消勾选右侧已选项
-    function onTransferRightCheck(id, checked, e) {
-      if (e) e.stopPropagation();
-      if (checked) {
-        TRANSFER_RIGHT_CHECKED.add(id);
+      if (CURRENT_RANGE_TYPE === "doc") {
+        // 多文档模式：扁平列表展示已选文档
+        CUSTOM_SELECTED_SCOPES.forEach(item => {
+          const isChecked = TRANSFER_RIGHT_CHECKED.has(item.id || item.node_id);
+          const itemDiv = document.createElement("div");
+          itemDiv.className = "transfer-right-item";
+          itemDiv.innerHTML = `
+            <div style="display:flex; align-items:center; gap:8px;">
+              <input type="checkbox" ${isChecked ? "checked" : ""} onchange="onTransferRightCheck('${item.id || item.node_id}', this.checked, event)" style="cursor:pointer;" />
+              <span>📄 ${item.name}</span>
+            </div>
+            <span class="transfer-remove-btn" onclick="removeTransferItem('${item.id || item.node_id}', event)" title="移除此项">×</span>
+          `;
+          container.appendChild(itemDiv);
+        });
       } else {
-        TRANSFER_RIGHT_CHECKED.delete(id);
+        // 多知识库模式：像图1一样支持层级树展示
+        const realTree = (Array.isArray(KB_TREE_DATA) && KB_TREE_DATA.length > 0)
+          ? KB_TREE_DATA
+          : DEFAULT_STATIC_TREE;
+
+        const selectedIdSet = new Set(CUSTOM_SELECTED_SCOPES.map(i => i.id || i.node_id));
+        const selectedTree = buildSelectedKbTree(realTree, selectedIdSet);
+
+        if (selectedTree.length === 0) {
+          container.innerHTML = `<div style="text-align:center; color:#94a3b8; padding:36px 0; font-size:12.5px;">暂无已选项目<br/><span style="font-size:11.5px; color:#cbd5e1;">请在左侧勾选后点击 &gt; 添加</span></div>`;
+          return;
+        }
+
+        function renderSelectedTreeNodes(nodes, level = 0) {
+          nodes.forEach(node => {
+            const nid = node.node_id || node.id;
+            const hasChildren = node.children && node.children.length > 0;
+            const isExpanded = TRANSFER_RIGHT_EXPANDED.has(nid);
+            const isChecked = TRANSFER_RIGHT_CHECKED.has(nid);
+
+            const arrowIcon = hasChildren ? (isExpanded ? "▼" : "▶") : "";
+            const icon = node.node_type === "kb" ? "📁" : "📂";
+            const docBadge = (node.doc_count !== undefined && node.doc_count !== null && node.doc_count > 0)
+              ? `<span style="font-size:11px; color:#8c8c8c; margin-left:4px;">(${node.doc_count})</span>`
+              : "";
+
+            const nodeDiv = document.createElement("div");
+            nodeDiv.className = "transfer-tree-node";
+            nodeDiv.style.paddingLeft = `${level * 18}px`;
+
+            nodeDiv.innerHTML = `
+              <div class="transfer-right-tree-row">
+                <div style="display:flex; align-items:center; gap:6px; flex:1; min-width:0;">
+                  <span class="transfer-toggle-arrow" onclick="toggleTransferRightNodeExpand('${nid}', event)">${arrowIcon}</span>
+                  <input type="checkbox" id="chk_right_${nid}" ${isChecked ? "checked" : ""} style="cursor:pointer;" onchange="onTransferRightCheck('${nid}', this.checked, event)" />
+                  <span style="font-size:13px; color:#2d3748; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                    ${icon} ${node.name} ${docBadge}
+                  </span>
+                </div>
+                <span class="transfer-remove-btn" onclick="removeTransferItem('${nid}', event)" title="移除此项">×</span>
+              </div>
+            `;
+            container.appendChild(nodeDiv);
+
+            if (hasChildren && isExpanded) {
+              renderSelectedTreeNodes(node.children, level + 1);
+            }
+          });
+        }
+
+        renderSelectedTreeNodes(selectedTree, 0);
       }
     }
 
-    // 单项移除
+    // 单项移除 (支持层级关联：移除父级自动级联子级，移除子级解除祖先全选绑定)
     function removeTransferItem(id, e) {
       if (e) e.stopPropagation();
-      CUSTOM_SELECTED_SCOPES = CUSTOM_SELECTED_SCOPES.filter(x => x.id !== id);
-      TRANSFER_RIGHT_CHECKED.delete(id);
+      const realTree = (Array.isArray(KB_TREE_DATA) && KB_TREE_DATA.length > 0)
+        ? KB_TREE_DATA
+        : DEFAULT_STATIC_TREE;
+
+      const targetNode = findNodeInRealTree(realTree, id);
+      const idsToRemove = new Set([id]);
+      if (targetNode) {
+        getSubtreeNodeIds(targetNode).forEach(cid => idsToRemove.add(cid));
+      }
+      getAncestorNodeIds(realTree, id).forEach(aid => idsToRemove.add(aid));
+
+      CUSTOM_SELECTED_SCOPES = CUSTOM_SELECTED_SCOPES.filter(x => !idsToRemove.has(x.id || x.node_id));
+      idsToRemove.forEach(cid => TRANSFER_RIGHT_CHECKED.delete(cid));
+
       renderTransferRight();
       updateCustomSelectedCount();
     }
@@ -3369,12 +3613,16 @@
       }
     }
 
-    // 穿梭按钮 > (将左侧勾选条目添加到右侧，真实知识库与文档)
+    // 穿梭按钮 > (将左侧勾选条目添加到右侧，自动展开右侧树层级)
     function transferMoveRight() {
       if (TRANSFER_LEFT_CHECKED.size === 0) {
         showToast("请在左侧勾选需要添加的知识库或文档");
         return;
       }
+
+      const realTree = (Array.isArray(KB_TREE_DATA) && KB_TREE_DATA.length > 0)
+        ? KB_TREE_DATA
+        : DEFAULT_STATIC_TREE;
 
       const allItemsMap = new Map();
       function indexRealTree(nodes) {
@@ -3383,32 +3631,43 @@
           const nid = n.node_id || n.id;
           allItemsMap.set(nid, {
             id: nid,
+            node_id: nid,
             name: n.name,
             path: n.path || n.name,
-            type: n.node_type === "kb" ? "kb" : "folder"
+            type: n.node_type === "kb" ? "kb" : "folder",
+            node_type: n.node_type || "folder",
+            doc_count: n.doc_count || 0
           });
           if (n.children && n.children.length > 0) indexRealTree(n.children);
         });
       }
-      indexRealTree(KB_TREE_DATA.length > 0 ? KB_TREE_DATA : DEFAULT_STATIC_TREE);
+      indexRealTree(realTree);
 
       // 索引真实文档
       const docs = (RBAC_STATE.kbDocuments && RBAC_STATE.kbDocuments.length > 0) ? RBAC_STATE.kbDocuments : [];
       docs.forEach(d => {
         const did = d.document_id || d.id;
         const dname = d.document_name || d.name;
-        allItemsMap.set(did, { id: did, name: dname, path: d.kb_type ? `${d.kb_type}/${dname}` : dname, type: "doc" });
+        allItemsMap.set(did, {
+          id: did,
+          node_id: did,
+          name: dname,
+          path: d.kb_type ? `${d.kb_type}/${dname}` : dname,
+          type: "doc",
+          node_type: "doc"
+        });
       });
 
       let addCount = 0;
       TRANSFER_LEFT_CHECKED.forEach(id => {
         const item = allItemsMap.get(id);
-        if (item && !CUSTOM_SELECTED_SCOPES.some(x => x.id === item.id)) {
+        if (item && !CUSTOM_SELECTED_SCOPES.some(x => (x.id || x.node_id) === item.id)) {
           CUSTOM_SELECTED_SCOPES.push(item);
           addCount++;
         }
       });
 
+      initTransferRightExpanded();
       TRANSFER_LEFT_CHECKED.clear();
       renderTransferLeft();
       renderTransferRight();
@@ -3418,14 +3677,27 @@
       }
     }
 
-    // 穿梭按钮 < (将右侧勾选条目移除)
+    // 穿梭按钮 < (将右侧勾选条目移除，支持层级联动批量移除)
     function transferMoveLeft() {
       if (TRANSFER_RIGHT_CHECKED.size === 0) {
         showToast("请在右侧勾选需要移除的条目");
         return;
       }
       const removeCount = TRANSFER_RIGHT_CHECKED.size;
-      CUSTOM_SELECTED_SCOPES = CUSTOM_SELECTED_SCOPES.filter(x => !TRANSFER_RIGHT_CHECKED.has(x.id));
+      const realTree = (Array.isArray(KB_TREE_DATA) && KB_TREE_DATA.length > 0)
+        ? KB_TREE_DATA
+        : DEFAULT_STATIC_TREE;
+
+      const idsToRemove = new Set(TRANSFER_RIGHT_CHECKED);
+      TRANSFER_RIGHT_CHECKED.forEach(id => {
+        const node = findNodeInRealTree(realTree, id);
+        if (node) {
+          getSubtreeNodeIds(node).forEach(cid => idsToRemove.add(cid));
+        }
+        getAncestorNodeIds(realTree, id).forEach(aid => idsToRemove.add(aid));
+      });
+
+      CUSTOM_SELECTED_SCOPES = CUSTOM_SELECTED_SCOPES.filter(x => !idsToRemove.has(x.id || x.node_id));
       TRANSFER_RIGHT_CHECKED.clear();
       renderTransferRight();
       updateCustomSelectedCount();
