@@ -2855,6 +2855,7 @@
 
         await refreshCurrentPermissions();
         await loadAllUsersAndRoles();
+        renderRbacTables();
       } catch (err) {
         console.error("RBAC 初始化异常", err);
       }
@@ -3024,6 +3025,18 @@
         RBAC_STATE.departmentTree = dTreeData.tree || [];
         RBAC_STATE.departments = dListData.departments || [];
 
+        // 容错补偿：如果 allMenus 或 allKbCollections 尚未加载，自动补拉取一次元数据
+        if (!RBAC_STATE.allMenus || RBAC_STATE.allMenus.length === 0 || !RBAC_STATE.allKbCollections || RBAC_STATE.allKbCollections.length === 0) {
+          try {
+            const metaRes = await fetch("/rbac/meta");
+            const meta = await metaRes.json();
+            RBAC_STATE.allMenus = meta.menus || [];
+            RBAC_STATE.allKbCollections = meta.kb_collections || [];
+          } catch (e) {
+            console.error("补偿加载RBAC元数据异常", e);
+          }
+        }
+
         const sel = document.getElementById("userSimulateSelect");
         if (sel) {
           sel.innerHTML = "";
@@ -3052,6 +3065,10 @@
         } else {
           renderUsersTable();
         }
+      } else if (tabName === "roles") {
+        renderRoleMenuMatrix();
+      } else if (tabName === "kbs") {
+        renderKbMatrix();
       }
     }
 
@@ -3577,6 +3594,209 @@
           renderDepartmentTreeUI();
         } else {
           showToast(d.detail || "删除失败");
+        }
+      } catch (e) {
+        showToast("请求失败");
+      }
+    }
+
+    // ========================================================
+    // 子 Tab 3: 角色与菜单权限配置矩阵渲染与交互
+    // ========================================================
+    function renderRoleMenuMatrix() {
+      const thead = document.getElementById("roleMenuMatrixThead");
+      const tbody = document.getElementById("roleMenuMatrixTbody");
+      if (!thead || !tbody) return;
+
+      if (!RBAC_STATE.allMenus || RBAC_STATE.allMenus.length === 0 || !RBAC_STATE.roles || RBAC_STATE.roles.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; padding:24px; color:#999;">正在加载角色与权限配置数据...</td></tr>`;
+        return;
+      }
+
+      let thHtml = `<tr><th style="min-width:190px;">角色名称 / 业务职责</th>`;
+      RBAC_STATE.allMenus.forEach(m => {
+        thHtml += `<th style="text-align:center; min-width:96px;">${m.icon} ${m.name}</th>`;
+      });
+      thHtml += `<th style="text-align:center; min-width:80px;">操作</th></tr>`;
+      thead.innerHTML = thHtml;
+
+      tbody.innerHTML = "";
+      RBAC_STATE.roles.forEach(r => {
+        const isAdm = r.role_id === "admin";
+        const roleTypeBadge = r.is_system ?
+          `<span class="org-badge" style="background:#f0f5ff; color:#2f54eb; margin-left:6px; font-size:11px;">系统内置</span>` :
+          `<span class="org-badge" style="background:#f6ffed; color:#52c41a; margin-left:6px; font-size:11px;">自定义</span>`;
+
+        let trHtml = `
+          <tr>
+            <td>
+              <div style="font-weight:600; color:var(--text-main); display:flex; align-items:center;">
+                ${r.role_name} ${roleTypeBadge}
+              </div>
+              <div style="font-size:11.5px; color:#888; margin-top:2px;"><code>${r.role_id}</code> · ${r.description || '-'}</div>
+            </td>
+        `;
+
+        RBAC_STATE.allMenus.forEach(m => {
+          const checked = isAdm || (r.menus && (r.menus.includes("*") || r.menus.includes(m.id)));
+          trHtml += `
+            <td style="text-align:center;">
+              <input type="checkbox"
+                ${checked ? 'checked' : ''}
+                ${isAdm ? 'disabled title="超级管理员默认拥有通配全权 (*)"' : ''}
+                style="cursor:${isAdm ? 'not-allowed' : 'pointer'}; transform:scale(1.15);"
+                onchange="toggleRoleMenu('${r.role_id}', '${m.id}', this.checked)" />
+            </td>
+          `;
+        });
+
+        trHtml += `
+          <td style="text-align:center;">
+            ${!r.is_system && r.role_id !== 'admin' ?
+              `<span class="table-action-link danger" style="color:#f5222d; cursor:pointer;" onclick="deleteRole('${r.role_id}')">删除</span>` :
+              '<span style="color:#ccc; font-size:12px;">系统内置</span>'}
+          </td>
+        </tr>`;
+        tbody.innerHTML += trHtml;
+      });
+    }
+
+    async function toggleRoleMenu(roleId, menuId, isChecked) {
+      const role = RBAC_STATE.roles.find(r => r.role_id === roleId);
+      if (!role) return;
+      let menus = role.menus || [];
+      if (isChecked) {
+        if (!menus.includes(menuId)) menus.push(menuId);
+      } else {
+        menus = menus.filter(m => m !== menuId && m !== "*");
+      }
+      role.menus = menus;
+      const ok = await saveRoleToServer(role);
+      if (ok) {
+        showToast(`已更新角色 [${role.role_name}] 菜单权限`);
+        refreshCurrentPermissions();
+      }
+    }
+
+    // ========================================================
+    // 子 Tab 4: 知识库维护授权矩阵渲染与交互
+    // ========================================================
+    function renderKbMatrix() {
+      const thead = document.getElementById("kbMatrixThead");
+      const tbody = document.getElementById("kbMatrixTbody");
+      if (!thead || !tbody) return;
+
+      if (!RBAC_STATE.allKbCollections || RBAC_STATE.allKbCollections.length === 0 || !RBAC_STATE.roles || RBAC_STATE.roles.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:24px; color:#999;">正在加载知识库授权矩阵数据...</td></tr>`;
+        return;
+      }
+
+      let thHtml = `<tr><th style="min-width:220px;">角色名称 / 业务职责</th>`;
+      RBAC_STATE.allKbCollections.forEach(kb => {
+        thHtml += `
+          <th style="text-align:center; min-width:180px;">
+            <div style="font-size:13px; font-weight:600;">📚 ${kb.name}</div>
+            <div style="font-size:11px; color:#888; font-weight:normal;"><code>${kb.id}</code> · 写入/导入/维护</div>
+          </th>
+        `;
+      });
+      thHtml += `</tr>`;
+      thead.innerHTML = thHtml;
+
+      tbody.innerHTML = "";
+      RBAC_STATE.roles.forEach(r => {
+        const isAdm = r.role_id === "admin";
+        let trHtml = `
+          <tr>
+            <td>
+              <div style="font-weight:600; color:var(--text-main);">
+                ${r.role_name} <span class="role-badge ${isAdm ? 'admin' : 'user'}" style="font-size:11px; padding:1px 6px;">${r.role_id}</span>
+              </div>
+              <div style="font-size:11.5px; color:#888; margin-top:2px;">${r.description || '-'}</div>
+            </td>
+        `;
+
+        RBAC_STATE.allKbCollections.forEach(kb => {
+          const hasPerm = isAdm || (r.kb_permissions && (r.kb_permissions.includes("*") || r.kb_permissions.includes(kb.id)));
+          trHtml += `
+            <td style="text-align:center;">
+              <input type="checkbox" class="kb-perm-chk"
+                data-role="${r.role_id}"
+                data-kb="${kb.id}"
+                ${hasPerm ? 'checked' : ''}
+                ${isAdm ? 'disabled title="管理员默认具备全库维护权限 (*)"' : ''}
+                style="cursor:${isAdm ? 'not-allowed' : 'pointer'}; transform:scale(1.2);" />
+            </td>
+          `;
+        });
+
+        trHtml += `</tr>`;
+        tbody.innerHTML += trHtml;
+      });
+    }
+
+    async function saveKbMatrix() {
+      const chks = document.querySelectorAll(".kb-perm-chk");
+      const rolePermMap = {};
+      chks.forEach(c => {
+        const rid = c.dataset.role;
+        const kbid = c.dataset.kb;
+        if (!rolePermMap[rid]) rolePermMap[rid] = [];
+        if (c.checked) rolePermMap[rid].push(kbid);
+      });
+
+      let allSuccess = true;
+      for (const r of RBAC_STATE.roles) {
+        if (r.role_id === "admin") continue;
+        r.kb_permissions = rolePermMap[r.role_id] || [];
+        const ok = await saveRoleToServer(r);
+        if (!ok) allSuccess = false;
+      }
+      if (allSuccess) {
+        showToast("🎉 知识库维护授权矩阵已保存生效！");
+        await refreshCurrentPermissions();
+        renderKbMatrix();
+      }
+    }
+
+    async function saveRoleToServer(roleObj) {
+      try {
+        const res = await fetch("/rbac/roles", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-User-Role": "admin" },
+          body: JSON.stringify(roleObj)
+        });
+        const d = await res.json();
+        if (d.status === "ok") {
+          return true;
+        } else {
+          showToast(`保存角色失败: ${d.detail || '未知错误'}`);
+          return false;
+        }
+      } catch (e) {
+        showToast("网络请求异常");
+        return false;
+      }
+    }
+
+    async function deleteRole(roleId) {
+      const role = RBAC_STATE.roles.find(r => r.role_id === roleId);
+      const name = role ? role.role_name : roleId;
+      if (!confirm(`确认删除自定义角色「${name}」(${roleId}) 吗？`)) return;
+
+      try {
+        const res = await fetch(`/rbac/roles/${roleId}`, {
+          method: "DELETE",
+          headers: { "X-User-Role": "admin" }
+        });
+        const d = await res.json();
+        if (d.status === "ok") {
+          showToast(`角色「${name}」已删除`);
+          await loadAllUsersAndRoles();
+          renderRoleMenuMatrix();
+          renderKbMatrix();
+        } else {
+          showToast(`⚠️ ${d.detail || '删除失败'}`);
         }
       } catch (e) {
         showToast("请求失败");
