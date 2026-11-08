@@ -939,15 +939,33 @@ class KnowledgeBaseStore:
         from app.mysql_store import mysql_store
         mysql_store.execute("DELETE FROM law_documents WHERE doc_id = ?", (doc_id,))
         mysql_store.execute("DELETE FROM law_chunks WHERE doc_id = ?", (doc_id,))
-        # 级联清理角色权限表中的已删知识库记录
-        try:
-            from app.rbac import rbac_manager
-            rbac_manager.cleanup_kb_permissions_for_deleted_kb(node_id)
-        except Exception:
-            pass
-
         self.version_counter += 1
         return True
+
+    def get_document_chunks(self, doc_id: str) -> Dict[str, Any]:
+        """获取指定法规文档的元数据与全量切片分段列表。"""
+        from app.mysql_store import mysql_store
+        clean_id = (doc_id or "").strip()
+        doc = mysql_store.query_one("SELECT * FROM law_documents WHERE doc_id = ?", (clean_id,))
+        if not doc:
+            return {"status": "not_found", "message": f"未找到文档 {clean_id}", "chunks": []}
+
+        chunks = mysql_store.query(
+            """
+            SELECT chunk_id, doc_id, law_name, chapter_path, article, paragraph, content,
+                   chunk_type, parent_chunk_id, hierarchy, effective_date, effective_to, validity, created_at
+            FROM law_chunks
+            WHERE doc_id = ?
+            ORDER BY chunk_id ASC
+            """,
+            (clean_id,),
+        )
+        return {
+            "status": "ok",
+            "document": doc,
+            "total_chunks": len(chunks),
+            "chunks": chunks,
+        }
 
     def record_article_revision(
         self,

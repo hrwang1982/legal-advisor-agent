@@ -823,6 +823,14 @@ if _HAS_FASTAPI:
         invalidate_cache()
         return {"status": "ok", "message": f"文档 {doc_id} 已成功删除"}
 
+    @app.get("/kb/documents/{doc_id}/chunks")
+    def get_document_chunks_api(doc_id: str):
+        """获取指定法规文档的条文切片与分段内容详情"""
+        res = kb_store.get_document_chunks(doc_id)
+        if res.get("status") == "not_found":
+            raise HTTPException(status_code=404, detail=res.get("message", "文档不存在"))
+        return res
+
     class GraphBuildReq(BaseModel):
         law_name: str
         article: Optional[str] = "第1条"

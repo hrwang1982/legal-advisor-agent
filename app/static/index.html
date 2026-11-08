@@ -2323,6 +2323,44 @@
     </section>
   </main>
 
+  <!-- ======================== 文档条文分段与切片预览模态框 ======================== -->
+  <div class="modal-overlay" id="docChunksModal">
+    <div class="modal-box" style="max-width: 960px; width: 92%; max-height: 88vh; display: flex; flex-direction: column;">
+      <div class="modal-header" style="padding: 16px 24px; border-bottom: 1px solid var(--border-light); display: flex; justify-content: space-between; align-items: center; background: #fafbfc;">
+        <div>
+          <div class="modal-title" style="font-size: 16px; font-weight: 700; color: var(--text-title);" id="chunksModalDocTitle">
+            条文分段与切片详情
+          </div>
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;" id="chunksModalMetaBar">
+            所属知识库: - | 分段数: - | 切分模式: -
+          </div>
+        </div>
+        <div class="modal-close" onclick="closeDocChunksModal()" style="font-size: 20px; cursor: pointer; color: var(--text-muted); line-height: 1;">✕</div>
+      </div>
+
+      <!-- 搜索过滤条 -->
+      <div style="padding: 10px 24px; background: #ffffff; border-bottom: 1px solid var(--border-light); display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+        <div class="flex-row" style="flex: 1;">
+          <input type="text" class="filter-input" id="chunksFilterInput" placeholder="在当前文档分段中搜索条号、正文关键词..." style="width: 280px;" oninput="filterRenderDocChunks()" />
+          <span style="font-size: 12px; color: var(--text-muted); margin-left: 8px;" id="chunksFilterCount">共 0 个分段</span>
+        </div>
+        <div class="flex-row">
+          <button class="btn-reset" style="padding: 4px 12px; font-size: 12px;" onclick="document.getElementById('chunksFilterInput').value=''; filterRenderDocChunks();">清空筛选</button>
+        </div>
+      </div>
+
+      <!-- 分段切片内容展示区域 -->
+      <div class="modal-body" id="chunksListContainer" style="flex: 1; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 14px; background: #f8f9fa;">
+        <!-- 动态渲染切片卡片 -->
+      </div>
+
+      <div class="modal-footer" style="padding: 12px 24px; border-top: 1px solid var(--border-light); display: flex; justify-content: space-between; align-items: center; background: #fafbfc;">
+        <span style="font-size: 12px; color: var(--text-muted);">⚡ 分段切片已完成 BGE-M3 向量化与全文索引，支持大模型精准检索召回</span>
+        <button class="btn-reset" onclick="closeDocChunksModal()">关闭</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ======================== 用户编辑/新增模态框 ======================== -->
   <div class="modal-overlay" id="userModal">
     <div class="modal-box">
@@ -5750,8 +5788,189 @@
       } catch(e) { showToast("删除请求失败"); }
     }
 
-    function previewDocChunks(docId, title) {
-      showToast(`正在打开《${title}》的条文切片视图...`);
+    // ========================================================
+    // 知识库文档分段切片查看器 (条文分段预览与切片详情)
+    // ========================================================
+    let CURRENT_DOC_CHUNKS_DATA = null;
+
+    async function previewDocChunks(docId, title) {
+      const modal = document.getElementById("docChunksModal");
+      if (!modal) return;
+      modal.classList.add("open");
+
+      document.getElementById("chunksModalDocTitle").textContent = `《${title || '文档'}》— 条文分段切片列表`;
+      document.getElementById("chunksModalMetaBar").textContent = "正在读取切片数据...";
+      document.getElementById("chunksFilterInput").value = "";
+      
+      const container = document.getElementById("chunksListContainer");
+      container.innerHTML = `<div style="text-align:center; padding:50px; color:var(--text-muted); font-size:13px;">⏳ 正在拉取条文分段切片内容...</div>`;
+
+      try {
+        const res = await fetch(`/kb/documents/${docId}/chunks`);
+        if (!res.ok) {
+          throw new Error(`获取切片失败 (状态码: ${res.status})`);
+        }
+        const data = await res.json();
+        CURRENT_DOC_CHUNKS_DATA = data;
+        renderDocChunksView(data);
+      } catch (err) {
+        container.innerHTML = `<div style="text-align:center; padding:40px; color:#ff4d4f; font-size:13px;">⚠️ 加载分段内容异常: ${err.message}</div>`;
+      }
+    }
+
+    function closeDocChunksModal() {
+      const modal = document.getElementById("docChunksModal");
+      if (modal) modal.classList.remove("open");
+      CURRENT_DOC_CHUNKS_DATA = null;
+    }
+
+    function filterRenderDocChunks() {
+      if (!CURRENT_DOC_CHUNKS_DATA) return;
+      const kw = (document.getElementById("chunksFilterInput").value || "").trim().toLowerCase();
+      renderDocChunksView(CURRENT_DOC_CHUNKS_DATA, kw);
+    }
+
+    function renderDocChunksView(data, filterKeyword = "") {
+      const container = document.getElementById("chunksListContainer");
+      if (!container) return;
+
+      const doc = data.document || {};
+      const chunks = data.chunks || [];
+
+      // 更新顶部元信息
+      const splitModeMap = {
+        "auto": "自动分割 (Token自适应滑窗)",
+        "article": "法条分割 (编章节条款状态机)",
+        "hierarchical": "父子层级切分 (母子块上下文对齐)"
+      };
+      const modeText = splitModeMap[doc.split_mode] || doc.split_mode || "法条分割";
+      document.getElementById("chunksModalMetaBar").textContent = 
+        `所属知识库: ${doc.kb_type || '-'} | 部门: ${doc.department || '-'} | 切分模式: ${modeText} | 总分段数: ${chunks.length} 个`;
+
+      // 过滤切片
+      let filtered = chunks;
+      if (filterKeyword) {
+        filtered = chunks.filter(c => 
+          (c.article && c.article.toLowerCase().includes(filterKeyword)) ||
+          (c.chapter_path && c.chapter_path.toLowerCase().includes(filterKeyword)) ||
+          (c.content && c.content.toLowerCase().includes(filterKeyword)) ||
+          (c.chunk_id && c.chunk_id.toLowerCase().includes(filterKeyword))
+        );
+      }
+
+      const countBadge = document.getElementById("chunksFilterCount");
+      if (countBadge) {
+        countBadge.textContent = filterKeyword 
+          ? `筛选出 ${filtered.length} / ${chunks.length} 个分段` 
+          : `共 ${chunks.length} 个分段切片`;
+      }
+
+      if (filtered.length === 0) {
+        container.innerHTML = `<div style="text-align:center; padding:50px; color:var(--text-muted); font-size:13px;">没有找到匹配的分段切片</div>`;
+        return;
+      }
+
+      container.innerHTML = "";
+      filtered.forEach((c, idx) => {
+        const card = document.createElement("div");
+        card.style.cssText = "background:#ffffff; border:1px solid var(--border-light); border-radius:8px; padding:16px 20px; box-shadow:0 1px 3px rgba(0,0,0,0.02); display:flex; flex-direction:column; gap:10px;";
+
+        // 类型标签与样式
+        let typeBadge = `<span style="background:#e6f7ff; color:#1890ff; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:600;">条款切片</span>`;
+        if (c.chunk_type === "hierarchical_parent") {
+          typeBadge = `<span style="background:#f9f0ff; color:#722ed1; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:600;">父级母块 (Parent)</span>`;
+        } else if (c.chunk_type === "hierarchical_child") {
+          typeBadge = `<span style="background:#f6ffed; color:#52c41a; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:600;">子级细块 (Child)</span>`;
+        } else if (c.chunk_type === "auto") {
+          typeBadge = `<span style="background:#fff7e6; color:#fa8c16; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:600;">语义自适应块</span>`;
+        }
+
+        const artDisplay = c.article ? `<strong style="font-size:13.5px; color:var(--text-title);">${c.article}</strong>` : "";
+        const chapterDisplay = c.chapter_path ? `<span style="color:var(--text-muted); font-size:12px;">📁 ${c.chapter_path}</span>` : "";
+        const charCount = (c.content || "").length;
+
+        // 内容渲染（防止百万超大文本一次性塞入造成卡顿）
+        const isVeryLong = charCount > 3000;
+        const initialText = isVeryLong ? (c.content.slice(0, 1500) + `\n\n...（正文较长，已省略后续 ${charCount - 1500} 字符，请点击下方「展开全文」查看全部）`) : c.content;
+
+        const contentId = `chunk_content_${idx}`;
+        const btnExpandId = `btn_expand_${idx}`;
+
+        card.innerHTML = `
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; border-bottom:1px solid #f0f0f0; padding-bottom:8px;">
+            <div class="flex-row">
+              <span style="font-weight:700; color:var(--primary); font-size:13px; margin-right:4px;">#${idx + 1}</span>
+              ${typeBadge}
+              ${artDisplay}
+              ${chapterDisplay}
+            </div>
+            <div class="flex-row" style="font-size:12px; color:var(--text-muted); gap:12px;">
+              <span>效力: <strong style="color:#52c41a;">${c.validity || '现行有效'}</strong></span>
+              <span>字符数: ${charCount.toLocaleString()} 字</span>
+              <span style="color:#1890ff; background:#e6f7ff; padding:1px 6px; border-radius:3px;">已生成向量</span>
+              <button class="btn-reset" style="padding:2px 8px; font-size:11px;" onclick="copyChunkContent('${c.chunk_id}')">📋 复制</button>
+            </div>
+          </div>
+          <div id="${contentId}" style="white-space:pre-wrap; word-break:break-all; font-size:13px; line-height:1.7; color:#262626; background:#fafafa; padding:12px 14px; border-radius:6px; border:1px solid #eee; max-height:${isVeryLong ? '260px' : '450px'}; overflow-y:auto; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">${escapeHtml(initialText)}</div>
+          ${isVeryLong ? `<div style="text-align:right;"><button class="btn-tool" id="${btnExpandId}" style="font-size:12px; padding:3px 12px;" onclick="toggleExpandChunk('${c.chunk_id}', '${contentId}', '${btnExpandId}')">展开全文 (${charCount.toLocaleString()} 字)</button></div>` : ''}
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    function toggleExpandChunk(chunkId, contentElId, btnElId) {
+      if (!CURRENT_DOC_CHUNKS_DATA) return;
+      const chunk = CURRENT_DOC_CHUNKS_DATA.chunks.find(c => c.chunk_id === chunkId);
+      if (!chunk) return;
+      const contentEl = document.getElementById(contentElId);
+      const btnEl = document.getElementById(btnElId);
+      if (!contentEl || !btnEl) return;
+
+      if (btnEl.getAttribute("data-expanded") === "true") {
+        contentEl.textContent = chunk.content.slice(0, 1500) + `\n\n...（正文较长，已省略后续 ${chunk.content.length - 1500} 字符，请点击下方「展开全文」查看全部）`;
+        contentEl.style.maxHeight = "260px";
+        btnEl.textContent = `展开全文 (${chunk.content.length.toLocaleString()} 字)`;
+        btnEl.removeAttribute("data-expanded");
+      } else {
+        contentEl.textContent = chunk.content;
+        contentEl.style.maxHeight = "600px";
+        btnEl.textContent = "收起内容";
+        btnEl.setAttribute("data-expanded", "true");
+      }
+    }
+
+    function copyChunkContent(chunkId) {
+      if (!CURRENT_DOC_CHUNKS_DATA) return;
+      const chunk = CURRENT_DOC_CHUNKS_DATA.chunks.find(c => c.chunk_id === chunkId);
+      if (!chunk || !chunk.content) {
+        showToast("切片内容为空");
+        return;
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(chunk.content).then(() => {
+          showToast(`已复制分段 [${chunk.article || chunk.chunk_id}] 的全部文本！`);
+        }).catch(() => {
+          fallbackCopyText(chunk.content, chunk.article || chunk.chunk_id);
+        });
+      } else {
+        fallbackCopyText(chunk.content, chunk.article || chunk.chunk_id);
+      }
+    }
+
+    function fallbackCopyText(text, label) {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand("copy");
+        showToast(`已复制分段 [${label}] 的全部文本！`);
+      } catch (e) {
+        showToast("复制失败，请手动选中文本复制");
+      }
+      document.body.removeChild(ta);
     }
 
     function toggleSelectAllDocs(chk) {
