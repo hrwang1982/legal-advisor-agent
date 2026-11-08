@@ -2008,100 +2008,104 @@
     <section class="page-view" id="statsView">
       <div class="page-full-content">
         <!-- 顶部筛选条 -->
-        <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
           <h2 style="font-size:18px; font-weight:700; color:var(--text-title);">数据概览看板</h2>
           <div class="flex-row">
-            <select class="filter-select" style="width:140px;">
-              <option value="">选择部门</option>
-              <option value="总行">总行</option>
-              <option value="广东分行">广东分行</option>
+            <select class="filter-select" id="statsDeptFilter" style="width:180px;" onchange="loadStatsOverview(); loadQaDetails();">
+              <option value="">全部部门</option>
             </select>
-            <input type="date" class="filter-input" style="width:140px;" value="2026-10-01" />
+            <input type="date" class="filter-input" id="statsStartDate" style="width:140px;" onchange="loadStatsOverview(); loadQaDetails();" />
             <span>-</span>
-            <input type="date" class="filter-input" style="width:140px;" value="2026-11-04" />
+            <input type="date" class="filter-input" id="statsEndDate" style="width:140px;" onchange="loadStatsOverview(); loadQaDetails();" />
+            <button class="btn-reset" style="padding:6px 14px; font-size:12px;" onclick="resetStatsFilters()">重置</button>
           </div>
         </div>
 
-        <!-- 12 个核心指标卡片 (4 列铺满整屏) -->
+        <!-- 12 个核心指标卡片 (4 列铺满整屏，100% 数据库真实统计) -->
         <div class="metric-grid-12">
           <div class="metric-card-item">
-            <div class="metric-info-col"><div class="metric-title-text">知识库总量</div><div class="metric-number-text" id="m-kb-total">43</div></div>
+            <div class="metric-info-col"><div class="metric-title-text">知识库总量</div><div class="metric-number-text" id="m-kb-total">-</div></div>
             <div class="metric-icon-badge" style="background:#e6f7ff; color:#1890ff;">📁</div>
           </div>
           <div class="metric-card-item">
-            <div class="metric-info-col"><div class="metric-title-text">外规知识量</div><div class="metric-number-text" id="m-kb-ext">24</div></div>
+            <div class="metric-info-col"><div class="metric-title-text">外规知识量</div><div class="metric-number-text" id="m-kb-ext">-</div></div>
             <div class="metric-icon-badge" style="background:#f9f0ff; color:#722ed1;">🌐</div>
           </div>
           <div class="metric-card-item">
-            <div class="metric-info-col"><div class="metric-title-text">内规知识量</div><div class="metric-number-text" id="m-kb-int">19</div></div>
+            <div class="metric-info-col"><div class="metric-title-text">内规知识量</div><div class="metric-number-text" id="m-kb-int">-</div></div>
             <div class="metric-icon-badge" style="background:#f0f5ff; color:#2f54eb;">📄</div>
           </div>
           <div class="metric-card-item">
-            <div class="metric-info-col"><div class="metric-title-text">自建知识总量</div><div class="metric-number-text" id="m-kb-custom">43</div></div>
+            <div class="metric-info-col"><div class="metric-title-text">自建知识总量</div><div class="metric-number-text" id="m-kb-custom">-</div></div>
             <div class="metric-icon-badge" style="background:#f6ffed; color:#52c41a;">📑</div>
           </div>
           <div class="metric-card-item">
-            <div class="metric-info-col"><div class="metric-title-text">问答总量</div><div class="metric-number-text" id="m-qa-total">957</div></div>
+            <div class="metric-info-col"><div class="metric-title-text">问答总量</div><div class="metric-number-text" id="m-qa-total">-</div></div>
             <div class="metric-icon-badge" style="background:#e6fffb; color:#13c2c2;">💬</div>
           </div>
           <div class="metric-card-item">
-            <div class="metric-info-col"><div class="metric-title-text">建议总量</div><div class="metric-number-text" id="m-suggest-total">5</div></div>
+            <div class="metric-info-col"><div class="metric-title-text">建议总量</div><div class="metric-number-text" id="m-suggest-total">-</div></div>
             <div class="metric-icon-badge" style="background:#fff0f6; color:#eb2f96;">✉️</div>
           </div>
           <div class="metric-card-item">
-            <div class="metric-info-col"><div class="metric-title-text">点赞总量</div><div class="metric-number-text" id="m-like-total">753</div></div>
+            <div class="metric-info-col"><div class="metric-title-text">点赞总量</div><div class="metric-number-text" id="m-like-total">-</div></div>
             <div class="metric-icon-badge" style="background:#f4ffb8; color:#7cb305;">👍</div>
           </div>
           <div class="metric-card-item">
-            <div class="metric-info-col"><div class="metric-title-text">点踩总量</div><div class="metric-number-text" id="m-dislike-total">6</div></div>
+            <div class="metric-info-col"><div class="metric-title-text">点踩总量</div><div class="metric-number-text" id="m-dislike-total">-</div></div>
             <div class="metric-icon-badge" style="background:#fff7e6; color:#fa8c16;">👎</div>
           </div>
           <div class="metric-card-item">
-            <div class="metric-info-col"><div class="metric-title-text">提问总量</div><div class="metric-number-text" id="m-query-total">957</div></div>
+            <div class="metric-info-col"><div class="metric-title-text">提问总量</div><div class="metric-number-text" id="m-query-total">-</div></div>
             <div class="metric-icon-badge" style="background:#e6f7ff; color:#1890ff;">❓</div>
           </div>
           <div class="metric-card-item">
-            <div class="metric-info-col"><div class="metric-title-text">回答总量</div><div class="metric-number-text" id="m-answer-total">957</div></div>
+            <div class="metric-info-col"><div class="metric-title-text">回答总量</div><div class="metric-number-text" id="m-answer-total">-</div></div>
             <div class="metric-icon-badge" style="background:#f6ffed; color:#52c41a;">💭</div>
           </div>
           <div class="metric-card-item">
-            <div class="metric-info-col"><div class="metric-title-text">会话总量</div><div class="metric-number-text" id="m-session-total">548</div></div>
+            <div class="metric-info-col"><div class="metric-title-text">会话总量</div><div class="metric-number-text" id="m-session-total">-</div></div>
             <div class="metric-icon-badge" style="background:#f9f0ff; color:#722ed1;">🗨️</div>
           </div>
           <div class="metric-card-item">
-            <div class="metric-info-col"><div class="metric-title-text">会话总时长</div><div class="metric-number-text" style="font-size:20px; line-height:34px;">2小时53分35秒</div></div>
+            <div class="metric-info-col"><div class="metric-title-text">会话总时长</div><div class="metric-number-text" style="font-size:18px; line-height:34px;" id="m-session-duration">-</div></div>
             <div class="metric-icon-badge" style="background:#fff7e6; color:#fa8c16;">⏳</div>
           </div>
         </div>
 
-        <!-- 问答详情明细表格 (全宽展开) -->
+        <!-- 问答详情明细表格 (全宽展开，100% 真实数据库流水) -->
         <div class="full-width-card">
-          <div class="flex-row" style="justify-content:space-between; margin-bottom:14px;">
-            <h3>问答详情流水明细</h3>
+          <div class="flex-row" style="justify-content:space-between; margin-bottom:14px; flex-wrap:wrap; gap:10px;">
             <div class="flex-row">
-              <input type="text" class="filter-input" style="width:160px;" placeholder="输入用户名" />
-              <input type="text" class="filter-input" style="width:200px;" placeholder="输入问题关键词" />
-              <button class="btn-search">搜索</button>
-              <button class="btn-tool" onclick="showToast('数据已导出为 Excel')">导出表格</button>
+              <h3>问答详情流水明细</h3>
+              <span style="font-size:12px; color:var(--text-muted); margin-left:8px;" id="qaDetailsCountBadge">共 0 条流水</span>
+            </div>
+            <div class="flex-row">
+              <input type="text" class="filter-input" id="qaFilterUser" style="width:150px;" placeholder="输入用户名/姓名" onkeydown="if(event.key==='Enter')loadQaDetails()" />
+              <input type="text" class="filter-input" id="qaFilterKeyword" style="width:190px;" placeholder="输入问题或回答关键词" onkeydown="if(event.key==='Enter')loadQaDetails()" />
+              <button class="btn-search" id="btnSearchQaDetails" onclick="loadQaDetails()">搜索</button>
+              <button class="btn-tool" onclick="exportQaDetailsToCsv()">导出表格 (CSV)</button>
             </div>
           </div>
           <div style="overflow-x:auto;">
             <table class="custom-table">
               <thead>
                 <tr>
-                  <th>时间</th>
-                  <th>用户名</th>
-                  <th>问答范围</th>
-                  <th style="min-width:260px;">问题</th>
-                  <th style="min-width:340px;">回答摘要</th>
-                  <th>复核状态</th>
-                  <th>操作</th>
+                  <th style="width:150px;">时间</th>
+                  <th style="width:150px;">用户 / 部门</th>
+                  <th style="width:85px;">问答范围</th>
+                  <th style="min-width:240px;">问题</th>
+                  <th style="min-width:320px;">回答摘要</th>
+                  <th style="width:85px;">复核状态</th>
+                  <th style="width:80px;">操作</th>
                 </tr>
               </thead>
               <tbody id="qaDetailTableBody"></tbody>
             </table>
           </div>
         </div>
+      </div>
+    </section>
       </div>
     </section>
 
@@ -6372,50 +6376,215 @@
       loadRuleProposals();
     }
 
-    // 数据统计
-    async function loadStatsOverview() {
-      try {
-        const res = await fetch("/stats/overview");
-        const d = await res.json();
-        document.getElementById("m-kb-total").textContent = d.kb_total || 43;
-        document.getElementById("m-kb-ext").textContent = d.kb_external || 24;
-        document.getElementById("m-kb-int").textContent = d.kb_internal || 19;
-        document.getElementById("m-kb-custom").textContent = d.kb_custom || 43;
-        document.getElementById("m-qa-total").textContent = d.qa_total || 957;
-        document.getElementById("m-suggest-total").textContent = d.suggestion_total || 5;
-        document.getElementById("m-like-total").textContent = d.like_total || 753;
-        document.getElementById("m-dislike-total").textContent = d.dislike_total || 6;
-        document.getElementById("m-query-total").textContent = d.query_total || 957;
-        document.getElementById("m-answer-total").textContent = d.answer_total || 957;
-        document.getElementById("m-session-total").textContent = d.session_total || 548;
+    // ========================================================
+    // 数据统计与真实问答流水看板 (100% 数据库真实统计，杜绝伪造假数据)
+    // ========================================================
+    let CURRENT_QA_DETAILS_CACHE = [];
 
-        renderQaDetailTable();
-      } catch (e) {
-        console.error(e);
+    function populateStatsDeptFilter() {
+      const sel = document.getElementById("statsDeptFilter");
+      if (!sel) return;
+      const currentVal = sel.value;
+      sel.innerHTML = `<option value="">全部部门</option>`;
+      if (RBAC_STATE.departments && RBAC_STATE.departments.length > 0) {
+        RBAC_STATE.departments.forEach(d => {
+          const opt = document.createElement("option");
+          opt.value = d.dept_id;
+          const prefix = d.level === 1 ? '🏛️ ' : (d.level === 2 ? '　🏢 ' : '　　📁 ');
+          opt.textContent = `${prefix}${d.dept_name}`;
+          if (d.dept_id === currentVal) opt.selected = true;
+          sel.appendChild(opt);
+        });
       }
     }
 
-    function renderQaDetailTable() {
+    function initStatsDateRange() {
+      const startInput = document.getElementById("statsStartDate");
+      const endInput = document.getElementById("statsEndDate");
+      if (startInput && !startInput.value) {
+        startInput.value = "2026-10-01";
+      }
+      if (endInput && !endInput.value) {
+        endInput.value = new Date().toISOString().slice(0, 10);
+      }
+    }
+
+    function resetStatsFilters() {
+      const sel = document.getElementById("statsDeptFilter");
+      if (sel) sel.value = "";
+      const uInput = document.getElementById("qaFilterUser");
+      if (uInput) uInput.value = "";
+      const kInput = document.getElementById("qaFilterKeyword");
+      if (kInput) kInput.value = "";
+      const startInput = document.getElementById("statsStartDate");
+      const endInput = document.getElementById("statsEndDate");
+      if (startInput) startInput.value = "2026-10-01";
+      if (endInput) endInput.value = new Date().toISOString().slice(0, 10);
+      loadStatsOverview();
+    }
+
+    async function loadStatsOverview() {
+      try {
+        if (!RBAC_STATE.departments || RBAC_STATE.departments.length === 0) {
+          try {
+            const metaRes = await fetch("/rbac/meta");
+            const meta = await metaRes.json();
+            RBAC_STATE.allMenus = meta.menus || [];
+            RBAC_STATE.allKbCollections = meta.kb_collections || [];
+            const dRes = await fetch("/rbac/departments");
+            const dData = await dRes.json();
+            RBAC_STATE.departments = dData.departments || [];
+          } catch (e) {
+            console.error("加载部门元数据异常", e);
+          }
+        }
+        populateStatsDeptFilter();
+        initStatsDateRange();
+
+        const deptId = document.getElementById("statsDeptFilter") ? document.getElementById("statsDeptFilter").value : "";
+        const startDate = document.getElementById("statsStartDate") ? document.getElementById("statsStartDate").value : "";
+        const endDate = document.getElementById("statsEndDate") ? document.getElementById("statsEndDate").value : "";
+
+        const params = new URLSearchParams();
+        if (deptId) params.append("dept_id", deptId);
+        if (startDate) params.append("start_date", startDate);
+        if (endDate) params.append("end_date", endDate);
+
+        const url = "/stats/overview" + (params.toString() ? `?${params.toString()}` : "");
+        const res = await fetch(url);
+        if (!res.ok) {
+          throw new Error(`服务响应异常(状态码 ${res.status})`);
+        }
+        const d = await res.json();
+
+        // 100% 数据库真实数据绑定，杜绝伪造数字回退
+        document.getElementById("m-kb-total").textContent = d.kb_total ?? 0;
+        document.getElementById("m-kb-ext").textContent = d.kb_external ?? 0;
+        document.getElementById("m-kb-int").textContent = d.kb_internal ?? 0;
+        document.getElementById("m-kb-custom").textContent = d.kb_custom ?? 0;
+        document.getElementById("m-qa-total").textContent = d.qa_total ?? 0;
+        document.getElementById("m-suggest-total").textContent = d.suggestion_total ?? 0;
+        document.getElementById("m-like-total").textContent = d.like_total ?? 0;
+        document.getElementById("m-dislike-total").textContent = d.dislike_total ?? 0;
+        document.getElementById("m-query-total").textContent = d.query_total ?? 0;
+        document.getElementById("m-answer-total").textContent = d.answer_total ?? 0;
+        document.getElementById("m-session-total").textContent = d.session_total ?? 0;
+        if (document.getElementById("m-session-duration")) {
+          document.getElementById("m-session-duration").textContent = d.session_duration || "0分0秒";
+        }
+
+        await loadQaDetails();
+      } catch (e) {
+        console.error("加载数据统计概览失败", e);
+        showToast("⚠️ 数据统计概览拉取失败: " + e.message);
+      }
+    }
+
+    async function loadQaDetails() {
       const tbody = document.getElementById("qaDetailTableBody");
-      tbody.innerHTML = "";
-      const defaultRows = [
-        { time: "2026-10-26 18:22:54", user: "Admin", scope: "外规库", query: "基层网点自行印刷的理财产品宣传折页需不需要分行审批？", answer: "《中华人民共和国公司法》第十一条：法定代表人以公司名义从事的民事活动，其法律后果由公司承受……", review: "已复核" },
-        { time: "2026-10-20 12:41:09", user: "李合规", scope: "内规库", query: "请站在合规立场提示法律风险：新旧公司法关于认缴出资期限的衔接要求……", answer: "《公司法》第47条及施行前设立公司的过渡期规定：自2024年7月1日起，出资期限需调整至五年以内……", review: "已复核" },
-        { time: "2026-10-20 12:05:40", user: "赵律师", scope: "外规库", query: "公司对外提供担保未经董事会或者股东会决议，相对人是否构成善意相对人？", answer: "《中华人民共和国公司法》第十五条：公司向其他企业投资或者为他人提供担保，依照公司章程的规定……", review: "已复核" },
-      ];
-      defaultRows.forEach(r => {
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td>${r.time}</td>
-          <td><strong>${r.user}</strong></td>
-          <td><span style="background:#f0f5ff; color:#2f54eb; padding:2px 8px; border-radius:4px; font-size:12px;">${r.scope}</span></td>
-          <td style="max-width:280px; overflow:hidden; text-overflow:ellipsis;" title="${r.query}">${r.query}</td>
-          <td style="max-width:360px; overflow:hidden; text-overflow:ellipsis;" title="${r.answer}">${r.answer}</td>
-          <td><span style="color:#52c41a; font-weight:600;">● ${r.review}</span></td>
-          <td><span style="color:#1890ff; cursor:pointer;" onclick="switchView('auditView', '防篡改审计与规则缺口')">审计追溯</span></td>
-        `;
-        tbody.appendChild(tr);
-      });
+      if (!tbody) return;
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:30px;">⏳ 正在读取真实会话与审计流水...</td></tr>`;
+
+      const deptId = document.getElementById("statsDeptFilter") ? document.getElementById("statsDeptFilter").value : "";
+      const startDate = document.getElementById("statsStartDate") ? document.getElementById("statsStartDate").value : "";
+      const endDate = document.getElementById("statsEndDate") ? document.getElementById("statsEndDate").value : "";
+      const username = document.getElementById("qaFilterUser") ? document.getElementById("qaFilterUser").value.trim() : "";
+      const keyword = document.getElementById("qaFilterKeyword") ? document.getElementById("qaFilterKeyword").value.trim() : "";
+
+      const params = new URLSearchParams();
+      if (deptId) params.append("dept_id", deptId);
+      if (startDate) params.append("start_date", startDate);
+      if (endDate) params.append("end_date", endDate);
+      if (username) params.append("username", username);
+      if (keyword) params.append("keyword", keyword);
+      params.append("limit", "100");
+
+      try {
+        const res = await fetch(`/stats/qa-details?${params.toString()}`);
+        if (!res.ok) {
+          throw new Error(`服务响应异常(状态码 ${res.status})`);
+        }
+        const data = await res.json();
+        const records = data.records || [];
+        CURRENT_QA_DETAILS_CACHE = records;
+
+        const badge = document.getElementById("qaDetailsCountBadge");
+        if (badge) badge.textContent = `共 ${records.length} 条真实流水`;
+
+        if (records.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:32px;">暂无符合筛选条件的真实问答流水</td></tr>`;
+          return;
+        }
+
+        tbody.innerHTML = "";
+        records.forEach(r => {
+          const tr = document.createElement("tr");
+
+          let statusBadge = `<span style="color:#52c41a; font-weight:600;">● ${r.review_status}</span>`;
+          if (r.review_status === "待复核") {
+            statusBadge = `<span style="color:#fa8c16; font-weight:600;">● 待复核</span>`;
+          } else if (r.review_status === "已驳回") {
+            statusBadge = `<span style="color:#f5222d; font-weight:600;">● 已驳回</span>`;
+          }
+
+          let scopeTag = `<span style="background:#f0f5ff; color:#2f54eb; padding:2px 8px; border-radius:4px; font-size:12px;">${r.scope}</span>`;
+          if (r.scope === "内规库") {
+            scopeTag = `<span style="background:#f6ffed; color:#52c41a; padding:2px 8px; border-radius:4px; font-size:12px;">${r.scope}</span>`;
+          }
+
+          tr.innerHTML = `
+            <td style="font-size:12px; color:var(--text-muted);">${r.time}</td>
+            <td>
+              <strong>${r.user_display || r.username}</strong>
+              <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">${r.department || '-'}</div>
+            </td>
+            <td>${scopeTag}</td>
+            <td style="max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:normal; font-size:13px; line-height:1.5;" title="${r.query}">${r.query}</td>
+            <td style="max-width:360px; overflow:hidden; text-overflow:ellipsis; white-space:normal; font-size:12px; line-height:1.5; color:#555;" title="${r.answer_summary}">${r.answer_summary}</td>
+            <td>${statusBadge}</td>
+            <td><span style="color:#1890ff; cursor:pointer; font-size:12px; text-decoration:underline;" onclick="traceAuditLog('${r.thread_id}')">审计追溯</span></td>
+          `;
+          tbody.appendChild(tr);
+        });
+      } catch (err) {
+        console.error("加载问答明细失败", err);
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:#ff4d4f; padding:24px;">加载流水明细异常: ${err.message}</td></tr>`;
+      }
+    }
+
+    function traceAuditLog(threadId) {
+      switchView('auditView', '防篡改审计与规则缺口');
+      showToast(`已定位至审计链条 会话标识 [${threadId ? threadId.slice(0, 8) : '-'}...]`);
+    }
+
+    function exportQaDetailsToCsv() {
+      if (!CURRENT_QA_DETAILS_CACHE || CURRENT_QA_DETAILS_CACHE.length === 0) {
+        showToast("当前无流水数据可供导出");
+        return;
+      }
+      const headers = ["会话ID", "时间", "用户账号", "真实姓名", "所属部门", "问答范围", "咨询问题", "回答摘要", "复核状态"];
+      const rows = CURRENT_QA_DETAILS_CACHE.map(r => [
+        `"${(r.thread_id || '').replace(/"/g, '""')}"`,
+        `"${(r.time || '').replace(/"/g, '""')}"`,
+        `"${(r.username || '').replace(/"/g, '""')}"`,
+        `"${(r.user_display || '').replace(/"/g, '""')}"`,
+        `"${(r.department || '').replace(/"/g, '""')}"`,
+        `"${(r.scope || '').replace(/"/g, '""')}"`,
+        `"${(r.query || '').replace(/"/g, '""')}"`,
+        `"${(r.answer_summary || '').replace(/"/g, '""')}"`,
+        `"${(r.review_status || '').replace(/"/g, '""')}"`
+      ]);
+      const csvContent = "\uFEFF" + [headers.join(","), ...rows.map(e => e.join(","))].join("\r\n");
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const link = document.createElement("a");
+      const url = URL.createObjectURL(blob);
+      const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `AI法盾_真实问答流水明细_${dateStr}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      showToast(`已成功导出 ${CURRENT_QA_DETAILS_CACHE.length} 条真实流水为 CSV 表格！`);
     }
 
     // 审计与缺口

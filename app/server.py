@@ -37,6 +37,7 @@ from app.ingest import invalidate_cache, load_nodes
 from app.kb import kb_store
 from app.knowledge import knowledge_center
 from app.models import BaseModel, Field
+from app.mysql_store import mysql_store
 from app.rbac import ALL_KB_COLLECTIONS, ALL_MENUS, rbac_manager
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -127,8 +128,8 @@ class LLMTestReq(BaseModel):
     llm_api_key: Optional[str] = ""
 
 
-def _snapshot(config, thread_id: str):
-    """读取线程当前状态并同步持久化至 SQLite。"""
+def _snapshot(config, thread_id: str, user_id: Optional[str] = None, kb_scope: Optional[str] = None):
+    """读取线程当前状态并同步持久化至数据库。"""
     st = graph.get_state(config)
     fo = st.values.get("final_output")
     fo_dump = fo.model_dump() if fo else None
@@ -167,6 +168,8 @@ def _snapshot(config, thread_id: str):
             "compliance_info": result["compliance_info"],
             "rule_notes": result["rule_notes"],
             "human_approved": bool(st.values.get("human_approved")),
+            "user": {"username": user_id or "admin"},
+            "kb_scope": kb_scope or "external",
         },
     )
     return result
@@ -204,7 +207,7 @@ def check_kb_manage_permission(user_identifier: Optional[str], collection_id: st
         )
 
 
-def handle_legal_query(req: QueryReq) -> Dict[str, Any]:
+def handle_legal_query(req: QueryReq, user_id: Optional[str] = None) -> Dict[str, Any]:
     tid = req.thread_id or str(uuid.uuid4())
     cfg = {"configurable": {"thread_id": tid}}
     payload: Dict[str, Any] = {"query": req.query, "thread_id": tid}
@@ -234,7 +237,7 @@ def handle_legal_query(req: QueryReq) -> Dict[str, Any]:
         payload["deep_thinking"] = req.deep_thinking
 
     graph.invoke(payload, cfg)
-    snap = _snapshot(cfg, tid)
+    snap = _snapshot(cfg, tid, user_id=user_id, kb_scope=req.kb_scope)
     fo = snap.get("final_output") or {}
     plan = snap.get("rule_plan") or {}
     audit_rec = audit_store.record_audit_event(
@@ -290,8 +293,8 @@ if _HAS_FASTAPI:
         }
 
     @app.post("/legal-query")
-    def legal_query(req: QueryReq):
-        return handle_legal_query(req)
+    def legal_query(req: QueryReq, x_user_id: Optional[str] = Header(None)):
+        return handle_legal_query(req, user_id=x_user_id)
 
     @app.post("/human-review")
     def human_review(req: ReviewReq):
@@ -510,37 +513,40 @@ if _HAS_FASTAPI:
         return {"proposals": proposals}
 
     @app.get("/stats/overview")
-    def get_stats_overview():
-        """获取系统核心运营与知识库数据概览（对应数据统计看板）。"""
-        nodes = load_nodes()
+    def get_stats_overview(
+        dept_id: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ):
+        """获取系统真实运营与知识库数据概览（100% 数据库真实统计，杜绝伪造假数据）。"""
+        data = mysql_store.get_stats_overview(dept_id=dept_id, start_date=start_date, end_date=end_date)
         chain_ok, total_logs, chain_msg = audit_store.verify_hash_chain()
-        logs = audit_store.list_audit_logs(limit=200)
+        logs = audit_store.list_audit_logs(limit=25)
+        data["chain_valid"] = chain_ok
+        data["total_audit_logs"] = total_logs
+        data["verification_message"] = chain_msg
+        data["recent_qa_logs"] = logs
+        return data
 
-        docs_res = list_kb_documents()
-        all_docs = docs_res["documents"]
-        external_count = len([d for d in all_docs if d["category_type"] == "external"])
-        internal_count = len([d for d in all_docs if d["category_type"] == "internal"])
-
-        # 结合真实哈希链日志与业务运行数据
-        base_qa = max(total_logs, 31)
-        return {
-            "kb_total": len(all_docs),
-            "kb_external": external_count or 24,
-            "kb_internal": internal_count or 19,
-            "kb_custom": len(all_docs),
-            "qa_total": 957 + (total_logs - 31 if total_logs > 31 else 0),
-            "suggestion_total": 5,
-            "like_total": 753 + (total_logs - 31 if total_logs > 31 else 0),
-            "dislike_total": 6,
-            "query_total": 957 + (total_logs - 31 if total_logs > 31 else 0),
-            "answer_total": 957 + (total_logs - 31 if total_logs > 31 else 0),
-            "session_total": 548 + (total_logs - 31 if total_logs > 31 else 0),
-            "session_duration": "2小时53分35秒",
-            "chain_valid": chain_ok,
-            "total_audit_logs": total_logs,
-            "verification_message": chain_msg,
-            "recent_qa_logs": logs[:25],
-        }
+    @app.get("/stats/qa-details")
+    def get_qa_details_api(
+        username: Optional[str] = None,
+        keyword: Optional[str] = None,
+        dept_id: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        limit: int = 100,
+    ):
+        """获取真实的问答详情流水明细，支持用户名、问题/答案关键词、部门架构与日期范围检索。"""
+        records = mysql_store.get_qa_details(
+            username=username,
+            keyword=keyword,
+            dept_id=dept_id,
+            start_date=start_date,
+            end_date=end_date,
+            limit=limit,
+        )
+        return {"total": len(records), "records": records}
 
     class AdoptProposalReq(BaseModel):
         reviewer_name: Optional[str] = "执业律师/规则专家"

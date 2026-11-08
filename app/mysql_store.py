@@ -1503,6 +1503,258 @@ class MySQLStore:
             logger.error(f"[MySQLStore] 更新知识库主责部门失败: {e}")
             return False
 
+    def get_stats_overview(
+        self,
+        dept_id: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """获取系统真实运营与知识库数据概览（100% 反映数据库真实记录，无任何伪造基数）。"""
+        import re
+
+        # 1. 顶层知识库总量 (真实树根节点数)
+        kb_res = self.query("SELECT COUNT(*) as c FROM kb_tree_nodes WHERE node_type = 'kb' OR parent_id = ''")
+        kb_total = kb_res[0]["c"] if kb_res else 0
+
+        # 2. 外规与内规知识量 (按真实导入法规库分类统计)
+        ext_res = self.query("SELECT COUNT(*) as c FROM law_documents WHERE kb_type LIKE '%外规%'")
+        kb_ext = ext_res[0]["c"] if ext_res else 0
+
+        int_res = self.query("SELECT COUNT(*) as c FROM law_documents WHERE kb_type LIKE '%内规%'")
+        kb_int = int_res[0]["c"] if int_res else 0
+
+        # 3. 自建知识总量 (全部已导入文档数)
+        custom_res = self.query("SELECT COUNT(*) as c FROM law_documents")
+        kb_custom = custom_res[0]["c"] if custom_res else 0
+
+        # 4. 问答总量 & 提问总量 & 回答总量 (真实提问事件发生轮次)
+        qa_res = self.query("SELECT COUNT(*) as c FROM audit_logs WHERE event_type = 'query_generated'")
+        qa_total = qa_res[0]["c"] if qa_res else 0
+
+        # 5. 建议总量 (大模型知识飞轮沉淀待审与已采纳提案真实总数)
+        prop_res = self.query("SELECT COUNT(*) as c FROM rule_proposals")
+        prop_total = prop_res[0]["c"] if prop_res else 0
+
+        # 6. 点赞总量 (人工复核采纳与审核通过真实总数)
+        like_res = self.query(
+            "SELECT COUNT(*) as c FROM audit_logs WHERE event_type = 'HUMAN_REVIEW_ADOPT' OR decision = 'approved'"
+        )
+        like_total = like_res[0]["c"] if like_res else 0
+
+        # 7. 点踩总量 (人工复核驳回真实总数)
+        dislike_res = self.query("SELECT COUNT(*) as c FROM audit_logs WHERE decision = 'rejected'")
+        dislike_total = dislike_res[0]["c"] if dislike_res else 0
+
+        # 8. 会话总量 (真实持久化咨询会话快照总数)
+        sess_res = self.query("SELECT COUNT(*) as c FROM session_snapshots")
+        sess_total = sess_res[0]["c"] if sess_res else 0
+
+        # 9. 会话总时长 (基于真实各会话发生时间窗口计算连续活动时长)
+        times_rows = self.query("SELECT updated_at FROM session_snapshots ORDER BY updated_at ASC")
+        times = []
+        for r in times_rows:
+            try:
+                t = datetime.fromisoformat(r["updated_at"].replace("Z", "+00:00"))
+                times.append(t)
+            except Exception:
+                pass
+
+        total_seconds = 0
+        if times:
+            curr_start = times[0]
+            curr_end = times[0]
+            for t in times[1:]:
+                if (t - curr_end).total_seconds() < 1800:
+                    curr_end = t
+                else:
+                    total_seconds += max(60, (curr_end - curr_start).total_seconds())
+                    curr_start = t
+                    curr_end = t
+            total_seconds += max(60, (curr_end - curr_start).total_seconds())
+
+        hours = int(total_seconds // 3600)
+        mins = int((total_seconds % 3600) // 60)
+        secs = int(total_seconds % 60)
+        duration_str = f"{hours}小时{mins}分{secs}秒" if hours > 0 else f"{mins}分{secs}秒"
+
+        return {
+            "kb_total": kb_total,
+            "kb_external": kb_ext,
+            "kb_internal": kb_int,
+            "kb_custom": kb_custom,
+            "qa_total": qa_total,
+            "suggestion_total": prop_total,
+            "like_total": like_total,
+            "dislike_total": dislike_total,
+            "query_total": qa_total,
+            "answer_total": qa_total,
+            "session_total": sess_total,
+            "session_duration": duration_str,
+            "session_seconds": total_seconds,
+        }
+
+    def get_qa_details(
+        self,
+        username: Optional[str] = None,
+        keyword: Optional[str] = None,
+        dept_id: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """获取真实的问答详情流水明细，支持用户名、关键词、部门与日期动态过滤检索"""
+        import re
+
+        def _clean_summary(text: str, max_len: int = 140, kw: Optional[str] = None) -> str:
+            if not text:
+                return ""
+            t = re.sub(r"#+\s*", "", text)
+            t = re.sub(r"\*\*([^*]+)\*\*", r"\1", t)
+            t = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", t)
+            t = re.sub(r"[\r\n\t]+", " ", t)
+            t = t.strip()
+            if not t:
+                return ""
+            if kw and kw.lower() in t.lower():
+                idx = t.lower().find(kw.lower())
+                start = max(0, idx - 25)
+                end = min(len(t), idx + max_len - 25)
+                sub = t[start:end]
+                if start > 0:
+                    sub = "..." + sub
+                if end < len(t):
+                    sub = sub + "..."
+                return sub
+            return t[:max_len] + ("..." if len(t) > max_len else "")
+
+        # 载入部门体系与映射
+        depts = self.get_departments()
+        dept_map = {d["dept_id"]: d for d in depts}
+        target_dept_ids = set()
+        if dept_id:
+            target_node = dept_map.get(dept_id)
+            if target_node:
+                t_path = target_node.get("dept_path") or dept_id
+                for d in depts:
+                    p = d.get("dept_path") or d.get("dept_id")
+                    if p == t_path or p.startswith(t_path + "/") or d["dept_id"] == dept_id:
+                        target_dept_ids.add(d["dept_id"])
+            else:
+                target_dept_ids.add(dept_id)
+
+        # 载入用户与所属部门
+        users_rows = self.query("SELECT user_id, username, name, department, dept_id FROM sys_rbac_users")
+        user_by_name = {}
+        for u in users_rows:
+            user_by_name[u["username"]] = u
+            user_by_name[u["name"]] = u
+
+        # 真实读取会话快照与审计日志
+        snapshots = self.query(
+            "SELECT thread_id, updated_at, status, query, state_json FROM session_snapshots ORDER BY updated_at DESC"
+        )
+        audit_rows = self.query(
+            "SELECT thread_id, event_type, decision, reviewer_name, reviewer_role, draft_answer, final_answer, timestamp FROM audit_logs ORDER BY id DESC"
+        )
+        logs_by_thread: Dict[str, List[Dict[str, Any]]] = {}
+        for a in audit_rows:
+            tid = a["thread_id"]
+            if tid not in logs_by_thread:
+                logs_by_thread[tid] = []
+            logs_by_thread[tid].append(a)
+
+        results = []
+        for s in snapshots:
+            tid = s["thread_id"]
+            up_at = s.get("updated_at") or ""
+            date_str = up_at[:10]
+
+            if start_date and date_str < start_date:
+                continue
+            if end_date and date_str > end_date:
+                continue
+
+            st_data = {}
+            if s.get("state_json"):
+                try:
+                    st_data = json.loads(s["state_json"])
+                except Exception:
+                    pass
+
+            fo = st_data.get("final_output") or {}
+            related_logs = logs_by_thread.get(tid, [])
+
+            ans_text = ""
+            if isinstance(fo, dict) and fo.get("answer"):
+                ans_text = fo.get("answer")
+            elif related_logs:
+                ans_text = related_logs[0].get("final_answer") or related_logs[0].get("draft_answer") or ""
+
+            u_info = st_data.get("user") or {}
+            raw_u = u_info.get("username") or (related_logs[0].get("reviewer_name") if related_logs else "") or "admin"
+            matched_user = user_by_name.get(raw_u, {})
+            user_display = matched_user.get("name") or raw_u
+            user_dept_id = matched_user.get("dept_id") or "dept_hq"
+            user_dept_name = matched_user.get("department") or "集团总部"
+
+            if target_dept_ids and user_dept_id not in target_dept_ids:
+                continue
+
+            if username and (username.lower() not in raw_u.lower() and username.lower() not in user_display.lower()):
+                continue
+
+            q_text = s.get("query") or ""
+            if keyword:
+                kw_low = keyword.lower()
+                if kw_low not in q_text.lower() and kw_low not in ans_text.lower():
+                    continue
+
+            raw_scope = st_data.get("kb_scope") or "external"
+            if raw_scope in ("external", "外规", "default_external_laws"):
+                scope_display = "外规库"
+            elif raw_scope in ("internal", "内规", "internal_rules"):
+                scope_display = "内规库"
+            else:
+                scope_display = "全库检索"
+
+            rev_status = s.get("status") or ""
+            has_adopt = any(
+                l.get("event_type") == "HUMAN_REVIEW_ADOPT" or l.get("decision") == "approved"
+                for l in related_logs
+            )
+            if has_adopt or rev_status in ("approved", "COMPLETED", "done"):
+                display_status = "已复核"
+                status_tag = "done"
+            elif rev_status == "needs_review":
+                display_status = "待复核"
+                status_tag = "warn"
+            elif rev_status == "rejected" or any(l.get("decision") == "rejected" for l in related_logs):
+                display_status = "已驳回"
+                status_tag = "err"
+            else:
+                display_status = "已办结"
+                status_tag = "done"
+
+            clean_time = up_at[:19].replace("T", " ") if up_at else "-"
+
+            results.append({
+                "thread_id": tid,
+                "time": clean_time,
+                "username": raw_u,
+                "user_display": f"{user_display} ({raw_u})" if user_display != raw_u else raw_u,
+                "department": user_dept_name,
+                "dept_id": user_dept_id,
+                "scope": scope_display,
+                "query": q_text,
+                "answer_summary": _clean_summary(ans_text, max_len=140, kw=keyword),
+                "review_status": display_status,
+                "status_tag": status_tag,
+            })
+            if len(results) >= limit:
+                break
+
+        return results
+
 
 # 全局单例
 mysql_store = MySQLStore()
