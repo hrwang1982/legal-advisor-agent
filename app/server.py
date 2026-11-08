@@ -596,10 +596,12 @@ if _HAS_FASTAPI:
 
     @app.get("/rbac/meta")
     def rbac_meta():
-        """获取系统全部标准菜单与知识库元数据定义"""
+        """获取系统全部标准菜单与知识库元数据定义（知识库集合动态同源拉取）"""
+        from app.mysql_store import mysql_store
+        dynamic_kbs = mysql_store.get_dynamic_kb_collections()
         return {
             "menus": ALL_MENUS,
-            "kb_collections": ALL_KB_COLLECTIONS,
+            "kb_collections": dynamic_kbs if dynamic_kbs else ALL_KB_COLLECTIONS,
         }
 
     @app.get("/rbac/departments")
@@ -742,10 +744,16 @@ if _HAS_FASTAPI:
         name: str
         parent_id: Optional[str] = ""
         node_type: Optional[str] = "folder"
+        owner_dept_id: Optional[str] = "dept_hq"
+        visibility: Optional[str] = "dept"
         description: Optional[str] = ""
 
     class RenameTreeNodeReq(BaseModel):
         new_name: str
+
+    class UpdateKbDeptReq(BaseModel):
+        owner_dept_id: str
+        visibility: Optional[str] = "dept"
 
     @app.get("/kb/tree")
     def get_kb_tree_api():
@@ -754,17 +762,29 @@ if _HAS_FASTAPI:
 
     @app.post("/kb/tree/node")
     def create_kb_tree_node_api(req: CreateTreeNodeReq):
-        """创建知识库（顶层）或层级子目录"""
+        """创建知识库（顶层）或层级子目录（支持指定主责管理部门）"""
         try:
             node = kb_store.create_kb_tree_node(
                 name=req.name,
                 parent_id=req.parent_id or "",
                 node_type=req.node_type or "folder",
                 description=req.description or "",
+                owner_dept_id=req.owner_dept_id or "dept_hq",
+                visibility=req.visibility or "dept",
             )
             return {"status": "ok", "node": node}
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
+
+    @app.put("/kb/tree/node/{node_id}/dept")
+    def update_kb_dept_api(node_id: str, req: UpdateKbDeptReq, x_user_role: Optional[str] = Header(None)):
+        """更新知识库的主责管理部门与可见性范围"""
+        check_admin_permission(x_user_role)
+        from app.mysql_store import mysql_store
+        ok = mysql_store.update_kb_node_owner_dept(node_id, req.owner_dept_id, req.visibility or "dept")
+        if not ok:
+            raise HTTPException(status_code=400, detail="更新主责部门失败")
+        return {"status": "ok", "message": "知识库主责管理部门已更新"}
 
     @app.put("/kb/tree/node/{node_id}")
     def rename_kb_tree_node_api(node_id: str, req: RenameTreeNodeReq):

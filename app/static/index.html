@@ -2279,13 +2279,35 @@
 
         <!-- 子 Tab 4: 知识库维护授权矩阵 (全宽展开) -->
         <div id="rbacTab-kbs" class="full-width-card" style="display:none;">
-          <div class="flex-row" style="justify-content:space-between; margin-bottom:16px;">
+          <div class="flex-row" style="justify-content:space-between; margin-bottom:14px; flex-wrap:wrap; gap:12px;">
             <div>
               <h3>知识库维护授权矩阵 (KB Permissions)</h3>
-              <div class="card-desc" style="margin-bottom:0;">精确配置哪些角色具备指定知识库集合（外规库、内规库、行业库）的文档导入、切片与维护写入权限。</div>
+              <div class="card-desc" style="margin-bottom:0;">精准配置各角色对不同知识库的文档导入、切片与维护写入权限。知识库列表与「知识库管理」实时同步。</div>
             </div>
-            <button class="btn-search" onclick="saveKbMatrix()">保存知识库授权变更</button>
+            <div class="flex-row">
+              <button class="btn-reset" onclick="refreshKbMatrixData()">🔄 刷新知识库列表</button>
+              <button class="btn-search" onclick="saveKbMatrix()">保存知识库授权变更</button>
+            </div>
           </div>
+
+          <!-- 针对未来知识库较多时的过滤控制栏 -->
+          <div class="flex-row" style="margin-bottom:14px; padding:10px 14px; background:#fafbfc; border:1px solid var(--border-color); border-radius:var(--radius); gap:12px; flex-wrap:wrap;">
+            <div class="flex-row" style="gap:6px;">
+              <span style="font-size:13px; font-weight:600; color:var(--text-main);">🏛️ 主责部门筛选:</span>
+              <select class="filter-input" id="filterKbMatrixDept" style="width:200px; padding:5px 8px; font-size:12.5px;" onchange="renderKbMatrix()">
+                <option value="all">全部主责部门 (全部知识库)</option>
+              </select>
+            </div>
+            <div class="flex-row" style="gap:6px;">
+              <span style="font-size:13px; font-weight:600; color:var(--text-main);">🔍 知识库搜索:</span>
+              <input type="text" class="filter-input" id="searchKbMatrixInput" placeholder="输入知识库名称/标识过滤..." style="width:220px; padding:5px 8px; font-size:12.5px;" oninput="renderKbMatrix()" />
+            </div>
+            <div style="margin-left:auto; display:flex; gap:8px;">
+              <button class="btn-reset" style="padding:4px 10px; font-size:12px;" onclick="batchCheckVisibleKbs(true)">全选当前显示库</button>
+              <button class="btn-reset" style="padding:4px 10px; font-size:12px;" onclick="batchCheckVisibleKbs(false)">清空当前勾选</button>
+            </div>
+          </div>
+
           <div style="overflow-x:auto;">
             <table class="custom-table" id="kbMatrixTable">
               <thead id="kbMatrixThead"></thead>
@@ -2443,7 +2465,14 @@
       <div class="modal-body" style="padding:18px 20px;">
         <div class="form-group" style="margin-bottom:16px;">
           <label class="form-label" style="font-weight:600;"><span style="color:var(--error);">*</span> 知识库名称</label>
-          <input type="text" class="filter-input" id="newKbName" placeholder="例如：内规知识库、外规知识库、合规指引库" />
+          <input type="text" class="filter-input" id="newKbName" placeholder="例如：内规知识库、外规知识库、信贷风控制度库" />
+        </div>
+        <div class="form-group" style="margin-bottom:16px;">
+          <label class="form-label" style="font-weight:600;"><span style="color:var(--error);">*</span> 主责管理部门 (Owner Department)</label>
+          <select class="filter-input" id="newKbOwnerDept">
+            <!-- 动态填充三级组织部门 -->
+          </select>
+          <small style="color:var(--text-sub); display:block; margin-top:4px;">* 说明：主责部门的人员拥有管辖权；其它部门人员维护权限在「用户与权限中心」中统一配置。</small>
         </div>
         <div class="form-group" style="margin-bottom:10px;">
           <label class="form-label">知识库描述</label>
@@ -3679,24 +3708,86 @@
     }
 
     // ========================================================
-    // 子 Tab 4: 知识库维护授权矩阵渲染与交互
+    // 子 Tab 4: 知识库维护授权矩阵渲染与动态主责部门管控
     // ========================================================
+    function populateFilterKbMatrixDeptSelect() {
+      const sel = document.getElementById("filterKbMatrixDept");
+      if (!sel) return;
+      const currentVal = sel.value;
+      sel.innerHTML = `<option value="all">全部主责部门 (全部知识库)</option>`;
+
+      if (RBAC_STATE.departments && RBAC_STATE.departments.length > 0) {
+        RBAC_STATE.departments.forEach(d => {
+          const opt = document.createElement("option");
+          opt.value = d.dept_id;
+          const prefix = d.level === 1 ? '🏛️ ' : (d.level === 2 ? '🏢 ' : '📁 ');
+          opt.textContent = `${prefix}${d.dept_name}`;
+          if (d.dept_id === currentVal) opt.selected = true;
+          sel.appendChild(opt);
+        });
+      }
+    }
+
+    async function refreshKbMatrixData() {
+      try {
+        const metaRes = await fetch("/rbac/meta");
+        const meta = await metaRes.json();
+        RBAC_STATE.allKbCollections = meta.kb_collections || [];
+        showToast("知识库元数据已从知识库管理实时同步更新！");
+        renderKbMatrix();
+      } catch (e) {
+        showToast("刷新知识库元数据失败");
+      }
+    }
+
+    function batchCheckVisibleKbs(isChecked) {
+      const chks = document.querySelectorAll("#kbMatrixTbody .kb-perm-chk:not(:disabled)");
+      chks.forEach(c => {
+        c.checked = isChecked;
+      });
+      showToast(isChecked ? "已勾选当前显示的所有知识库维护权限" : "已清空当前显示的所有勾选");
+    }
+
     function renderKbMatrix() {
       const thead = document.getElementById("kbMatrixThead");
       const tbody = document.getElementById("kbMatrixTbody");
       if (!thead || !tbody) return;
+
+      populateFilterKbMatrixDeptSelect();
 
       if (!RBAC_STATE.allKbCollections || RBAC_STATE.allKbCollections.length === 0 || !RBAC_STATE.roles || RBAC_STATE.roles.length === 0) {
         tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:24px; color:#999;">正在加载知识库授权矩阵数据...</td></tr>`;
         return;
       }
 
-      let thHtml = `<tr><th style="min-width:220px;">角色名称 / 业务职责</th>`;
-      RBAC_STATE.allKbCollections.forEach(kb => {
+      // 提取过滤条件
+      const searchKw = (document.getElementById("searchKbMatrixInput")?.value || "").trim().toLowerCase();
+      const filterDept = document.getElementById("filterKbMatrixDept")?.value || "all";
+
+      const visibleKbs = RBAC_STATE.allKbCollections.filter(kb => {
+        const matchDept = (filterDept === "all") || (kb.owner_dept_id === filterDept);
+        const matchSearch = !searchKw || (kb.name && kb.name.toLowerCase().includes(searchKw)) || (kb.id && kb.id.toLowerCase().includes(searchKw));
+        return matchDept && matchSearch;
+      });
+
+      if (visibleKbs.length === 0) {
+        thead.innerHTML = `<tr><th>角色名称 / 业务职责</th><th style="text-align:center;">暂无匹配知识库</th></tr>`;
+        tbody.innerHTML = `<tr><td colspan="2" style="text-align:center; padding:24px; color:#999;">未找到符合当前主责部门或搜索条件的知识库</td></tr>`;
+        return;
+      }
+
+      let thHtml = `<tr><th style="min-width:210px;">角色名称 / 业务职责</th>`;
+      visibleKbs.forEach(kb => {
+        const ownerName = kb.owner_dept_name || '集团总部';
         thHtml += `
-          <th style="text-align:center; min-width:180px;">
+          <th style="text-align:center; min-width:170px;">
             <div style="font-size:13px; font-weight:600;">📚 ${kb.name}</div>
-            <div style="font-size:11px; color:#888; font-weight:normal;"><code>${kb.id}</code> · 写入/导入/维护</div>
+            <div style="margin-top:2px;">
+              <span class="dept-level-tag dept-level-2" style="font-size:10.5px;" title="主责管理部门">🏛️ ${ownerName}</span>
+            </div>
+            <div style="font-size:11px; color:#888; font-weight:normal; margin-top:2px;">
+              <code>${kb.id}</code> · 维护/导入
+            </div>
           </th>
         `;
       });
@@ -3716,7 +3807,7 @@
             </td>
         `;
 
-        RBAC_STATE.allKbCollections.forEach(kb => {
+        visibleKbs.forEach(kb => {
           const hasPerm = isAdm || (r.kb_permissions && (r.kb_permissions.includes("*") || r.kb_permissions.includes(kb.id)));
           trHtml += `
             <td style="text-align:center;">
@@ -5119,33 +5210,74 @@
       }
     }
 
-    // ----------------- 新增知识库、子目录、重命名、删除 (支持后端与本地自愈双保险) -----------------
+    // ----------------- 新增知识库、子目录、重命名、删除 (支持后端与本地自愈双保险，并与权限矩阵动态同步) -----------------
+    function populateCreateKbOwnerDeptSelect() {
+      const sel = document.getElementById("newKbOwnerDept");
+      if (!sel) return;
+      sel.innerHTML = "";
+      if (RBAC_STATE.departments && RBAC_STATE.departments.length > 0) {
+        RBAC_STATE.departments.forEach(d => {
+          const opt = document.createElement("option");
+          opt.value = d.dept_id;
+          const prefix = d.level === 1 ? '🏛️ ' : (d.level === 2 ? '　🏢 ' : '　　📁 ');
+          opt.textContent = `${prefix}${d.dept_name}`;
+          // 默认选中当前登录模拟用户所在部门
+          const curUser = RBAC_STATE.users.find(u => u.username === RBAC_STATE.currentUser);
+          if (curUser && curUser.dept_id === d.dept_id) opt.selected = true;
+          sel.appendChild(opt);
+        });
+      } else {
+        sel.innerHTML = `<option value="dept_hq">🏛️ 集团总部</option>`;
+      }
+    }
+
     function openCreateKbModal() {
       document.getElementById("newKbName").value = "";
       document.getElementById("newKbDesc").value = "";
+      populateCreateKbOwnerDeptSelect();
       document.getElementById("createKbModal").classList.add("open");
     }
     function closeCreateKbModal() {
       document.getElementById("createKbModal").classList.remove("open");
     }
 
+    async function syncKbToRbacMatrix() {
+      try {
+        const metaRes = await fetch("/rbac/meta");
+        const meta = await metaRes.json();
+        RBAC_STATE.allKbCollections = meta.kb_collections || [];
+        if (typeof renderKbMatrix === "function") {
+          renderKbMatrix();
+        }
+      } catch (e) {
+        console.warn("同步权限矩阵知识库元数据异常", e);
+      }
+    }
+
     async function submitCreateKb() {
       const name = document.getElementById("newKbName").value.trim();
       const desc = document.getElementById("newKbDesc").value.trim();
+      const ownerDeptId = document.getElementById("newKbOwnerDept")?.value || "dept_hq";
       if (!name) { showToast("请输入知识库名称"); return; }
 
       let success = false;
       let newNodeId = "kb_" + Date.now();
 
-      // 1. 尝试调用新版树接口
+      // 1. 调用树接口，携带主责管理部门与可见性
       try {
         let res = await fetch("/kb/tree/node", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: name, node_type: "kb", description: desc })
+          body: JSON.stringify({
+            name: name,
+            node_type: "kb",
+            description: desc,
+            owner_dept_id: ownerDeptId,
+            visibility: "dept"
+          })
         });
         
-        // 2. 如果报 404 (后端服务未重启)，降级尝试老接口 /kb/collections
+        // 2. 如果报 404，降级尝试老接口
         if (res.status === 404) {
           res = await fetch("/kb/collections", {
             method: "POST",
@@ -5166,20 +5298,21 @@
         console.warn("后端接口请求异常，转入本地持久化存储", e);
       }
 
-      // 3. 无论后端接口是否 404，本地状态均无缝挂载与持久化，杜绝报错
+      // 3. 本地状态无缝挂载与持久化
       const customNodes = getCustomLocalNodes();
       const newLocalNode = {
         node_id: newNodeId,
         parent_id: "",
         name: name,
         node_type: "kb",
+        owner_dept_id: ownerDeptId,
+        visibility: "dept",
         description: desc,
         children: [],
         doc_count: 0,
         path: name
       };
 
-      // 检查当前树中是否已存在
       if (!KB_TREE_DATA.some(n => n.name === name)) {
         KB_TREE_DATA.push(newLocalNode);
       }
@@ -5192,8 +5325,11 @@
       renderScopeDropdown();
       selectTreeNode(newNodeId, name, name, "kb");
 
-      showToast(`🎉 成功创建知识库 [${name}]`);
+      showToast(`🎉 成功创建知识库 [${name}]，已同步纳入授权矩阵管控！`);
       closeCreateKbModal();
+
+      // 关键闭环：立即联动刷新权限中心的知识库维护授权矩阵
+      await syncKbToRbacMatrix();
     }
 
     function openCreateFolderModal(parentId, parentPath) {
@@ -5306,6 +5442,7 @@
       showToast("重命名成功！");
       closeRenameNodeModal();
       loadKbDocuments();
+      syncKbToRbacMatrix();
     }
 
     async function deleteTreeNode(nodeId, name) {
@@ -5341,6 +5478,7 @@
       loadKbDocuments("外规知识库");
 
       showToast(`已删除「${name}」`);
+      syncKbToRbacMatrix();
     }
 
     function selectKnowledgeType(t) {

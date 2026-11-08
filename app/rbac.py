@@ -797,6 +797,24 @@ class RBACManager:
         dept_id = user.get("dept_id") or "dept_hq"
         dept_info = self.get_department_by_id(dept_id)
 
+        # 融合组织架构管辖规则 (ABAC):
+        # 若用户具备合规专员或知识库编辑角色，自动将其所属主责部门管辖的知识库纳入维护权限
+        if not is_admin and any(rid in ("compliance_officer", "kb_editor") for rid in user_role_ids):
+            try:
+                from app.mysql_store import mysql_store
+                kbs_dynamic = mysql_store.get_dynamic_kb_collections()
+                user_dept_parts = set((dept_info.get("dept_path") or dept_id).split("/"))
+                for k in kbs_dynamic:
+                    k_dept = k.get("owner_dept_id")
+                    if k_dept:
+                        k_info = self.get_department_by_id(k_dept)
+                        k_dept_parts = set((k_info.get("dept_path") or k_dept).split("/")) if k_info else {k_dept}
+                        # 判定是否在同一管辖链条上（包含直属、父级部室、下属科室）
+                        if k_dept == dept_id or k_dept in user_dept_parts or dept_id in k_dept_parts:
+                            manageable_kbs.add(k["id"])
+            except Exception:
+                pass
+
         return {
             "user": user,
             "department": dept_info or {"dept_id": "dept_hq", "dept_name": user.get("department") or "集团总部", "level": 1},
@@ -804,6 +822,15 @@ class RBACManager:
             "allowed_menus": sorted(list(all_menus)),
             "manageable_kbs": sorted(list(manageable_kbs)),
         }
+
+    def cleanup_kb_permissions_for_deleted_kb(self, deleted_kb_id: str) -> None:
+        """当知识库被删除时，级联清理所有角色中关于该知识库的授权，保持权限干净"""
+        roles = self.get_roles()
+        for r in roles:
+            kbs = r.get("kb_permissions") or []
+            if deleted_kb_id in kbs:
+                r["kb_permissions"] = [k for k in kbs if k != deleted_kb_id]
+                self.save_role(r)
 
     def check_menu_permission(self, identifier: Optional[str], menu_id: str) -> bool:
         """检查用户是否有权访问指定菜单"""

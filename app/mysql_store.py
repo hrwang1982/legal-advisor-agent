@@ -480,7 +480,7 @@ class MySQLStore:
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
                     """
                 )
-                # 20. 知识库目录树节点表
+                # 20. 知识库目录树节点表 (支持主责部门管控与可见性范围)
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS kb_tree_nodes (
@@ -488,12 +488,22 @@ class MySQLStore:
                         parent_id VARCHAR(128) NOT NULL DEFAULT '',
                         name VARCHAR(255) NOT NULL,
                         node_type VARCHAR(64) NOT NULL DEFAULT 'folder',
+                        owner_dept_id VARCHAR(128) DEFAULT 'dept_hq',
+                        visibility VARCHAR(32) DEFAULT 'dept',
                         description TEXT,
                         sort_order INT DEFAULT 0,
                         created_at VARCHAR(64) NOT NULL
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
                     """
                 )
+                try:
+                    cur.execute("ALTER TABLE kb_tree_nodes ADD COLUMN owner_dept_id VARCHAR(128) DEFAULT 'dept_hq'")
+                except Exception:
+                    pass
+                try:
+                    cur.execute("ALTER TABLE kb_tree_nodes ADD COLUMN visibility VARCHAR(32) DEFAULT 'dept'")
+                except Exception:
+                    pass
                 # 21. 会话快照存储表
                 cur.execute(
                     """
@@ -913,12 +923,22 @@ class MySQLStore:
                         parent_id TEXT NOT NULL DEFAULT '',
                         name TEXT NOT NULL,
                         node_type TEXT NOT NULL DEFAULT 'folder',
+                        owner_dept_id TEXT DEFAULT 'dept_hq',
+                        visibility TEXT DEFAULT 'dept',
                         description TEXT DEFAULT '',
                         sort_order INTEGER DEFAULT 0,
                         created_at TEXT NOT NULL
                     )
                     """
                 )
+                try:
+                    cur.execute("ALTER TABLE kb_tree_nodes ADD COLUMN owner_dept_id TEXT DEFAULT 'dept_hq'")
+                except Exception:
+                    pass
+                try:
+                    cur.execute("ALTER TABLE kb_tree_nodes ADD COLUMN visibility TEXT DEFAULT 'dept'")
+                except Exception:
+                    pass
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS session_snapshots (
@@ -1428,6 +1448,59 @@ class MySQLStore:
             return True
         except Exception as e:
             logger.error(f"[MySQLStore] 删除部门失败: {e}")
+            return False
+
+    def get_dynamic_kb_collections(self) -> List[Dict[str, Any]]:
+        """获取所有顶层知识库集合（动态同源，用于权限控制与知识库列表）"""
+        try:
+            rows = self.query(
+                "SELECT node_id, name, description, owner_dept_id, visibility, sort_order, created_at "
+                "FROM kb_tree_nodes WHERE node_type = 'kb' OR parent_id = '' ORDER BY sort_order ASC, created_at ASC"
+            )
+            # 获取每个知识库的文档数统计
+            doc_counts_rows = self.query("SELECT kb_type, COUNT(*) AS cnt FROM law_documents GROUP BY kb_type")
+            doc_counts = {r["kb_type"]: r["cnt"] for r in doc_counts_rows}
+
+            # 获取所有部门的名称字典
+            dept_rows = self.query("SELECT dept_id, dept_name FROM sys_org_departments")
+            dept_name_map = {d["dept_id"]: d["dept_name"] for d in dept_rows}
+
+            res = []
+            for r in rows:
+                nid = r["node_id"]
+                owner_dept = r.get("owner_dept_id") or "dept_hq"
+                # 初始预置库默认归属于法务合规部 (dept_legal)
+                if nid in ("kb_external", "kb_internal", "default_external_laws", "internal_rules") and (not r.get("owner_dept_id") or r.get("owner_dept_id") == "dept_hq"):
+                    owner_dept = "dept_legal"
+
+                dept_name = dept_name_map.get(owner_dept, "集团总部")
+                res.append({
+                    "id": nid,
+                    "name": r["name"],
+                    "description": r.get("description") or f"主责管理部门: {dept_name}",
+                    "owner_dept_id": owner_dept,
+                    "owner_dept_name": dept_name,
+                    "visibility": r.get("visibility") or "dept",
+                    "doc_count": doc_counts.get(nid, 0),
+                })
+            return res
+        except Exception as e:
+            logger.error(f"[MySQLStore] 获取动态知识库集合失败: {e}")
+            return [
+                {"id": "default_external_laws", "name": "外规知识库", "description": "外部国家法律、行政法规与司法解释集合", "owner_dept_id": "dept_legal", "owner_dept_name": "法务合规部", "visibility": "dept", "doc_count": 48},
+                {"id": "internal_rules", "name": "内规知识库", "description": "行内规章制度、合规指引与内部业务规范", "owner_dept_id": "dept_legal", "owner_dept_name": "法务合规部", "visibility": "dept", "doc_count": 0},
+            ]
+
+    def update_kb_node_owner_dept(self, node_id: str, owner_dept_id: str, visibility: str = "dept") -> bool:
+        """更新知识库的主责管理部门与可见性范围"""
+        try:
+            self.execute(
+                "UPDATE kb_tree_nodes SET owner_dept_id = ?, visibility = ? WHERE node_id = ?",
+                (owner_dept_id, visibility, node_id)
+            )
+            return True
+        except Exception as e:
+            logger.error(f"[MySQLStore] 更新知识库主责部门失败: {e}")
             return False
 
 

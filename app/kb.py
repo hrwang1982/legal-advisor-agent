@@ -801,8 +801,10 @@ class KnowledgeBaseStore:
         parent_id: str = "",
         node_type: str = "folder",
         description: str = "",
+        owner_dept_id: str = "dept_hq",
+        visibility: str = "dept",
     ) -> Dict[str, Any]:
-        """创建知识库（parent_id 为空）或层级子目录。"""
+        """创建知识库（parent_id 为空）或层级子目录（支持绑定主责管理部门与可见性）。"""
         import uuid
         from app.mysql_store import mysql_store
         clean_name = (name or "").strip()
@@ -812,16 +814,18 @@ class KnowledgeBaseStore:
         nid = f"kb_{uuid.uuid4().hex[:10]}" if not parent_id else f"folder_{uuid.uuid4().hex[:10]}"
         actual_type = "kb" if not parent_id else node_type
         now_ts = datetime.now(timezone.utc).isoformat()
+        clean_owner_dept = (owner_dept_id or "dept_hq").strip()
+        clean_visibility = (visibility or "dept").strip()
 
         row = mysql_store.query_one("SELECT MAX(sort_order) AS max_sort FROM kb_tree_nodes WHERE parent_id = ?", (parent_id or "",))
         max_sort = (row["max_sort"] if row and row.get("max_sort") is not None else 0) or 0
 
         mysql_store.execute(
             """
-            REPLACE INTO kb_tree_nodes (node_id, parent_id, name, node_type, description, sort_order, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            REPLACE INTO kb_tree_nodes (node_id, parent_id, name, node_type, owner_dept_id, visibility, description, sort_order, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (nid, parent_id or "", clean_name, actual_type, description or "", max_sort + 1, now_ts),
+            (nid, parent_id or "", clean_name, actual_type, clean_owner_dept, clean_visibility, description or "", max_sort + 1, now_ts),
         )
         if actual_type == "kb":
             mysql_store.execute(
@@ -838,6 +842,8 @@ class KnowledgeBaseStore:
             "parent_id": parent_id or "",
             "name": clean_name,
             "node_type": actual_type,
+            "owner_dept_id": clean_owner_dept,
+            "visibility": clean_visibility,
             "path": full_path,
             "description": description or "",
         }
@@ -892,6 +898,13 @@ class KnowledgeBaseStore:
                 mysql_store.execute("DELETE FROM law_documents WHERE doc_id = ?", (did,))
                 mysql_store.execute("DELETE FROM law_chunks WHERE doc_id = ?", (did,))
 
+        # 级联清理角色权限表中的已删知识库记录
+        try:
+            from app.rbac import rbac_manager
+            rbac_manager.cleanup_kb_permissions_for_deleted_kb(node_id)
+        except Exception:
+            pass
+
         self.version_counter += 1
         return True
 
@@ -926,6 +939,13 @@ class KnowledgeBaseStore:
         from app.mysql_store import mysql_store
         mysql_store.execute("DELETE FROM law_documents WHERE doc_id = ?", (doc_id,))
         mysql_store.execute("DELETE FROM law_chunks WHERE doc_id = ?", (doc_id,))
+        # 级联清理角色权限表中的已删知识库记录
+        try:
+            from app.rbac import rbac_manager
+            rbac_manager.cleanup_kb_permissions_for_deleted_kb(node_id)
+        except Exception:
+            pass
+
         self.version_counter += 1
         return True
 
