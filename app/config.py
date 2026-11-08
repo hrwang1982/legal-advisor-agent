@@ -99,6 +99,10 @@ class Settings:
     strict_review_auth: bool = _bool(os.getenv("STRICT_REVIEW_AUTH", "false"), False)
     top_k: int = int(os.getenv("TOP_K", "5"))
 
+    # —— OCR 识别微服务与多模态配置 ——
+    ocr_service_url: str = os.getenv("OCR_SERVICE_URL", "http://ocr:8001/ocr")
+    ocr_provider: str = os.getenv("OCR_PROVIDER", "auto")  # auto / microservice / vision / local
+
     # —— 数据 / 知识配置 / 向量库路径 ——
     data_path: str = os.getenv("DATA_PATH", "app/data/sample_laws.json")
     knowledge_config_path: str = os.getenv(

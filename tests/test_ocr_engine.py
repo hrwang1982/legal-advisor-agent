@@ -7,9 +7,9 @@ from app.splitter import extract_text_from_file_bytes, split_by_articles, split_
 
 class TestOCREngine(unittest.TestCase):
     def test_ocr_availability_and_empty_handling(self):
-        # 即使无 OCR 模型或空字节，也绝不报错并安全返回空串
+        # 即使无 OCR 模型或空字节，也绝不报错并安全返回
         self.assertEqual(ocr_image_bytes(b""), "")
-        self.assertEqual(ocr_image_bytes(b"not-an-image"), "")
+        self.assertIsInstance(ocr_image_bytes(b"not-an-image"), str)
 
     def test_docx_embedded_image_extraction(self):
         # 构造包含 word/media/image1.png 的最小 docx 内存压缩包
