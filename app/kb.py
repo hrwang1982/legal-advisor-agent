@@ -587,12 +587,34 @@ class KnowledgeBaseStore:
         doc_size = "0 KB"
         ext = (filename.rsplit(".", 1)[-1] if "." in filename else "TXT").upper()
 
+        import base64
+
         if content_bytes is not None:
             doc_size = f"{len(content_bytes) / 1024:.1f} KB"
             text = extract_text_from_file_bytes(filename, content_bytes)
         elif raw_text:
-            text = raw_text
-            doc_size = f"{len(raw_text.encode('utf-8')) / 1024:.1f} KB"
+            # 容错：如果 raw_text 实际上是 Base64 DataURL (如 data:application/pdf;base64,...)
+            if raw_text.startswith("data:") and ";base64," in raw_text:
+                try:
+                    b64_data = raw_text.split(";base64,", 1)[1]
+                    b_bytes = base64.b64decode(b64_data)
+                    doc_size = f"{len(b_bytes) / 1024:.1f} KB"
+                    text = extract_text_from_file_bytes(filename, b_bytes)
+                except Exception:
+                    text = raw_text
+                    doc_size = f"{len(raw_text.encode('utf-8')) / 1024:.1f} KB"
+            # 容错：如果是 PDF 文件但传入了未处理的二进制流
+            elif filename.lower().endswith(".pdf") and ("%PDF" in raw_text[:50] or "0 obj" in raw_text[:100]):
+                try:
+                    b_bytes = raw_text.encode("latin1", errors="ignore")
+                    text = extract_text_from_file_bytes(filename, b_bytes)
+                    doc_size = f"{len(b_bytes) / 1024:.1f} KB"
+                except Exception:
+                    text = raw_text
+                    doc_size = f"{len(raw_text.encode('utf-8')) / 1024:.1f} KB"
+            else:
+                text = raw_text
+                doc_size = f"{len(raw_text.encode('utf-8')) / 1024:.1f} KB"
 
         clean_law = (law_name or filename.rsplit(".", 1)[0]).strip().strip("《》")
         doc_id = f"doc_{uuid.uuid4().hex[:12]}"
@@ -960,6 +982,17 @@ class KnowledgeBaseStore:
             """,
             (clean_id,),
         )
+
+        # 按法律条文自然序（第1条 -> 第2条 -> ...）智能排序
+        def _art_sort_key(c):
+            art = c.get("article") or ""
+            m = re.search(r"第\s*(\d+)\s*条", art)
+            num = int(m.group(1)) if m else 999999
+            type_prio = 0 if c.get("chunk_type") == "hierarchical_parent" else 1
+            return (num, type_prio, c.get("chunk_id", ""))
+
+        chunks.sort(key=_art_sort_key)
+
         return {
             "status": "ok",
             "document": doc,

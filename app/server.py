@@ -711,6 +711,7 @@ if _HAS_FASTAPI:
     class AdvancedDocUploadReq(BaseModel):
         filename: str
         raw_text: Optional[str] = ""
+        content_base64: Optional[str] = None
         law_name: Optional[str] = ""
         kb_type: Optional[str] = "外规知识库/法律法规"
         department: Optional[str] = "法律合规部"
@@ -726,10 +727,24 @@ if _HAS_FASTAPI:
     @app.post("/kb/documents/upload-advanced")
     def upload_advanced_document_api(req: AdvancedDocUploadReq):
         """对标「AI法盾」知识库文档两步上传与三模式切分入库接口"""
-        if not req.raw_text and not req.filename:
+        import base64
+
+        if not req.raw_text and not req.filename and not req.content_base64:
             raise HTTPException(status_code=400, detail="请提供文档文本或文件内容")
+
+        content_bytes = None
+        if req.content_base64:
+            try:
+                b64_str = req.content_base64
+                if "," in b64_str:
+                    b64_str = b64_str.split(",", 1)[1]
+                content_bytes = base64.b64decode(b64_str)
+            except Exception as e:
+                pass
+
         res = kb_store.import_advanced_document(
             filename=req.filename,
+            content_bytes=content_bytes,
             raw_text=req.raw_text,
             law_name=req.law_name or req.filename.rsplit(".", 1)[0],
             kb_type=req.kb_type or "外规知识库/法律法规",

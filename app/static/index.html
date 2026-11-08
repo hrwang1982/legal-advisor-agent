@@ -5612,29 +5612,38 @@
       try {
         if (files.length > 0) {
           for (const f of files) {
+            const isBinary = f.name.match(/\.(pdf|docx|doc|xlsx|xls|zip)$/i);
             const reader = new FileReader();
             await new Promise((resolve, reject) => {
               reader.onload = async () => {
                 try {
-                  const textContent = reader.result;
+                  const payload = {
+                    filename: f.name,
+                    kb_type: kbType,
+                    split_mode: splitMode,
+                    validity_option: validityOption,
+                    valid_until: validUntil,
+                    uploader: RBAC_STATE.currentUser || "系统管理员"
+                  };
+                  if (isBinary) {
+                    payload.content_base64 = reader.result;
+                  } else {
+                    payload.raw_text = reader.result;
+                  }
                   const res = await fetch("/kb/documents/upload-advanced", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      filename: f.name,
-                      raw_text: textContent,
-                      kb_type: kbType,
-                      split_mode: splitMode,
-                      validity_option: validityOption,
-                      valid_until: validUntil,
-                      uploader: RBAC_STATE.currentUser || "系统管理员"
-                    })
+                    body: JSON.stringify(payload)
                   });
                   const d = await res.json();
                   resolve(d);
                 } catch(err) { reject(err); }
               };
-              reader.readAsText(f);
+              if (isBinary) {
+                reader.readAsDataURL(f);
+              } else {
+                reader.readAsText(f);
+              }
             });
           }
         } else if (directText) {

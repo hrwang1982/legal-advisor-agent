@@ -34,8 +34,18 @@ def extract_text_from_file_bytes(filename: str, content_bytes: bytes) -> str:
         except Exception:
             return content_bytes.decode("utf-8", errors="ignore")
 
-    # 对 docx 尝试简易提取（PK zip 解压 word/document.xml）
+    # 对 docx 尝试提取（优先使用 python-docx，降级使用 zipfile 解压 word/document.xml）
     if ext == "docx":
+        try:
+            import docx
+
+            doc_obj = docx.Document(io.BytesIO(content_bytes))
+            para_texts = [p.text for p in doc_obj.paragraphs if p.text.strip()]
+            if para_texts:
+                return "\n".join(para_texts)
+        except Exception:
+            pass
+
         try:
             import zipfile
             import xml.etree.ElementTree as ET
@@ -59,21 +69,52 @@ def extract_text_from_file_bytes(filename: str, content_bytes: bytes) -> str:
         except Exception:
             pass
 
-    # 对 PDF 尝试简易提取（若有 pypdf / pymupdf 则用，否则字符过滤）
+    # 对 PDF 尝试标准抽取（优先 pypdf，次选原生流解压，杜绝二进制乱码泄漏）
     if ext == "pdf":
         try:
             import pypdf
 
             reader = pypdf.PdfReader(io.BytesIO(content_bytes))
             pages_txt = [page.extract_text() or "" for page in reader.pages]
-            return "\n".join(pages_txt)
+            full_txt = "\n".join(p.strip() for p in pages_txt if p and p.strip())
+            if full_txt:
+                return full_txt
         except Exception:
             pass
 
-    # 兜底：尝试 UTF-8 解码并清洗控制字符
-    text = content_bytes.decode("utf-8", errors="ignore")
-    text = re.sub(r"[\x00-\x08\x0b-\x0c\x0e-\x1f]", " ", text)
-    return text.strip()
+        # 原生零依赖兜底：利用 zlib 解压缩 PDF 中的 FlateDecode stream 提取纯文本
+        try:
+            import zlib
+            stream_pat = re.compile(b"stream[\r\n]+(.*?)[\r\n]+endstream", re.DOTALL)
+            extracted_lines = []
+            for m in stream_pat.finditer(content_bytes):
+                s_data = m.group(1)
+                try:
+                    dec = zlib.decompress(s_data)
+                except Exception:
+                    try:
+                        dec = zlib.decompress(s_data, -zlib.MAX_WBITS)
+                    except Exception:
+                        continue
+                if dec:
+                    # 匹配括号文本 (text) Tj 或 [ (t1) (t2) ] TJ
+                    for sub in re.findall(rb"\(([^\)]+)\)\s*Tj", dec):
+                        for enc in ("utf-8", "gb18030", "gbk"):
+                            try:
+                                t = sub.decode(enc).strip()
+                                if any("\u4e00" <= ch <= "\u9fff" for ch in t):
+                                    extracted_lines.append(t)
+                                    break
+                            except Exception:
+                                pass
+            if extracted_lines:
+                return "\n".join(extracted_lines)
+        except Exception:
+            pass
+
+        # 保护性防乱码拦截：如果依然包含 PDF 二进制流标识，绝不把原始字节乱码直接作为文本切分
+        if b"%PDF" in content_bytes[:50] or b"0 obj" in content_bytes[:100]:
+            return "【系统提示：该 PDF 文档为纯扫描图片或已加密保护，未能直接抽取到内嵌文字，建议使用 OCR 或上传文字版 PDF/TXT/Word 格式】"
 
 
 # ————————————————————————————————————————————————
