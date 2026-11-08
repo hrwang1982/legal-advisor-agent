@@ -2644,11 +2644,11 @@
             <div class="dropzone-icon">☁️</div>
             <div class="dropzone-text" id="dropzoneMainText">点击上传，或拖动文档到这里</div>
             <div class="dropzone-hint">
-              支持 pdf, doc, docx, ppt, pptx, xls, xlsx, txt, csv, md 格式文档<br />
-              单次可上传100个文档，最多500个文档，单个文档大小50MB
+              支持 pdf, doc, docx, ppt, pptx, xls, xlsx, txt, csv, md 以及 png, jpg 扫描件/图片文档<br />
+              支持轻量级本地 OCR 图文解析与 Word 附图文字抽取，单个文档大小50MB
             </div>
           </div>
-          <input type="file" id="fileUploadInput" style="display:none;" multiple accept=".txt,.md,.pdf,.doc,.docx,.xls,.xlsx,.csv,.json" onchange="handleFileSelected(this)" />
+          <input type="file" id="fileUploadInput" style="display:none;" multiple accept=".txt,.md,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.json,.png,.jpg,.jpeg,.bmp,.webp" onchange="handleFileSelected(this)" />
           <div id="selectedFileList" style="margin-top:8px; font-size:12.5px; color:#52c41a;"></div>
         </div>
 
@@ -5612,7 +5612,7 @@
       try {
         if (files.length > 0) {
           for (const f of files) {
-            const isBinary = f.name.match(/\.(pdf|docx|doc|xlsx|xls|zip)$/i);
+            const isBinary = f.name.match(/\.(pdf|docx|doc|xlsx|xls|ppt|pptx|png|jpg|jpeg|bmp|webp|zip)$/i);
             const reader = new FileReader();
             await new Promise((resolve, reject) => {
               reader.onload = async () => {

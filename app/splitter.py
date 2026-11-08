@@ -34,42 +34,181 @@ def extract_text_from_file_bytes(filename: str, content_bytes: bytes) -> str:
         except Exception:
             return content_bytes.decode("utf-8", errors="ignore")
 
+    # 对图片格式执行 OCR 识别抽取
+    if ext in ("png", "jpg", "jpeg", "bmp", "webp", "tif", "tiff"):
+        try:
+            from app.ocr_engine import is_ocr_available, ocr_image_bytes
+
+            if is_ocr_available():
+                txt = ocr_image_bytes(content_bytes)
+                if txt.strip():
+                    return txt.strip()
+                return "【系统提示：该图片已由本地 OCR 引擎扫描，但画面中未识别到清晰中文文字】"
+            return "【系统提示：检测到图片文档，当前环境未就绪 OCR 模块，请配置或安装本地 OCR 引擎】"
+        except Exception:
+            return "【系统提示：图片 OCR 解析异常，请检查图片完整性】"
+
     # 对 docx 尝试提取（优先使用 python-docx，降级使用 zipfile 解压 word/document.xml）
     if ext == "docx":
+        para_texts: List[str] = []
         try:
             import docx
 
             doc_obj = docx.Document(io.BytesIO(content_bytes))
             para_texts = [p.text for p in doc_obj.paragraphs if p.text.strip()]
-            if para_texts:
-                return "\n".join(para_texts)
+            # 同时也提取表格中的文字
+            for tbl in doc_obj.tables:
+                for row in tbl.rows:
+                    row_txt = " | ".join(cell.text.strip() for cell in row.cells if cell.text.strip())
+                    if row_txt:
+                        para_texts.append(row_txt)
         except Exception:
             pass
 
+        if not para_texts:
+            try:
+                import zipfile
+                import xml.etree.ElementTree as ET
+
+                with zipfile.ZipFile(io.BytesIO(content_bytes)) as docx_zip:
+                    xml_raw = docx_zip.read("word/document.xml")
+                    try:
+                        tree = ET.fromstring(xml_raw)
+                        paragraphs = []
+                        current_p = []
+                        for elem in tree.iter():
+                            if elem.tag.endswith("t"):
+                                current_p.append(elem.text or "")
+                            elif elem.tag.endswith("p"):
+                                if current_p:
+                                    paragraphs.append("".join(current_p))
+                                    current_p = []
+                        if current_p:
+                            paragraphs.append("".join(current_p))
+                        para_texts = paragraphs
+                    except Exception:
+                        # 命名空间容错正则提取
+                        xml_str = xml_raw.decode("utf-8", errors="ignore")
+                        t_matches = re.findall(r"<[^:>]*:?t[^>]*>(.*?)</[^:>]*:?t>", xml_str)
+                        if t_matches:
+                            para_texts = ["".join(t_matches)]
+            except Exception:
+                pass
+
+        # 检查并调用 OCR 解析 DOCX 中内嵌的插图（word/media/）
+        try:
+            from app.ocr_engine import is_ocr_available, ocr_docx_embedded_images
+
+            if is_ocr_available():
+                img_results = ocr_docx_embedded_images(content_bytes)
+                if img_results:
+                    para_texts.append("\n【文档内嵌插图文字识别（OCR）】")
+                    for img_name, img_txt in img_results:
+                        para_texts.append(f"▶ 附图 [{img_name}]:\n{img_txt}")
+        except Exception:
+            pass
+
+        if para_texts:
+            return "\n".join(para_texts)
+
+    # 对 PPTX 尝试原生零依赖提取（幻灯片文本解析）
+    if ext == "pptx":
         try:
             import zipfile
             import xml.etree.ElementTree as ET
 
-            with zipfile.ZipFile(io.BytesIO(content_bytes)) as docx_zip:
-                xml_content = docx_zip.read("word/document.xml")
-                tree = ET.fromstring(xml_content)
-                text_nodes = tree.iter()
-                paragraphs = []
-                current_p = []
-                for elem in text_nodes:
-                    if elem.tag.endswith("t"):
-                        current_p.append(elem.text or "")
-                    elif elem.tag.endswith("p"):
-                        if current_p:
-                            paragraphs.append("".join(current_p))
-                            current_p = []
-                if current_p:
-                    paragraphs.append("".join(current_p))
-                return "\n".join(paragraphs)
+            with zipfile.ZipFile(io.BytesIO(content_bytes)) as ppt_zip:
+                slide_files = sorted(
+                    [f for f in ppt_zip.namelist() if f.startswith("ppt/slides/slide") and f.endswith(".xml")]
+                )
+                slides_text = []
+                for s_idx, sf in enumerate(slide_files, 1):
+                    tree = ET.fromstring(ppt_zip.read(sf))
+                    slide_paras = []
+                    for elem in tree.iter():
+                        if elem.tag.endswith("}p"):
+                            texts = [t.text for t in elem.iter() if t.tag.endswith("}t") and t.text]
+                            if texts:
+                                slide_paras.append("".join(texts))
+                    if slide_paras:
+                        slides_text.append(f"【幻灯片第 {s_idx} 页】\n" + "\n".join(slide_paras))
+                if slides_text:
+                    return "\n\n".join(slides_text)
         except Exception:
             pass
 
-    # 对 PDF 尝试标准抽取（优先 pypdf，次选原生流解压，杜绝二进制乱码泄漏）
+    # 对 XLSX 尝试原生零依赖提取（共享字符串池与各工作表解析）
+    if ext == "xlsx":
+        try:
+            import zipfile
+            import xml.etree.ElementTree as ET
+
+            with zipfile.ZipFile(io.BytesIO(content_bytes)) as xlsx_zip:
+                shared_strings = []
+                if "xl/sharedStrings.xml" in xlsx_zip.namelist():
+                    tree = ET.fromstring(xlsx_zip.read("xl/sharedStrings.xml"))
+                    for si in tree.iter("{http://schemas.openxmlformats.org/spreadsheetml/2006/main}si"):
+                        t_nodes = [t.text for t in si.iter("{http://schemas.openxmlformats.org/spreadsheetml/2006/main}t") if t.text]
+                        shared_strings.append("".join(t_nodes))
+
+                sheet_files = sorted(
+                    [f for f in xlsx_zip.namelist() if f.startswith("xl/worksheets/sheet") and f.endswith(".xml")]
+                )
+                sheets_text = []
+                for s_idx, sf in enumerate(sheet_files, 1):
+                    stree = ET.fromstring(xlsx_zip.read(sf))
+                    rows = []
+                    for row in stree.iter("{http://schemas.openxmlformats.org/spreadsheetml/2006/main}row"):
+                        cells = []
+                        for c in row.iter("{http://schemas.openxmlformats.org/spreadsheetml/2006/main}c"):
+                            t_attr = c.attrib.get("t", "")
+                            v = c.find("{http://schemas.openxmlformats.org/spreadsheetml/2006/main}v")
+                            if v is not None and v.text:
+                                if t_attr == "s" and v.text.isdigit():
+                                    idx = int(v.text)
+                                    cells.append(shared_strings[idx] if idx < len(shared_strings) else "")
+                                else:
+                                    cells.append(v.text)
+                        if any(cells):
+                            rows.append(" | ".join(cells))
+                    if rows:
+                        sheets_text.append(f"【工作表 {s_idx}】\n" + "\n".join(rows))
+                if sheets_text:
+                    return "\n\n".join(sheets_text)
+        except Exception:
+            pass
+
+    # 对早期二进制格式 doc / xls / ppt 提供中文特征安全抽取与防乱码兜底
+    if ext in ("doc", "xls", "ppt"):
+        try:
+            # 扫描 OLE 二进制流中的 UTF-16LE 连续中文字符串
+            raw_data = content_bytes
+            extracted_paras: List[str] = []
+            cur_run: List[str] = []
+            for i in range(0, len(raw_data) - 1, 2):
+                ch_bytes = raw_data[i : i + 2]
+                try:
+                    c = ch_bytes.decode("utf-16le")
+                    if "\u4e00" <= c <= "\u9fff" or c in "，。！？；：“”‘’（）《》、\n\r":
+                        cur_run.append(c)
+                    else:
+                        if len(cur_run) >= 6:
+                            p_str = "".join(cur_run).strip()
+                            if p_str:
+                                extracted_paras.append(p_str)
+                        cur_run = []
+                except Exception:
+                    cur_run = []
+            if len(cur_run) >= 6:
+                extracted_paras.append("".join(cur_run).strip())
+
+            if extracted_paras and sum(len(p) for p in extracted_paras) >= 30:
+                return "\n".join(extracted_paras)
+        except Exception:
+            pass
+        return f"【系统提示：检测到该文件为旧版 Office 二进制格式（.{ext}），未能直接解析到结构化文字。为保障最佳检索效果与条文分段质量，建议使用 Office/WPS 另存为 .{ext}x 现代格式后重新上传】"
+
+    # 对 PDF 尝试标准抽取（优先 pypdf，次选原生流解压，遇纯扫描件自动启动本地 OCR 识别）
     if ext == "pdf":
         try:
             import pypdf
@@ -77,8 +216,20 @@ def extract_text_from_file_bytes(filename: str, content_bytes: bytes) -> str:
             reader = pypdf.PdfReader(io.BytesIO(content_bytes))
             pages_txt = [page.extract_text() or "" for page in reader.pages]
             full_txt = "\n".join(p.strip() for p in pages_txt if p and p.strip())
-            if full_txt:
+            # 如果提取到的原生文字足够多（>= 30 个字符），判定为文字版 PDF 直接返回
+            if full_txt and len(full_txt.strip()) >= 30:
                 return full_txt
+        except Exception:
+            pass
+
+        # 扫描件识别：若字符极少或为空，自动调用轻量级本地 OCR 管道提取各页位图
+        try:
+            from app.ocr_engine import is_ocr_available, ocr_pdf_pages
+
+            if is_ocr_available():
+                ocr_txt = ocr_pdf_pages(content_bytes)
+                if ocr_txt.strip():
+                    return ocr_txt.strip()
         except Exception:
             pass
 
