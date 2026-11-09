@@ -37,16 +37,15 @@ def extract_text_from_file_bytes(filename: str, content_bytes: bytes) -> str:
     # 对图片格式执行 OCR 识别抽取
     if ext in ("png", "jpg", "jpeg", "bmp", "webp", "tif", "tiff"):
         try:
-            from app.ocr_engine import is_ocr_available, ocr_image_bytes
+            from app.ocr_engine import ocr_image_bytes
 
-            if is_ocr_available():
-                txt = ocr_image_bytes(content_bytes)
-                if txt.strip():
-                    return txt.strip()
-                return "【系统提示：该图片已由本地 OCR 引擎扫描，但画面中未识别到清晰中文文字】"
-            return "【系统提示：检测到图片文档，当前环境未就绪 OCR 模块，请配置或安装本地 OCR 引擎】"
-        except Exception:
-            return "【系统提示：图片 OCR 解析异常，请检查图片完整性】"
+            # 始终走多级 OCR 管道（独立容器 → 视觉大模型 → 进程内 RapidOCR → 带原因的提示）
+            txt = ocr_image_bytes(content_bytes)
+            if txt.strip():
+                return txt.strip()
+            return "【系统提示：该图片已由 OCR 引擎扫描，但画面中未识别到清晰文字】"
+        except Exception as e:
+            return f"【系统提示：图片 OCR 解析异常：{e}】"
 
     # 对 docx 尝试提取（优先使用 python-docx，降级使用 zipfile 解压 word/document.xml）
     if ext == "docx":

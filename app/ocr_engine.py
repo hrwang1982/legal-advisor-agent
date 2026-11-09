@@ -59,11 +59,19 @@ def is_remote_ocr_online(timeout: float = 1.0) -> bool:
     return False
 
 
-def call_remote_ocr_service(img_bytes: bytes, timeout: float = 8.0) -> Optional[str]:
-    """通过微服务网络调用独立 OCR 容器 (http://ocr:8001/ocr)。"""
-    ocr_urls = [os.getenv("OCR_SERVICE_URL", "http://ocr:8001/ocr")]
-    if "ocr:8001" in ocr_urls[0]:
-        ocr_urls.append("http://localhost:8001/ocr")
+_LAST_REMOTE_OCR_ERROR: Optional[str] = None
+
+
+def call_remote_ocr_service(img_bytes: bytes, timeout: float = 90.0) -> Optional[str]:
+    """通过微服务网络调用独立 OCR 容器 (http://ocr:8001/ocr)。
+    CPU 推理大图可能需要数秒~数十秒，超时放宽到 90s；失败原因记录到 _LAST_REMOTE_OCR_ERROR 供提示使用。
+    """
+    global _LAST_REMOTE_OCR_ERROR
+    _LAST_REMOTE_OCR_ERROR = None
+    ocr_urls = [os.getenv("OCR_SERVICE_URL", "") or "http://ocr:8001/ocr"]
+    for extra in ("http://legal-advisor-ocr:8001/ocr", "http://localhost:8001/ocr"):
+        if extra not in ocr_urls:
+            ocr_urls.append(extra)
 
     b64_str = base64.b64encode(img_bytes).decode("ascii")
     payload = json.dumps({"image_base64": b64_str, "min_confidence": 0.4}).encode("utf-8")
@@ -77,13 +85,24 @@ def call_remote_ocr_service(img_bytes: bytes, timeout: float = 8.0) -> Optional[
                 method="POST",
             )
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                if resp.status == 200:
-                    data = json.loads(resp.read().decode("utf-8"))
-                    if data.get("status") == "ok" and data.get("text"):
-                        logger.info(f"✅ 独立 OCR 容器识别成功: 耗时 {data.get('elapse_ms')}ms")
-                        return str(data["text"]).strip()
+                data = json.loads(resp.read().decode("utf-8"))
+                if data.get("status") == "ok":
+                    logger.info(f"✅ 独立 OCR 容器识别完成: 耗时 {data.get('elapse_ms')}ms, 行数 {data.get('lines_count')}")
+                    text = str(data.get("text") or "").strip()
+                    if text:
+                        return text
+                    _LAST_REMOTE_OCR_ERROR = "OCR 容器已完成识别，但图片中未检测到清晰文字"
+                    return None
+                # 容器可达但引擎报错：记录真实原因并停止尝试其他地址
+                _LAST_REMOTE_OCR_ERROR = f"OCR 容器返回错误：{data.get('message')}"
+                logger.warning(_LAST_REMOTE_OCR_ERROR)
+                return None
+        except urllib.error.URLError as e:
+            _LAST_REMOTE_OCR_ERROR = f"无法连接 OCR 容器（{target_url}）：{getattr(e, 'reason', e)}"
+            logger.debug(_LAST_REMOTE_OCR_ERROR)
         except Exception as e:
-            logger.debug(f"调用 OCR 微服务 {target_url} 异常: {e}")
+            _LAST_REMOTE_OCR_ERROR = f"调用 OCR 容器异常（{target_url}）：{e}"
+            logger.debug(_LAST_REMOTE_OCR_ERROR)
     return None
 
 
@@ -192,11 +211,15 @@ def ocr_image_bytes(img_bytes: bytes, min_confidence: float = 0.5) -> str:
         except Exception as e:
             logger.warning(f"Local RapidOCR processing error: {e}")
 
-    # 通路 4：未识别或未就绪时的引导
+    # 通路 4：未识别或未就绪时的引导（带上真实失败原因，便于定位）
+    reason = _LAST_REMOTE_OCR_ERROR or "OCR 容器不可用"
+    if "未检测到清晰文字" in reason:
+        return "【系统提示：OCR 已完成识别，但该图片中未检测到清晰文字，请上传更清晰的图片或扫描件】"
     return (
-        "【系统提示：当前独立 OCR 容器服务尚未启动或仍在加载。】\n"
-        "推荐部署方式：在终端执行 `docker compose up -d ocr` 启动专用的 legal-advisor-ocr 容器，"
-        "或在【模型配置】中配置通义千问 / OpenAI 兼容多模态 API Key，即可实现证书印章、扫描件 PDF 与图片的秒级高精自动识别。"
+        f"【系统提示：图片 OCR 识别未成功。原因：{reason}】\n"
+        "处理建议：执行 `docker compose up -d --build ocr` 重建并启动 legal-advisor-ocr 容器，"
+        "并确认 `curl http://localhost:8001/health` 返回 engine_ready=true；"
+        "或在【模型配置】中配置多模态大模型 API Key 作为备选识别通道。"
     )
 
 
