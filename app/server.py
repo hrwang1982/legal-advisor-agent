@@ -437,10 +437,12 @@ if _HAS_FASTAPI:
     # 外置知识与规则配置中心接口（免改代码热更新知识与规则）
     # ————————————————————————————————————————————————
     @app.get("/config/knowledge")
-    def get_knowledge_config():
+    def get_knowledge_config(reload: bool = False):
+        if reload:
+            knowledge_center.reload()
         return {
             "config_path": getattr(knowledge_center, "config_path", "mysql:kb_knowledge_configs"),
-            "knowledge": knowledge_center.get_all(),
+            "knowledge": knowledge_center.get_all(reload=reload),
         }
 
     @app.post("/config/knowledge")

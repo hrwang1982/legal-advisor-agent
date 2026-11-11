@@ -181,7 +181,8 @@ class MySQLStore:
                         diff_note TEXT,
                         updated_at VARCHAR(64) NOT NULL,
                         INDEX idx_succ_old (old_law, old_article),
-                        INDEX idx_succ_new (new_law, new_article)
+                        INDEX idx_succ_new (new_law, new_article),
+                        UNIQUE KEY uk_succ_law_art (old_law, old_article, new_law, new_article)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
                     """
                 )
@@ -240,7 +241,8 @@ class MySQLStore:
                         id INT AUTO_INCREMENT PRIMARY KEY,
                         pattern VARCHAR(255) NOT NULL,
                         replacement VARCHAR(255) NOT NULL,
-                        updated_at VARCHAR(64) NOT NULL
+                        updated_at VARCHAR(64) NOT NULL,
+                        UNIQUE KEY uk_cert_pattern (pattern)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
                     """
                 )
@@ -639,7 +641,8 @@ class MySQLStore:
                         new_article TEXT NOT NULL,
                         switch_date TEXT NOT NULL,
                         diff_note TEXT,
-                        updated_at TEXT NOT NULL
+                        updated_at TEXT NOT NULL,
+                        UNIQUE(old_law, old_article, new_law, new_article)
                     )
                     """
                 )
@@ -691,7 +694,7 @@ class MySQLStore:
                     """
                     CREATE TABLE IF NOT EXISTS kb_certainty_patterns (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        pattern TEXT NOT NULL,
+                        pattern TEXT NOT NULL UNIQUE,
                         replacement TEXT NOT NULL,
                         updated_at TEXT NOT NULL
                     )
@@ -1009,6 +1012,27 @@ class MySQLStore:
                     )
                     """
                 )
+
+            # 补齐关键表的唯一索引，彻底杜绝无约束表导致的膨胀
+            if self.is_mysql:
+                try:
+                    cur.execute("ALTER TABLE kb_article_successions ADD UNIQUE INDEX uk_succ_law_art (old_law(128), old_article(32), new_law(128), new_article(32))")
+                except Exception:
+                    pass
+                try:
+                    cur.execute("ALTER TABLE kb_certainty_patterns ADD UNIQUE INDEX uk_cert_pattern (pattern(191))")
+                except Exception:
+                    pass
+            else:
+                try:
+                    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_succ_law_art ON kb_article_successions (old_law, old_article, new_law, new_article)")
+                except Exception:
+                    pass
+                try:
+                    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_cert_pattern ON kb_certainty_patterns (pattern)")
+                except Exception:
+                    pass
+
             conn.commit()
             return True
         except Exception as e:
@@ -1180,19 +1204,45 @@ class MySQLStore:
     # 4. 新旧法对照表 (kb_article_successions) 维护接口
     # ————————————————————————————————————————————————
     def get_article_successions(self) -> List[Dict[str, Any]]:
-        return self.query("SELECT old_law, old_article, new_law, new_article, switch_date, diff_note FROM kb_article_successions")
+        rows = self.query("SELECT old_law, old_article, new_law, new_article, switch_date, diff_note FROM kb_article_successions")
+        seen = set()
+        clean_rows: List[Dict[str, Any]] = []
+        for r in rows:
+            o_law = (r.get("old_law") or "").strip()
+            o_art = (r.get("old_article") or "").strip()
+            n_law = (r.get("new_law") or "").strip()
+            n_art = (r.get("new_article") or "").strip()
+            if not o_law or not o_art or not n_law or not n_art:
+                continue
+            key = (o_law, o_art, n_law, n_art)
+            if key in seen:
+                continue
+            seen.add(key)
+            clean_rows.append(r)
+        return clean_rows
 
     def save_article_successions(self, succ_list: List[Dict[str, Any]]) -> bool:
         now_ts = datetime.now(timezone.utc).isoformat()
         try:
             self.execute("DELETE FROM kb_article_successions")
+            seen = set()
             for s in succ_list:
+                o_law = (s.get("old_law") or "").strip()
+                o_art = (s.get("old_article") or "").strip()
+                n_law = (s.get("new_law") or "").strip()
+                n_art = (s.get("new_article") or "").strip()
+                if not o_law or not o_art or not n_law or not n_art:
+                    continue
+                key = (o_law, o_art, n_law, n_art)
+                if key in seen:
+                    continue
+                seen.add(key)
                 self.execute(
                     """
                     INSERT INTO kb_article_successions (old_law, old_article, new_law, new_article, switch_date, diff_note, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (s.get("old_law", ""), s.get("old_article", ""), s.get("new_law", ""), s.get("new_article", ""), s.get("switch_date", ""), s.get("diff_note", ""), now_ts),
+                    (o_law, o_art, n_law, n_art, s.get("switch_date", ""), s.get("diff_note", ""), now_ts),
                 )
             return True
         except Exception as e:
@@ -1262,6 +1312,42 @@ class MySQLStore:
             return True
         except Exception as e:
             logger.error(f"[MySQLStore] 保存法规别名表失败: {e}")
+            return False
+
+    # ————————————————————————————————————————————————
+    # 7.1 官方立法新旧法对照表 (kb_new_old_counterparts) 专属维护接口
+    # ————————————————————————————————————————————————
+    def get_new_old_counterparts(self) -> List[Dict[str, Any]]:
+        """获取官方立法新旧法条文对照表清单。"""
+        return self.query("SELECT current_law, current_article, old_law, old_article, relation, switch_date, diff_note, authority FROM kb_new_old_counterparts")
+
+    def save_new_old_counterparts(self, counterparts: List[Dict[str, Any]]) -> bool:
+        """全量保存官方立法新旧法对照表并严格先清空旧数据，防止底层数据膨胀。"""
+        now_ts = datetime.now(timezone.utc).isoformat()
+        try:
+            self.execute("DELETE FROM kb_new_old_counterparts")
+            seen = set()
+            for cp in counterparts:
+                c_law = (cp.get("current_law") or "").strip()
+                c_art = (cp.get("current_article") or "").strip()
+                o_law = (cp.get("old_law") or "").strip()
+                o_art = (cp.get("old_article") or "").strip()
+                if not c_law or not c_art or not o_law or not o_art:
+                    continue
+                k = (c_law, c_art, o_law, o_art)
+                if k in seen:
+                    continue
+                seen.add(k)
+                self.execute(
+                    """
+                    INSERT INTO kb_new_old_counterparts (current_law, current_article, old_law, old_article, relation, switch_date, diff_note, authority, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (c_law, c_art, o_law, o_art, cp.get("relation", "one_to_one"), cp.get("switch_date", ""), cp.get("diff_note", ""), cp.get("authority", ""), now_ts),
+                )
+            return True
+        except Exception as e:
+            logger.error(f"[MySQLStore] 保存新旧法对照表失败: {e}")
             return False
 
     # ————————————————————————————————————————————————
@@ -1355,20 +1441,18 @@ class MySQLStore:
                         (ct, json.dumps(rules, ensure_ascii=False), now_ts),
                     )
             if "certainty_patterns" in data:
+                self.execute("DELETE FROM kb_certainty_patterns")
+                seen_pat = set()
                 for pat, rep in data["certainty_patterns"]:
+                    if pat in seen_pat:
+                        continue
+                    seen_pat.add(pat)
                     self.execute(
                         "INSERT INTO kb_certainty_patterns (pattern, replacement, updated_at) VALUES (?, ?, ?)",
                         (pat, rep, now_ts),
                     )
             if "new_old_counterparts" in data:
-                for cp in data["new_old_counterparts"]:
-                    self.execute(
-                        """
-                        INSERT INTO kb_new_old_counterparts (current_law, current_article, old_law, old_article, relation, switch_date, diff_note, authority, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (cp.get("current_law", ""), cp.get("current_article", ""), cp.get("old_law", ""), cp.get("old_article", ""), cp.get("relation", "one_to_one"), cp.get("switch_date", ""), cp.get("diff_note", ""), cp.get("authority", ""), now_ts),
-                    )
+                self.save_new_old_counterparts(data["new_old_counterparts"])
             if "allowed_procedural_meta_citations" in data:
                 for item in data["allowed_procedural_meta_citations"]:
                     if isinstance(item, (list, tuple)) and len(item) >= 2:

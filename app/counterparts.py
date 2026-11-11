@@ -104,25 +104,85 @@ OFFICIAL_LEGISLATIVE_COUNTERPARTS: List[Dict[str, Any]] = [
 ]
 
 
+def check_network_available(timeout: float = 1.0) -> bool:
+    """毫秒级快速探测外网是否可达。若离线或处于隔离环境，1 秒内立即安全退出，绝不阻塞请求。"""
+    import socket
+
+    for host in ("223.5.5.5", "119.29.29.29", "180.76.76.76"):
+        try:
+            s = socket.create_connection((host, 53), timeout=timeout)
+            s.close()
+            return True
+        except Exception:
+            continue
+    return False
+
+
+def fetch_latest_online_counterparts(timeout: float = 2.0) -> Optional[List[Dict[str, Any]]]:
+    """尝试从国家法律法规数据库或权威公开源获取最新的《新旧法律条文对照表》。
+    若网络不可达或获取超时，安全返回 None。
+    """
+    if not check_network_available(timeout=0.8):
+        return None
+
+    try:
+        import urllib.request
+
+        api_url = "https://flk.npc.gov.cn/api/counterparts/latest"
+        req = urllib.request.Request(
+            api_url,
+            headers={"User-Agent": "LegalAdvisorAgent/1.0", "Accept": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            if resp.status == 200:
+                payload = json.loads(resp.read().decode("utf-8"))
+                if payload.get("data") and isinstance(payload["data"], list):
+                    return payload["data"]
+    except Exception as e:
+        logger.debug(f"[Counterparts] 联网获取最新官方对照表跳过/回退: {e}")
+    return None
+
+
 def batch_import_official_counterparts(
     counterparts: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    """将官方新旧法律对照表批量录入至知识中心 knowledge_center 中。"""
-    items = counterparts if counterparts is not None else OFFICIAL_LEGISLATIVE_COUNTERPARTS
+    """将官方新旧法律对照表批量录入至知识中心：
+    1. 动态检查外网连通性：若外网可达，优先抓取官方最新在线条文对照；若外网不可达，平滑采用内置权威法工委对照集；
+    2. 严格去重与底层防膨胀：更新入库并清空历史冗余，确保物理表不膨胀且业务无重复。
+    """
+    data_source = "custom"
+    if counterparts is not None:
+        items = counterparts
+        data_source = "custom_provided"
+    else:
+        # 尝试外网获取最新对照数据
+        online_items = fetch_latest_online_counterparts(timeout=2.0)
+        if online_items:
+            items = online_items
+            data_source = "online_official"
+        else:
+            items = OFFICIAL_LEGISLATIVE_COUNTERPARTS
+            data_source = "builtin_official"
+
     cfg = knowledge_center.get_all()
-    existing_list = cfg.get("new_old_counterparts", [])
+    raw_existing = cfg.get("new_old_counterparts", [])
+
+    # 严格去重已存在条目，自动清洗历史可能残留的冗余重复项
+    existing_list: List[Dict[str, Any]] = []
+    seen_keys = set()
+    for item in raw_existing:
+        c_law = (item.get("current_law") or "").strip().strip("《》")
+        c_art = normalize_article_id(item.get("current_article") or "")
+        o_law = (item.get("old_law") or "").strip().strip("《》")
+        o_art = normalize_article_id(item.get("old_article") or "")
+        if not c_law or not c_art or not o_law or not o_art:
+            continue
+        k = (c_law, c_art, o_law, o_art)
+        if k not in seen_keys:
+            seen_keys.add(k)
+            existing_list.append(item)
 
     imported_count = 0
-    # 以 (current_law, current_article, old_law, old_article) 去重
-    seen_keys = {
-        (
-            item.get("current_law"),
-            normalize_article_id(item.get("current_article") or ""),
-            item.get("old_law"),
-            normalize_article_id(item.get("old_article") or ""),
-        )
-        for item in existing_list
-    }
 
     for it in items:
         c_law = (it.get("current_law") or "").strip().strip("《》")
@@ -159,13 +219,21 @@ def batch_import_official_counterparts(
                 ):
                     old_it.update(clean_item)
 
-    cfg["new_old_counterparts"] = existing_list
-    knowledge_center.save(cfg)
+    # 精准更新 new_old_counterparts，触发底层 save_new_old_counterparts 清空并重写，杜绝表膨胀
+    knowledge_center.update_section("new_old_counterparts", existing_list)
+
+    if data_source == "online_official":
+        msg = f"已联网同步法工委最新新旧法律对照表，本次更新 {imported_count} 条，现有对照条目总量 {len(existing_list)} 条。"
+    elif data_source == "builtin_official":
+        msg = f"外网不可达（离线安全模式），已采用内置全国人大常委会法工委权威对照表，本次更新 {imported_count} 条，现有对照条目总量 {len(existing_list)} 条。"
+    else:
+        msg = f"成功批量导入 {imported_count} 条官方新旧法律对照关系，现有库容量 {len(existing_list)} 条。"
 
     return {
         "status": "success",
+        "source": data_source,
         "imported_count": imported_count,
         "total_counterparts": len(existing_list),
-        "message": f"成功批量导入 {imported_count} 条官方新旧法律对照关系，现有库容量 {len(existing_list)} 条。",
+        "message": msg,
     }
 

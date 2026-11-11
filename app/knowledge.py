@@ -59,8 +59,42 @@ class KnowledgeCenter:
             pass
         return self._data
 
-    def get_all(self) -> Dict[str, Any]:
-        return dict(self._ensure_loaded())
+    def get_all(self, reload: bool = False) -> Dict[str, Any]:
+        if reload:
+            self.reload()
+        data = dict(self._ensure_loaded())
+
+        # 确保关键模块在返回前端视图时始终经过严格去重过滤
+        if "article_succession_list" in data and isinstance(data["article_succession_list"], list):
+            seen_succ = set()
+            clean_succs = []
+            for s in data["article_succession_list"]:
+                k = (
+                    str(s.get("old_law", "")).strip(),
+                    str(s.get("old_article", "")).strip(),
+                    str(s.get("new_law", "")).strip(),
+                    str(s.get("new_article", "")).strip(),
+                )
+                if not k[0] or not k[1] or not k[2] or not k[3] or k in seen_succ:
+                    continue
+                seen_succ.add(k)
+                clean_succs.append(s)
+            data["article_succession_list"] = clean_succs
+            self._data["article_succession_list"] = clean_succs
+
+        if "certainty_patterns" in data and isinstance(data["certainty_patterns"], list):
+            seen_pat = set()
+            clean_pats = []
+            for p in data["certainty_patterns"]:
+                pat_str = str(p[0]) if isinstance(p, (list, tuple)) and len(p) >= 1 else ""
+                if not pat_str or pat_str in seen_pat:
+                    continue
+                seen_pat.add(pat_str)
+                clean_pats.append(p)
+            data["certainty_patterns"] = clean_pats
+            self._data["certainty_patterns"] = clean_pats
+
+        return data
 
     def update_section(self, section: str, value: Any) -> Dict[str, Any]:
         """按模块局部更新配置并持久化（精准更新对应模块表，毫秒级响应并即时生效）。"""
@@ -76,13 +110,24 @@ class KnowledgeCenter:
             elif section == "cross_reference_graph" and isinstance(value, list):
                 mysql_store.save_cross_references(value)
             elif section == "article_succession_list" and isinstance(value, list):
-                mysql_store.save_article_successions(value)
+                seen = set()
+                clean_succs = []
+                for s in value:
+                    k = (str(s.get("old_law", "")).strip(), str(s.get("old_article", "")).strip(), str(s.get("new_law", "")).strip(), str(s.get("new_article", "")).strip())
+                    if not k[0] or not k[1] or not k[2] or not k[3] or k in seen:
+                        continue
+                    seen.add(k)
+                    clean_succs.append(s)
+                data[section] = clean_succs
+                mysql_store.save_article_successions(clean_succs)
             elif section == "special_general_relations" and isinstance(value, list):
                 mysql_store.save_special_general_relations(value)
             elif section == "law_aliases" and isinstance(value, dict):
                 mysql_store.save_law_aliases(value)
             elif section == "client_registry" and isinstance(value, dict):
                 mysql_store.save_client_registry(value)
+            elif section == "new_old_counterparts" and isinstance(value, list):
+                mysql_store.save_new_old_counterparts(value)
             elif section == "case_type_rules" and isinstance(value, dict):
                 mysql_store.execute("DELETE FROM kb_case_type_rules")
                 for ct, rules in value.items():
@@ -167,20 +212,27 @@ class KnowledgeCenter:
         data = self._ensure_loaded()
         raw_list = data.get("article_succession_list") or []
         out: List[Tuple[str, str, str, str, str, str]] = []
+        seen = set()
         for item in raw_list:
             if isinstance(item, dict):
-                out.append(
-                    (
-                        item.get("old_law", ""),
-                        item.get("old_article", ""),
-                        item.get("new_law", ""),
-                        item.get("new_article", ""),
-                        item.get("switch_date", ""),
-                        item.get("diff_note", ""),
-                    )
+                tuple_item = (
+                    str(item.get("old_law", "")).strip(),
+                    str(item.get("old_article", "")).strip(),
+                    str(item.get("new_law", "")).strip(),
+                    str(item.get("new_article", "")).strip(),
+                    str(item.get("switch_date", "")).strip(),
+                    str(item.get("diff_note", "")).strip(),
                 )
             elif isinstance(item, (list, tuple)) and len(item) >= 6:
-                out.append(tuple(item[:6]))  # type: ignore
+                tuple_item = tuple(str(x).strip() for x in item[:6])  # type: ignore
+            else:
+                continue
+
+            k = tuple_item[:4]
+            if not k[0] or not k[1] or not k[2] or not k[3] or k in seen:
+                continue
+            seen.add(k)
+            out.append(tuple_item)
         return out
 
     # ————————————————————————————————————————————————

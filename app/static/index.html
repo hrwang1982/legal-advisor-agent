@@ -2776,7 +2776,7 @@
       </div>
       <div class="modal-footer">
         <button class="btn-reset" onclick="closeCounterpartsModal()">关闭</button>
-        <button class="btn-search" style="background:#d32029; color:#fff;" onclick="executeBatchImportCounterparts()">一键批量录入法工委官方对照表</button>
+        <button class="btn-search" id="btnBatchImportCounterparts" style="background:#d32029; color:#fff;" onclick="executeBatchImportCounterparts()">一键批量录入法工委官方对照表</button>
       </div>
     </div>
   </div>
@@ -6050,17 +6050,48 @@
     }
 
     // 模态框 3: 官方新旧对照录入
-    function openCounterpartsModal() { document.getElementById("counterpartsModal").classList.add("open"); }
+    function openCounterpartsModal() {
+      const statusEl = document.getElementById("counterpartsStatus");
+      if (statusEl) statusEl.textContent = "";
+      document.getElementById("counterpartsModal").classList.add("open");
+    }
     function closeCounterpartsModal() { document.getElementById("counterpartsModal").classList.remove("open"); }
     async function executeBatchImportCounterparts() {
+      const btn = document.getElementById("btnBatchImportCounterparts");
+      const statusEl = document.getElementById("counterpartsStatus");
+      if (btn) {
+        btn.disabled = true;
+        btn.style.opacity = "0.6";
+        btn.style.cursor = "not-allowed";
+        btn.textContent = "⏳ 正在探测网络并录入中...";
+      }
+      if (statusEl) {
+        statusEl.style.color = "#1890ff";
+        statusEl.textContent = "⏳ 正在检查网络连通性并同步法工委官方新旧对照表，请稍候...";
+      }
       showToast("⏳ 正在批量写入全国人大常委会法工委官方新旧对照表...");
       try {
         const res = await fetch("/counterparts/batch-import", { method: "POST", headers: { "Content-Type": "application/json" } });
         const d = await res.json();
-        document.getElementById("counterpartsStatus").textContent = `🎉 ${d.message}`;
-        showToast(d.message);
+        const msg = d.message || "批量录入完成";
+        if (statusEl) {
+          statusEl.style.color = "#52c41a";
+          statusEl.textContent = `🎉 ${msg}`;
+        }
+        showToast(msg);
       } catch(e) {
-        showToast("录入失败");
+        if (statusEl) {
+          statusEl.style.color = "#d32029";
+          statusEl.textContent = "❌ 录入失败，请稍后重试";
+        }
+        showToast("录入失败，请检查网络或后端服务");
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.style.opacity = "1";
+          btn.style.cursor = "pointer";
+          btn.textContent = "一键批量录入法工委官方对照表";
+        }
       }
     }
 
@@ -6505,7 +6536,7 @@
 
       try {
         if (!CACHED_KNOWLEDGE_FULL || forceRefresh) {
-          const res = await fetch("/config/knowledge");
+          const res = await fetch("/config/knowledge" + (forceRefresh ? "?reload=1" : ""));
           if (!res.ok) {
             textarea.value = `// 获取业务知识配置失败 (HTTP ${res.status})`;
             showToast(`⚠️ 加载规则失败 (HTTP ${res.status})`);
@@ -6515,7 +6546,16 @@
           CACHED_KNOWLEDGE_FULL = d.knowledge || {};
         }
 
-        const secData = CACHED_KNOWLEDGE_FULL[sec] !== undefined ? CACHED_KNOWLEDGE_FULL[sec] : {};
+        let secData = CACHED_KNOWLEDGE_FULL[sec] !== undefined ? CACHED_KNOWLEDGE_FULL[sec] : {};
+        if (sec === "article_succession_list" && Array.isArray(secData)) {
+          const seen = new Set();
+          secData = secData.filter(it => {
+            const k = `${it.old_law || ''}|${it.old_article || ''}|${it.new_law || ''}|${it.new_article || ''}`;
+            if (!it.old_law || seen.has(k)) return false;
+            seen.add(k);
+            return true;
+          });
+        }
         textarea.value = JSON.stringify(secData, null, 2);
       } catch (err) {
         console.error("加载规则异常:", err);

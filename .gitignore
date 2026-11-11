@@ -1,0 +1,16 @@
+# Database mirror
+app/data/mysql_mirror.db
+app/data/mysql_mirror.db*
+*.db.bak
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.venv_min/
+.tmp/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
