@@ -903,6 +903,43 @@ if _HAS_FASTAPI:
         """获取条款项级修改与生命周期追踪日志"""
         logs = kb_store.list_article_revisions(law_name=law_name, article=article)
         return {"revision_logs": logs}
+
+    # ————————————————————————————————————————————————
+    # 国家法律法规数据库（flk.npc.gov.cn）官方 Word 文档自动拉取与分类入库接口
+    # ————————————————————————————————————————————————
+    from app.flk_downloader import flk_downloader
+
+    @app.get("/flk/search")
+    def search_flk_laws_api(
+        keyword: str = "",
+        type_code: str = "flfg",
+        page: int = 1,
+        size: int = 10,
+    ):
+        """在线检索国家法规库法规列表"""
+        return flk_downloader.search_laws(keyword=keyword, type_code=type_code, page=page, size=size)
+
+    class FLKDownloadReq(BaseModel):
+        flk_id: Optional[str] = None
+        title: Optional[str] = None
+        type_code: str = "flfg"
+        uploader: Optional[str] = "国家法规库同步器"
+
+    @app.post("/flk/download-and-import")
+    def download_flk_law_api(
+        req: FLKDownloadReq,
+        x_user_id: Optional[str] = Header(None),
+        x_user_role: Optional[str] = Header(None),
+    ):
+        """自动下载国家法规库官方 Word 文档，自动按分类创建知识库目录并完成法条切分与向量入库"""
+        uploader_name = x_user_id or req.uploader or "国家法规库同步器"
+        res = flk_downloader.download_and_import(
+            flk_id=req.flk_id,
+            title=req.title,
+            type_code=req.type_code,
+            uploader=uploader_name,
+        )
+        return res
 else:
     app = None
 
