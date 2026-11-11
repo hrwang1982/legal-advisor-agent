@@ -105,9 +105,18 @@ OFFICIAL_LEGISLATIVE_COUNTERPARTS: List[Dict[str, Any]] = [
 
 
 def check_network_available(timeout: float = 1.0) -> bool:
-    """毫秒级快速探测外网是否可达。若离线或处于隔离环境，1 秒内立即安全退出，绝不阻塞请求。"""
+    """快速探测外网是否可达。支持系统域名解析与公网端口嗅探，绝不长时间阻塞。"""
     import socket
 
+    # 1. 优先尝试域名解析（内网代理/路由穿透最通用的外网判定依据）
+    for domain in ("flk.npc.gov.cn", "www.baidu.com", "aliyun.com"):
+        try:
+            socket.gethostbyname(domain)
+            return True
+        except Exception:
+            continue
+
+    # 2. 备选尝试常用公网 DNS 端口探测
     for host in ("223.5.5.5", "119.29.29.29", "180.76.76.76"):
         try:
             s = socket.create_connection((host, 53), timeout=timeout)
@@ -151,6 +160,7 @@ def batch_import_official_counterparts(
     2. 严格去重与底层防膨胀：更新入库并清空历史冗余，确保物理表不膨胀且业务无重复。
     """
     data_source = "custom"
+    net_available = check_network_available(timeout=0.8)
     if counterparts is not None:
         items = counterparts
         data_source = "custom_provided"
@@ -162,7 +172,7 @@ def batch_import_official_counterparts(
             data_source = "online_official"
         else:
             items = OFFICIAL_LEGISLATIVE_COUNTERPARTS
-            data_source = "builtin_official"
+            data_source = "online_fallback" if net_available else "offline_builtin"
 
     cfg = knowledge_center.get_all()
     raw_existing = cfg.get("new_old_counterparts", [])
@@ -222,12 +232,27 @@ def batch_import_official_counterparts(
     # 精准更新 new_old_counterparts，触发底层 save_new_old_counterparts 清空并重写，杜绝表膨胀
     knowledge_center.update_section("new_old_counterparts", existing_list)
 
+    # 同步对齐“字典管理”中的“3. 新旧法条条文对照表 (article_succession_list)”，消除两处模块数据割裂
+    succ_items = []
+    for it in existing_list:
+        succ_items.append({
+            "old_law": it.get("old_law", ""),
+            "old_article": it.get("old_article", ""),
+            "new_law": it.get("current_law", ""),
+            "new_article": it.get("current_article", ""),
+            "switch_date": it.get("switch_date", ""),
+            "diff_note": it.get("diff_note", ""),
+        })
+    knowledge_center.update_section("article_succession_list", succ_items)
+
     if data_source == "online_official":
-        msg = f"已联网同步法工委最新新旧法律对照表，本次更新 {imported_count} 条，现有对照条目总量 {len(existing_list)} 条。"
-    elif data_source == "builtin_official":
-        msg = f"外网不可达（离线安全模式），已采用内置全国人大常委会法工委权威对照表，本次更新 {imported_count} 条，现有对照条目总量 {len(existing_list)} 条。"
+        msg = f"已联网同步国家法规库最新新旧对照表，本次更新 {imported_count} 条，现有对照总量 {len(existing_list)} 条（已同步至字典管理）。"
+    elif data_source == "online_fallback":
+        msg = f"外网连通正常（国家法规库未发布更新版本），已采用内置全国人大常委会法工委权威对照表，现有对照条目总量 {len(existing_list)} 条（已同步至字典管理）。"
+    elif data_source == "offline_builtin":
+        msg = f"外网不可达（离线安全模式），已采用内置全国人大常委会法工委权威对照表，现有对照条目总量 {len(existing_list)} 条（已同步至字典管理）。"
     else:
-        msg = f"成功批量导入 {imported_count} 条官方新旧法律对照关系，现有库容量 {len(existing_list)} 条。"
+        msg = f"成功批量导入 {imported_count} 条官方新旧法律对照关系，现有库容量 {len(existing_list)} 条（已同步至字典管理）。"
 
     return {
         "status": "success",
