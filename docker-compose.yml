@@ -76,6 +76,9 @@ services:
       # —— 独立 OCR 识别微服务连接 ——
       OCR_SERVICE_URL: "http://ocr:8001/ocr"
 
+      # —— 独立 Docling 深度文档解析微服务连接 ——
+      DOCLING_SERVICE_URL: "http://docling:8002/parse"
+
       # —— 接入真实大模型时可取消注释覆盖 ——
       # MOCK: "false"
       # LLM_PROVIDER: "qwen"
@@ -104,8 +107,29 @@ services:
       timeout: 3s
       retries: 5
 
+  # —— 5. 独立 Docling 深度文档解析微服务容器（专职负责复杂版面还原、双栏排版与表格结构提取）——
+  docling:
+    build:
+      context: ./docker/docling
+      dockerfile: Dockerfile
+    image: legal-advisor-docling:latest
+    container_name: legal-advisor-docling
+    restart: unless-stopped
+    ports:
+      - "8002:8002"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8002
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8002/health')\" || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
 volumes:
   mysql_data:
     driver: local
   es_data:
+    driver: local
+  docling_cache:
     driver: local

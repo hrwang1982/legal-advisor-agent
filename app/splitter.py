@@ -14,9 +14,26 @@ from typing import Any, Dict, List, Optional, Tuple
 
 
 def extract_text_from_file_bytes(filename: str, content_bytes: bytes) -> str:
-    """从上传的文件二进制流中抽取纯文本。原生零第三方强依赖，优先尝试解析，失败平滑降级。"""
+    """从上传的文件二进制流中抽取纯文本。
+    多级架构：
+    1. 【Docling 独立微服务优先】：优先调用独立的 Docling 深度文档解析微服务 (PDF/Word/PPT/Excel/图片)；
+    2. 【原有原生引擎平滑兜底】：若 Docling 微服务离线或网络异常，无缝降级走原有原生零依赖解析器与本地 OCR。
+    """
     ext = (filename.rsplit(".", 1)[-1] if "." in filename else "").lower()
 
+    # 1. 优先尝试调用独立的 Docling 深度文档解析微服务容器（复杂文档与富排版）
+    if ext in ("pdf", "docx", "pptx", "xlsx", "doc", "xls", "ppt", "png", "jpg", "jpeg", "bmp", "webp", "tif", "tiff"):
+        try:
+            from app.docling_engine import is_docling_available, parse_document_via_docling
+
+            if is_docling_available():
+                docling_result = parse_document_via_docling(filename, content_bytes)
+                if docling_result and docling_result.strip():
+                    return docling_result.strip()
+        except Exception:
+            pass
+
+    # 2. 原生纯文本与结构化解析
     if ext in ("txt", "md", "csv"):
         for enc in ("utf-8", "gb18030", "gbk", "utf-16"):
             try:
