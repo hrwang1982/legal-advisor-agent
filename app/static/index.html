@@ -1117,6 +1117,10 @@
     .step-line.active {
       background: var(--primary);
     }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
 
     .card-choice-group {
       display: grid;
@@ -2593,6 +2597,11 @@
           <div class="step-badge">2</div>
           <span>文档配置</span>
         </div>
+        <div class="step-line" id="stepLine-2"></div>
+        <div class="step-item" id="stepIndicator-3">
+          <div class="step-badge">3</div>
+          <span>智能切分与入库</span>
+        </div>
       </div>
 
       <!-- STEP 1: 文档选择 -->
@@ -2712,7 +2721,98 @@
 
         <div class="modal-footer" style="padding-top:16px; border-top:1px solid var(--border-light); display:flex; justify-content:flex-end; gap:10px;">
           <button class="btn-reset" onclick="goToUploadStep(1)">上一步</button>
-          <button class="btn-search" style="background:#d32029; color:#fff; border:none; padding:8px 26px; border-radius:4px; font-weight:600;" onclick="submitWizardUpload()">确定</button>
+          <button class="btn-search" id="btnSubmitWizardUpload" style="background:#d32029; color:#fff; border:none; padding:8px 26px; border-radius:4px; font-weight:600;" onclick="submitWizardUpload()">确定</button>
+        </div>
+      </div>
+
+      <!-- STEP 3: 智能切分与入库 (动态状态流转与结果卡片) -->
+      <div id="uploadStep3" style="display:none; padding:10px 4px 6px;">
+        <!-- 3.1 处理中状态 (Processing State) -->
+        <div id="uploadProgressBox" style="display:block; text-align:center; padding:16px 10px;">
+          <div class="spinner-ring" style="display:inline-block; width:44px; height:44px; border:4px solid #f0f0f0; border-top-color:#d32029; border-radius:50%; animation:spin 1s linear infinite; margin-bottom:14px;"></div>
+          <div style="font-size:16px; font-weight:700; color:var(--text-title); margin-bottom:6px;">正在执行深度解析、法条智能切分与向量入库...</div>
+          <div id="uploadProcessingFilename" style="font-size:13px; color:var(--text-sub); margin-bottom:18px;">处理文件: <span style="font-weight:600; color:var(--primary);">准备中...</span></div>
+
+          <!-- 动态流水线步骤 -->
+          <div style="background:#fafbfc; border:1px solid var(--border-color); border-radius:8px; padding:14px 18px; text-align:left; max-width:540px; margin:0 auto 18px; font-size:13px; display:flex; flex-direction:column; gap:10px;">
+            <div id="procStage1" style="display:flex; align-items:center; gap:8px; color:#52c41a; font-weight:600;">
+              <span>✓</span> <span>1. 文件流载入与完整性校验</span>
+            </div>
+            <div id="procStage2" style="display:flex; align-items:center; gap:8px; color:var(--primary); font-weight:600;">
+              <span id="procStage2Icon">⏳</span> <span id="procStage2Text">2. 深度排版还原 / 本地 OCR 纯文本抽取</span>
+            </div>
+            <div id="procStage3" style="display:flex; align-items:center; gap:8px; color:var(--text-muted);">
+              <span id="procStage3Icon">○</span> <span id="procStage3Text">3. 编章节条款状态机智能切分 (提取条目上下文)</span>
+            </div>
+            <div id="procStage4" style="display:flex; align-items:center; gap:8px; color:var(--text-muted);">
+              <span id="procStage4Icon">○</span> <span id="procStage4Text">4. BGE-M3 向量化与 Elasticsearch/MySQL 双写入库</span>
+            </div>
+          </div>
+
+          <!-- 进度条 -->
+          <div style="max-width:540px; margin:0 auto 8px; background:#e8e8e8; height:8px; border-radius:4px; overflow:hidden;">
+            <div id="uploadProgressBar" style="width:25%; height:100%; background:linear-gradient(90deg, #d32029, #ff7875); transition:width 0.4s ease;"></div>
+          </div>
+          <div style="font-size:12px; color:var(--text-muted); display:flex; justify-content:space-between; max-width:540px; margin:0 auto 12px;">
+            <span id="uploadProgressTip">正在抽取纯文本与法律结构...</span>
+            <span id="uploadTimerText">已耗时: 0s</span>
+          </div>
+
+          <div style="font-size:11.5px; color:var(--text-muted); background:#fffbe6; border:1px solid #ffe58f; padding:6px 12px; border-radius:4px; display:inline-block;">
+            💡 正在进行多阶段法理流水线处理，请勿关闭弹窗以保障数据完整入库
+          </div>
+        </div>
+
+        <!-- 3.2 成功结果卡片 (Success Result Box) -->
+        <div id="uploadResultSuccessBox" style="display:none; padding:10px 8px;">
+          <div style="text-align:center; margin-bottom:16px;">
+            <div style="display:inline-flex; align-items:center; justify-content:center; width:48px; height:48px; background:#f6ffed; border:2px solid #b7eb8f; border-radius:50%; font-size:24px; color:#52c41a; margin-bottom:8px;">✓</div>
+            <div style="font-size:17px; font-weight:700; color:var(--text-title); margin-bottom:4px;">文档解析与知识库入库完成！</div>
+            <div style="font-size:12.5px; color:var(--text-muted);">已完成编章节条款状态机切片、高维向量计算与双库持久化存储</div>
+          </div>
+
+          <!-- 结果摘要卡片 -->
+          <div style="background:#fafbfc; border:1px solid #d9d9d9; border-radius:8px; padding:14px 18px; margin-bottom:14px; font-size:13px;">
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px 16px;">
+              <div><span style="color:var(--text-sub);">文档标题:</span> <strong id="resSummaryTitle" style="color:var(--text-title);">-</strong></div>
+              <div><span style="color:var(--text-sub);">所属知识库:</span> <span id="resSummaryKb" style="color:var(--text-body); font-weight:600;">-</span></div>
+              <div><span style="color:var(--text-sub);">切分模式:</span> <span id="resSummaryMode" style="color:var(--text-body);">-</span></div>
+              <div><span style="color:var(--text-sub);">切分条块数:</span> <span id="resSummaryChunks" style="background:#f6ffed; color:#52c41a; border:1px solid #b7eb8f; padding:1px 8px; border-radius:4px; font-weight:700;">-</span></div>
+              <div><span style="color:var(--text-sub);">向量模型:</span> <span id="resSummaryEmbed" style="color:var(--text-muted); font-size:12px;">BAAI/bge-m3</span></div>
+              <div><span style="color:var(--text-sub);">混合检索库:</span> <span id="resSummaryEs" style="color:#52c41a; font-weight:600;">已同步 Elasticsearch 8.x</span></div>
+            </div>
+          </div>
+
+          <!-- 条文预览区域 -->
+          <div id="resSummaryPreviewWrapper" style="margin-bottom:16px;">
+            <div style="font-size:12.5px; font-weight:600; color:var(--text-title); margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;">
+              <span>法条切片预览 (前 3 条)</span>
+              <span id="resSummaryPreviewToggle" style="font-size:11.5px; color:var(--primary); cursor:pointer;" onclick="toggleChunkPreview()">折叠/展开</span>
+            </div>
+            <div id="resSummaryPreviewList" style="max-height:130px; overflow-y:auto; background:#fff; border:1px solid var(--border-color); border-radius:6px; padding:8px 12px; font-size:12px; display:flex; flex-direction:column; gap:6px;"></div>
+          </div>
+
+          <!-- 底部完成操作栏 -->
+          <div class="modal-footer" style="padding-top:14px; border-top:1px solid var(--border-light); display:flex; justify-content:space-between; align-items:center;">
+            <div style="font-size:12px; color:var(--text-muted);" id="autoCloseCountdownTip">
+              ⏱️ <span id="autoCloseCountdownSec">5</span> 秒后自动关闭... (<span style="color:var(--primary); cursor:pointer; text-decoration:underline;" onclick="cancelAutoClose()">取消倒计时</span>)
+            </div>
+            <div style="display:flex; gap:10px;">
+              <button class="btn-reset" onclick="resetWizardToStep1()">📄 继续上传下一篇</button>
+              <button class="btn-search" style="background:#52c41a; color:#fff; border:none; padding:8px 24px; border-radius:4px; font-weight:600;" onclick="finishAndCloseImportModal()">完成并查看文档</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3.3 失败卡片 (Error Box) -->
+        <div id="uploadResultErrorBox" style="display:none; text-align:center; padding:24px 10px;">
+          <div style="display:inline-flex; align-items:center; justify-content:center; width:48px; height:48px; background:#fff2f0; border:2px solid #ffccc7; border-radius:50%; font-size:24px; color:#ff4d4f; margin-bottom:12px;">✕</div>
+          <div style="font-size:16px; font-weight:700; color:var(--text-title); margin-bottom:6px;">文档解析或入库失败</div>
+          <div id="uploadErrorMsgText" style="font-size:13px; color:#ff4d4f; background:#fff1f0; border:1px solid #ffa39e; border-radius:6px; padding:10px 14px; max-width:540px; margin:0 auto 20px; text-align:left;"></div>
+          <div style="display:flex; justify-content:center; gap:12px;">
+            <button class="btn-reset" onclick="goToUploadStep(2)">返回上一步修改</button>
+            <button class="btn-search" style="background:#d32029; color:#fff; border:none; padding:8px 20px; border-radius:4px;" onclick="retryUploadCurrent()">重新尝试</button>
+          </div>
         </div>
       </div>
     </div>
@@ -5624,6 +5724,55 @@
       }
     }
 
+    let UPLOAD_TIMER_INTERVAL = null;
+    let UPLOAD_AUTO_CLOSE_INTERVAL = null;
+    let UPLOAD_LAST_DATA = null;
+
+    function clearUploadTimers() {
+      if (UPLOAD_TIMER_INTERVAL) { clearInterval(UPLOAD_TIMER_INTERVAL); UPLOAD_TIMER_INTERVAL = null; }
+      if (UPLOAD_AUTO_CLOSE_INTERVAL) { clearInterval(UPLOAD_AUTO_CLOSE_INTERVAL); UPLOAD_AUTO_CLOSE_INTERVAL = null; }
+    }
+
+    function cancelAutoClose() {
+      if (UPLOAD_AUTO_CLOSE_INTERVAL) {
+        clearInterval(UPLOAD_AUTO_CLOSE_INTERVAL);
+        UPLOAD_AUTO_CLOSE_INTERVAL = null;
+      }
+      const tip = document.getElementById("autoCloseCountdownTip");
+      if (tip) tip.innerHTML = `<span style="color:#52c41a;">✓ 已取消自动关闭，可随时点击右侧按钮完成查看</span>`;
+    }
+
+    function toggleChunkPreview() {
+      const list = document.getElementById("resSummaryPreviewList");
+      if (!list) return;
+      list.style.display = (list.style.display === "none") ? "flex" : "none";
+    }
+
+    function resetWizardToStep1() {
+      clearUploadTimers();
+      UPLOAD_WIZARD_STATE.selectedFiles = [];
+      const listDiv = document.getElementById("selectedFileList");
+      if (listDiv) listDiv.innerHTML = "";
+      const inputEl = document.getElementById("fileUploadInput");
+      if (inputEl) inputEl.value = "";
+      const dtEl = document.getElementById("wizardDirectText");
+      if (dtEl) { dtEl.value = ""; dtEl.style.display = "none"; }
+      const dzText = document.getElementById("dropzoneMainText");
+      if (dzText) dzText.textContent = "点击上传，或拖动文档到这里";
+      goToUploadStep(1);
+    }
+
+    async function finishAndCloseImportModal() {
+      clearUploadTimers();
+      closeImportModal();
+      await loadKbTree();
+      await loadKbDocuments();
+    }
+
+    function retryUploadCurrent() {
+      goToUploadStep(2);
+    }
+
     function goToUploadStep(s) {
       if (s === 2) {
         const hasFile = UPLOAD_WIZARD_STATE.selectedFiles.length > 0;
@@ -5636,12 +5785,20 @@
       UPLOAD_WIZARD_STATE.step = s;
       document.getElementById("uploadStep1").style.display = s === 1 ? "block" : "none";
       document.getElementById("uploadStep2").style.display = s === 2 ? "block" : "none";
+      const step3El = document.getElementById("uploadStep3");
+      if (step3El) step3El.style.display = s === 3 ? "block" : "none";
+
       document.getElementById("stepIndicator-1").classList.toggle("active", s >= 1);
       document.getElementById("stepLine-1").classList.toggle("active", s >= 2);
-      document.getElementById("stepIndicator-2").classList.toggle("active", s === 2);
+      document.getElementById("stepIndicator-2").classList.toggle("active", s >= 2);
+      const line2El = document.getElementById("stepLine-2");
+      if (line2El) line2El.classList.toggle("active", s >= 3);
+      const ind3El = document.getElementById("stepIndicator-3");
+      if (ind3El) ind3El.classList.toggle("active", s === 3);
     }
 
     function openImportModal() {
+      clearUploadTimers();
       UPLOAD_WIZARD_STATE.selectedFiles = [];
       document.getElementById("selectedFileList").innerHTML = "";
       document.getElementById("wizardDirectText").value = "";
@@ -5650,7 +5807,11 @@
       goToUploadStep(1);
       document.getElementById("importModal").classList.add("open");
     }
-    function closeImportModal() { document.getElementById("importModal").classList.remove("open"); }
+
+    function closeImportModal() {
+      clearUploadTimers();
+      document.getElementById("importModal").classList.remove("open");
+    }
 
     async function submitWizardUpload() {
       const kbType = document.getElementById("wizardKbSelect").value;
@@ -5661,18 +5822,72 @@
 
       const files = UPLOAD_WIZARD_STATE.selectedFiles;
       if (files.length === 0 && !directText) {
-        showToast("无有效文档内容");
+        showToast("请先选择文档或粘贴条文内容");
         return;
       }
 
-      showToast("⏳ 正在执行格式抽取、智能分块切分与 BGE-M3 向量入库...");
+      // 1. 无缝切入 Step 3 动态进度状态机
+      goToUploadStep(3);
+
+      const progBox = document.getElementById("uploadProgressBox");
+      const successBox = document.getElementById("uploadResultSuccessBox");
+      const errBox = document.getElementById("uploadResultErrorBox");
+      if (progBox) progBox.style.display = "block";
+      if (successBox) successBox.style.display = "none";
+      if (errBox) errBox.style.display = "none";
+
+      const fnTarget = files.length > 0 ? files.map(f => f.name).join(", ") : "直接粘贴法规文档.txt";
+      const fnEl = document.getElementById("uploadProcessingFilename");
+      if (fnEl) fnEl.innerHTML = `处理文件: <span style="font-weight:600; color:var(--primary);">${fnTarget}</span>`;
+
+      // 阶段与进度条动态流转
+      const pBar = document.getElementById("uploadProgressBar");
+      const pTip = document.getElementById("uploadProgressTip");
+      const timerEl = document.getElementById("uploadTimerText");
+      if (pBar) pBar.style.width = "20%";
+      if (pTip) pTip.textContent = "正在读取文件二进制流并验证完整性...";
+
+      const s2 = document.getElementById("procStage2");
+      const s3 = document.getElementById("procStage3");
+      const s4 = document.getElementById("procStage4");
+      const s2Icon = document.getElementById("procStage2Icon");
+      const s3Icon = document.getElementById("procStage3Icon");
+      const s4Icon = document.getElementById("procStage4Icon");
+
+      let elapsedSec = 0;
+      clearUploadTimers();
+      UPLOAD_TIMER_INTERVAL = setInterval(() => {
+        elapsedSec += 0.5;
+        if (timerEl) timerEl.textContent = `已耗时: ${elapsedSec.toFixed(1)}s`;
+
+        if (elapsedSec >= 1.0 && elapsedSec < 2.5) {
+          if (pBar) pBar.style.width = "45%";
+          if (pTip) pTip.textContent = "正在调用 Docling 深度排版还原 / 本地 OCR 抽取纯文本...";
+          if (s2Icon) s2Icon.textContent = "⏳";
+        } else if (elapsedSec >= 2.5 && elapsedSec < 4.5) {
+          if (pBar) pBar.style.width = "70%";
+          if (pTip) pTip.textContent = "正在执行编章节条款状态机切分（提取条目上下文）...";
+          if (s2) s2.style.color = "#52c41a";
+          if (s2Icon) s2Icon.textContent = "✓";
+          if (s3) s3.style.color = "var(--primary)";
+          if (s3Icon) s3Icon.textContent = "⏳";
+        } else if (elapsedSec >= 4.5) {
+          if (pBar) pBar.style.width = "88%";
+          if (pTip) pTip.textContent = "正在生成 BGE-M3 向量嵌入并同步 Elasticsearch 8.x 与 MySQL 双写入库...";
+          if (s3) s3.style.color = "#52c41a";
+          if (s3Icon) s3Icon.textContent = "✓";
+          if (s4) s4.style.color = "var(--primary)";
+          if (s4Icon) s4Icon.textContent = "⏳";
+        }
+      }, 500);
 
       try {
+        let lastServerResult = null;
         if (files.length > 0) {
           for (const f of files) {
             const isBinary = f.name.match(/\.(pdf|docx|doc|xlsx|xls|ppt|pptx|png|jpg|jpeg|bmp|webp|zip)$/i);
             const reader = new FileReader();
-            await new Promise((resolve, reject) => {
+            lastServerResult = await new Promise((resolve, reject) => {
               reader.onload = async () => {
                 try {
                   const payload = {
@@ -5694,9 +5909,14 @@
                     body: JSON.stringify(payload)
                   });
                   const d = await res.json();
-                  resolve(d);
+                  if (d.status === "ok") {
+                    resolve(d.result);
+                  } else {
+                    reject(new Error(d.detail || d.message || "入库返回异常状态"));
+                  }
                 } catch(err) { reject(err); }
               };
+              reader.onerror = () => reject(new Error("文件读取失败"));
               if (isBinary) {
                 reader.readAsDataURL(f);
               } else {
@@ -5705,7 +5925,7 @@
             });
           }
         } else if (directText) {
-          await fetch("/kb/documents/upload-advanced", {
+          const res = await fetch("/kb/documents/upload-advanced", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -5718,12 +5938,96 @@
               uploader: RBAC_STATE.currentUser || "系统管理员"
             })
           });
+          const d = await res.json();
+          if (d.status === "ok") {
+            lastServerResult = d.result;
+          } else {
+            throw new Error(d.detail || d.message || "入库返回异常状态");
+          }
         }
-        showToast("🎉 文档已成功解析、切块入库并同步至混合检索库！");
-        closeImportModal();
-        await loadKbTree();
-        loadKbDocuments();
+
+        // 2. 处理完成，瞬间拉满 100% 进度
+        if (pBar) pBar.style.width = "100%";
+        if (pTip) pTip.textContent = "✓ 解析与入库已完成！";
+        if (s2) s2.style.color = "#52c41a";
+        if (s2Icon) s2Icon.textContent = "✓";
+        if (s3) s3.style.color = "#52c41a";
+        if (s3Icon) s3Icon.textContent = "✓";
+        if (s4) s4.style.color = "#52c41a";
+        if (s4Icon) s4Icon.textContent = "✓";
+        clearUploadTimers();
+
+        // 3. 稍作延迟展现 100% 动效，随后切入成功结果摘要卡片
+        setTimeout(async () => {
+          if (progBox) progBox.style.display = "none";
+          if (successBox) successBox.style.display = "block";
+
+          const r = lastServerResult || {};
+          const titleEl = document.getElementById("resSummaryTitle");
+          if (titleEl) titleEl.textContent = `《${r.title || fnTarget}》`;
+          const kbEl = document.getElementById("resSummaryKb");
+          if (kbEl) kbEl.textContent = kbType;
+          const modeEl = document.getElementById("resSummaryMode");
+          if (modeEl) {
+            const modeMap = { "article": "法条状态机分割 (article)", "auto": "自动语义分割 (auto)", "hierarchical": "文档分层分割 (hierarchical)" };
+            modeEl.textContent = modeMap[splitMode] || splitMode;
+          }
+          const chunksEl = document.getElementById("resSummaryChunks");
+          if (chunksEl) chunksEl.textContent = `共 ${r.chunks_count || 1} 个切片`;
+          const embedEl = document.getElementById("resSummaryEmbed");
+          if (embedEl) embedEl.textContent = r.embed_backend || "BAAI/bge-m3 (128d)";
+          const esEl = document.getElementById("resSummaryEs");
+          if (esEl) esEl.textContent = r.es_indexed ? "已同步 Elasticsearch 8.x 混合库" : "MySQL 向量持久化完成";
+
+          // 渲染切片条目预览
+          const previewList = document.getElementById("resSummaryPreviewList");
+          if (previewList) {
+            previewList.innerHTML = "";
+            const chunks = r.preview_chunks || [];
+            if (chunks.length > 0) {
+              chunks.slice(0, 3).forEach((c, idx) => {
+                const item = document.createElement("div");
+                item.style.padding = "6px 8px";
+                item.style.background = "#fafafa";
+                item.style.borderRadius = "4px";
+                item.style.border = "1px solid #f0f0f0";
+                item.innerHTML = `<span style="font-weight:700; color:var(--primary); margin-right:6px;">${c.article || `第${idx+1}段`}</span> <span style="color:var(--text-sub);">${(c.content_preview || c.content || '').substring(0, 100)}...</span>`;
+                previewList.appendChild(item);
+              });
+            } else {
+              previewList.innerHTML = `<div style="color:var(--text-muted); font-size:12px;">法条切片已存入底层数据库，支持在表格中查看全文。</div>`;
+            }
+          }
+
+          // 自动启动 5 秒倒计时
+          let countdown = 5;
+          const countSecEl = document.getElementById("autoCloseCountdownSec");
+          if (countSecEl) countSecEl.textContent = countdown;
+          const tipEl = document.getElementById("autoCloseCountdownTip");
+          if (tipEl) tipEl.innerHTML = `⏱️ <span id="autoCloseCountdownSec">${countdown}</span> 秒后自动关闭... (<span style="color:var(--primary); cursor:pointer; text-decoration:underline;" onclick="cancelAutoClose()">取消倒计时</span>)`;
+
+          UPLOAD_AUTO_CLOSE_INTERVAL = setInterval(() => {
+            countdown--;
+            const curEl = document.getElementById("autoCloseCountdownSec");
+            if (curEl) curEl.textContent = countdown;
+            if (countdown <= 0) {
+              clearUploadTimers();
+              finishAndCloseImportModal();
+            }
+          }, 1000);
+
+          showToast("🎉 文档已成功解析、切块入库并同步至混合检索库！");
+          // 实时刷新知识库目录树与文档列表
+          await loadKbTree();
+          await loadKbDocuments();
+        }, 350);
+
       } catch (e) {
+        clearUploadTimers();
+        if (progBox) progBox.style.display = "none";
+        if (errBox) errBox.style.display = "block";
+        const errMsgEl = document.getElementById("uploadErrorMsgText");
+        if (errMsgEl) errMsgEl.textContent = `异常原因: ${e.message || '上传解析遇到未知错误，请检查网络或后端容器日志'}`;
         showToast("上传解析失败，已记录异常日志");
       }
     }
