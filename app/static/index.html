@@ -2700,7 +2700,7 @@
           </div>
         </div>
 
-        <div style="margin-bottom:20px;">
+        <div style="margin-bottom:16px;">
           <label style="font-size:13px; font-weight:600; color:var(--text-title); display:flex; align-items:center; gap:4px; margin-bottom:8px;">
             <span style="color:var(--error);">*</span> 有效期
           </label>
@@ -2716,6 +2716,58 @@
           </div>
           <div id="customDateRow" style="display:none; margin-top:10px;">
             <input type="date" class="filter-input" style="width:200px;" id="wizardValidUntil" />
+          </div>
+        </div>
+
+        <!-- 新增：版本信息与智能嗅探栏 -->
+        <div style="margin-bottom:16px; background:#fafbfc; border:1px solid var(--border-color); border-radius:8px; padding:12px 14px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <label style="font-size:13px; font-weight:600; color:var(--text-title);">📌 版本号与施行日期</label>
+            <span id="wizardSniffBadge" style="font-size:11.5px; color:#1890ff; background:#e6f7ff; border:1px solid #91d5ff; padding:1px 8px; border-radius:4px;">🔍 自动嗅探题注版本</span>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+            <div>
+              <div style="font-size:12px; color:var(--text-sub); margin-bottom:4px;">版本名称 / 修订标识</div>
+              <input type="text" class="filter-input" style="width:100%;" id="wizardVersionName" placeholder="如：2018年修正版 / 2024年最新有效版" />
+            </div>
+            <div>
+              <div style="font-size:12px; color:var(--text-sub); margin-bottom:4px;">施行 / 生效日期 (选填)</div>
+              <input type="date" class="filter-input" style="width:100%;" id="wizardEffectiveDate" />
+            </div>
+          </div>
+        </div>
+
+        <!-- 新增：同名法规版本冲突引导卡片 -->
+        <div id="wizardConflictBox" style="display:none; margin-bottom:18px; background:#fffbe6; border:1px solid #ffe58f; border-radius:8px; padding:12px 14px;">
+          <div style="font-size:13px; font-weight:700; color:#d48806; margin-bottom:6px; display:flex; align-items:center; gap:6px;">
+            <span>⚠️ 检测到同名法规已存在！</span>
+            <span id="wizardConflictSummary" style="font-weight:500; font-size:12px; color:#8c8c8c;"></span>
+          </div>
+          <div style="font-size:12px; color:var(--text-sub); margin-bottom:8px;">请选择本次上传文档的版本处理策略：</div>
+          <div style="display:flex; flex-direction:column; gap:8px; font-size:12.5px;">
+            <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer; background:#fff; border:1px solid #ffe58f; padding:7px 10px; border-radius:6px;">
+              <input type="radio" name="wizardConflictAction" value="append_new" checked onchange="onConflictActionChange(this.value)" style="margin-top:2px; accent-color:#d32029;" />
+              <div>
+                <div style="font-weight:600; color:var(--text-title);">作为新版本追加并设为当前最新有效版（推荐）</div>
+                <div style="font-size:11.5px; color:var(--text-muted);">原同名文档自动归档为「历史版本」，保留历史条文供溯及力对照与旧案检索</div>
+              </div>
+            </label>
+            <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer; background:#fff; border:1px solid #f0f0f0; padding:7px 10px; border-radius:6px;">
+              <input type="radio" name="wizardConflictAction" value="overwrite_latest" onchange="onConflictActionChange(this.value)" style="margin-top:2px; accent-color:#d32029;" />
+              <div>
+                <div style="font-weight:600; color:var(--text-title);">覆盖替换当前最新版本（纠错重传）</div>
+                <div style="font-size:11.5px; color:var(--text-muted);">仅替换当前最新版本的文档及条文切片，不新增历史版本记录</div>
+              </div>
+            </label>
+            <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer; background:#fff; border:1px solid #f0f0f0; padding:7px 10px; border-radius:6px;">
+              <input type="radio" name="wizardConflictAction" value="rename_new" onchange="onConflictActionChange(this.value)" style="margin-top:2px; accent-color:#d32029;" />
+              <div style="flex:1;">
+                <div style="font-weight:600; color:var(--text-title);">重命名后作为独立法规保存</div>
+                <div id="wizardRenameInputRow" style="display:none; margin-top:6px;">
+                  <input type="text" class="filter-input" style="width:100%; height:30px; font-size:12px;" id="wizardCustomNewTitle" placeholder="输入新的独立法规名称..." />
+                </div>
+              </div>
+            </label>
           </div>
         </div>
 
@@ -2775,11 +2827,12 @@
           <div style="background:#fafbfc; border:1px solid #d9d9d9; border-radius:8px; padding:14px 18px; margin-bottom:14px; font-size:13px;">
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px 16px;">
               <div><span style="color:var(--text-sub);">文档标题:</span> <strong id="resSummaryTitle" style="color:var(--text-title);">-</strong></div>
+              <div><span style="color:var(--text-sub);">版本标识:</span> <span id="resSummaryVersion" style="background:#e6f7ff; color:#1890ff; border:1px solid #91d5ff; padding:1px 8px; border-radius:4px; font-weight:600;">-</span></div>
               <div><span style="color:var(--text-sub);">所属知识库:</span> <span id="resSummaryKb" style="color:var(--text-body); font-weight:600;">-</span></div>
-              <div><span style="color:var(--text-sub);">切分模式:</span> <span id="resSummaryMode" style="color:var(--text-body);">-</span></div>
               <div><span style="color:var(--text-sub);">切分条块数:</span> <span id="resSummaryChunks" style="background:#f6ffed; color:#52c41a; border:1px solid #b7eb8f; padding:1px 8px; border-radius:4px; font-weight:700;">-</span></div>
+              <div><span style="color:var(--text-sub);">切分模式:</span> <span id="resSummaryMode" style="color:var(--text-body);">-</span></div>
               <div><span style="color:var(--text-sub);">向量模型:</span> <span id="resSummaryEmbed" style="color:var(--text-muted); font-size:12px;">BAAI/bge-m3</span></div>
-              <div><span style="color:var(--text-sub);">混合检索库:</span> <span id="resSummaryEs" style="color:#52c41a; font-weight:600;">已同步 Elasticsearch 8.x</span></div>
+              <div style="grid-column:1 / -1;"><span style="color:var(--text-sub);">混合检索库:</span> <span id="resSummaryEs" style="color:#52c41a; font-weight:600;">已同步 Elasticsearch 8.x</span></div>
             </div>
           </div>
 
@@ -3041,6 +3094,27 @@
           style="padding: 7px 20px; border: none; background: #ff8585; color: white; border-radius: 4px; font-size: 13px; cursor: pointer; font-weight: 500; box-shadow: 0 1px 4px rgba(255,133,133,0.3); transition: background 0.2s;">
           确定
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================== 模态框: 法规文档多版本条文差异比对 (Version Diff) ======================== -->
+  <div class="modal-overlay" id="docVersionDiffModal">
+    <div class="modal-box" style="max-width:860px; width:92%; border-radius:10px;">
+      <div class="modal-header">
+        <div class="modal-title" id="versionDiffModalTitle">🔍 法规历史版本条文差异比对 (Diff)</div>
+        <div class="modal-close" onclick="closeDocVersionDiffModal()">✕</div>
+      </div>
+      <div class="modal-body" style="max-height:calc(82vh - 120px); overflow-y:auto;">
+        <div id="versionDiffSummaryBar" style="background:#fafbfc; border:1px solid var(--border-color); border-radius:6px; padding:10px 14px; margin-bottom:12px; font-size:12.5px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+          <span>正在比对版本差异...</span>
+        </div>
+        <div id="versionDiffContentBox" style="display:flex; flex-direction:column; gap:10px;">
+          <!-- 动态生成条文级 Diff 列表 -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-reset" onclick="closeDocVersionDiffModal()">关闭</button>
       </div>
     </div>
   </div>
@@ -5773,6 +5847,87 @@
       goToUploadStep(2);
     }
 
+    function onConflictActionChange(val) {
+      const renameRow = document.getElementById("wizardRenameInputRow");
+      if (renameRow) {
+        renameRow.style.display = (val === "rename_new") ? "block" : "none";
+      }
+    }
+
+    async function checkUploadVersionConflict() {
+      const kbType = document.getElementById("wizardKbSelect") ? document.getElementById("wizardKbSelect").value : "外规知识库/法律法规";
+      const files = UPLOAD_WIZARD_STATE.selectedFiles || [];
+      const directText = (document.getElementById("wizardDirectText")?.value || "").trim();
+
+      const fn = files.length > 0 ? files[0].name : "直接粘贴法规文档.txt";
+      const badgeEl = document.getElementById("wizardSniffBadge");
+      const verInput = document.getElementById("wizardVersionName");
+      const effInput = document.getElementById("wizardEffectiveDate");
+      const conflictBox = document.getElementById("wizardConflictBox");
+      const conflictSummary = document.getElementById("wizardConflictSummary");
+
+      if (badgeEl) badgeEl.textContent = "⏳ 正在嗅探版本与冲突...";
+
+      try {
+        let b64Content = "";
+        if (files.length > 0 && !directText) {
+          const f0 = files[0];
+          b64Content = await new Promise((resolve) => {
+            const r = new FileReader();
+            r.onload = () => resolve(r.result || "");
+            r.onerror = () => resolve("");
+            r.readAsDataURL(f0);
+          });
+        }
+        const res = await fetch("/kb/documents/check-version-conflict", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filename: fn,
+            kb_type: kbType,
+            raw_text: directText,
+            content_base64: b64Content
+          })
+        });
+        const d = await res.json();
+        if (d.status === "ok") {
+          const info = d.result || d;
+          const recVerName = info.recommended_version_name || "现行有效版";
+          const recEffDate = info.recommended_effective_date || "";
+          if (verInput) {
+            verInput.value = recVerName;
+          }
+          if (effInput && recEffDate) {
+            effInput.value = recEffDate;
+          }
+          if (badgeEl) {
+            badgeEl.textContent = info.sniffed
+              ? `✓ 已识别版本: ${recVerName} (${info.sniff_reason || '题注嗅探'})`
+              : `📌 推荐版本: ${recVerName}`;
+          }
+
+          if (info.has_conflict && conflictBox) {
+            conflictBox.style.display = "block";
+            const existingList = info.existing_versions || [];
+            const existingCount = info.existing_count || existingList.length;
+            const latestVer = existingList.length > 0 ? (existingList[0].version_name || existingList[0].version_code || "已有版本") : "已有版本";
+            if (conflictSummary) {
+              conflictSummary.textContent = `（库中已有 ${existingCount} 个同名《${info.law_name || fn}》版本，当前最新：${latestVer}）`;
+            }
+            const renameInput = document.getElementById("wizardCustomNewTitle");
+            if (renameInput && !renameInput.value) {
+              renameInput.value = `${info.law_name || fn}_${info.recommended_version_code || '新编'}`;
+            }
+          } else if (conflictBox) {
+            conflictBox.style.display = "none";
+          }
+        }
+      } catch (e) {
+        if (badgeEl) badgeEl.textContent = "📌 自动填充默认版本";
+        if (verInput && !verInput.value) verInput.value = "2024年最新有效版";
+      }
+    }
+
     function goToUploadStep(s) {
       if (s === 2) {
         const hasFile = UPLOAD_WIZARD_STATE.selectedFiles.length > 0;
@@ -5781,6 +5936,7 @@
           showToast("请先选择要上传的文档或粘贴条文文本！");
           return;
         }
+        checkUploadVersionConflict();
       }
       UPLOAD_WIZARD_STATE.step = s;
       document.getElementById("uploadStep1").style.display = s === 1 ? "block" : "none";
@@ -5881,6 +6037,12 @@
         }
       }, 500);
 
+      const versionName = (document.getElementById("wizardVersionName")?.value || "").trim();
+      const effectiveDate = (document.getElementById("wizardEffectiveDate")?.value || "").trim();
+      const conflictRadio = document.querySelector('input[name="wizardConflictAction"]:checked');
+      const conflictAction = conflictRadio ? conflictRadio.value : "append_new";
+      const customNewTitle = (document.getElementById("wizardCustomNewTitle")?.value || "").trim();
+
       try {
         let lastServerResult = null;
         if (files.length > 0) {
@@ -5896,7 +6058,11 @@
                     split_mode: splitMode,
                     validity_option: validityOption,
                     valid_until: validUntil,
-                    uploader: RBAC_STATE.currentUser || "系统管理员"
+                    uploader: RBAC_STATE.currentUser || "系统管理员",
+                    version_name: versionName,
+                    effective_date: effectiveDate,
+                    conflict_action: conflictAction,
+                    custom_new_title: customNewTitle
                   };
                   if (isBinary) {
                     payload.content_base64 = reader.result;
@@ -5935,7 +6101,11 @@
               split_mode: splitMode,
               validity_option: validityOption,
               valid_until: validUntil,
-              uploader: RBAC_STATE.currentUser || "系统管理员"
+              uploader: RBAC_STATE.currentUser || "系统管理员",
+              version_name: versionName,
+              effective_date: effectiveDate,
+              conflict_action: conflictAction,
+              custom_new_title: customNewTitle
             })
           });
           const d = await res.json();
@@ -5965,6 +6135,8 @@
           const r = lastServerResult || {};
           const titleEl = document.getElementById("resSummaryTitle");
           if (titleEl) titleEl.textContent = `《${r.title || fnTarget}》`;
+          const verEl = document.getElementById("resSummaryVersion");
+          if (verEl) verEl.textContent = `${r.version_name || r.version_code || '最新版'} (当前生效)`;
           const kbEl = document.getElementById("resSummaryKb");
           if (kbEl) kbEl.textContent = kbType;
           const modeEl = document.getElementById("resSummaryMode");
@@ -6049,6 +6221,8 @@
       }
     }
 
+    const EXPANDED_VERSION_GROUPS = new Set();
+
     function filterAndRenderKbDocs() {
       const q = (document.getElementById("filterKbDocName").value || "").trim().toLowerCase();
       const status = document.getElementById("filterKbStatus").value;
@@ -6063,44 +6237,104 @@
       if (uploader) list = list.filter(d => d.uploader && d.uploader.toLowerCase().includes(uploader));
       if (dept) list = list.filter(d => d.department && d.department.toLowerCase().includes(dept));
 
-      KB_PAGINATION.total = list.length;
-      const maxPage = Math.ceil(list.length / KB_PAGINATION.pageSize) || 1;
+      // 按法规名称 (title) 聚合为版本树分组
+      const groupMap = new Map();
+      list.forEach(d => {
+        const key = (d.title || "未命名文档").trim();
+        if (!groupMap.has(key)) {
+          groupMap.set(key, []);
+        }
+        groupMap.get(key).push(d);
+      });
+
+      const groupedList = [];
+      groupMap.forEach((versions, titleKey) => {
+        // 排序：is_latest=1 排最前，其次按 created_at 倒序
+        versions.sort((a, b) => {
+          const latA = (a.is_latest === undefined || a.is_latest === null) ? 1 : Number(a.is_latest);
+          const latB = (b.is_latest === undefined || b.is_latest === null) ? 1 : Number(b.is_latest);
+          if (latA !== latB) return latB - latA;
+          return String(b.created_at || "").localeCompare(String(a.created_at || ""));
+        });
+        groupedList.push({
+          groupKey: titleKey,
+          primaryDoc: versions[0],
+          historyDocs: versions.slice(1),
+          totalVersions: versions.length
+        });
+      });
+
+      KB_PAGINATION.total = groupedList.length;
+      const maxPage = Math.ceil(groupedList.length / KB_PAGINATION.pageSize) || 1;
       if (KB_PAGINATION.page > maxPage) KB_PAGINATION.page = maxPage;
       if (KB_PAGINATION.page < 1) KB_PAGINATION.page = 1;
 
       const start = (KB_PAGINATION.page - 1) * KB_PAGINATION.pageSize;
-      const pageDocs = list.slice(start, start + KB_PAGINATION.pageSize);
+      const pageGroups = groupedList.slice(start, start + KB_PAGINATION.pageSize);
 
-      renderKbTable(pageDocs, list.length);
+      renderKbTable(pageGroups, groupedList.length, list.length);
     }
 
-    function renderKbTable(docs = [], totalCount = 0) {
+    function toggleVersionHistoryGroup(groupKey) {
+      if (EXPANDED_VERSION_GROUPS.has(groupKey)) {
+        EXPANDED_VERSION_GROUPS.delete(groupKey);
+      } else {
+        EXPANDED_VERSION_GROUPS.add(groupKey);
+      }
+      filterAndRenderKbDocs();
+    }
+
+    function renderKbTable(groups = [], totalGroupCount = 0, totalRawCount = 0) {
       const tbody = document.getElementById("kbDocTableBody");
       const emptyBox = document.getElementById("kbEmptyPlaceholder");
       const totalSpan = document.getElementById("kbPaginationTotal");
       const badge = document.getElementById("kbCurrentPageBadge");
       const jumpInput = document.getElementById("kbJumpPageInput");
 
-      if (totalSpan) totalSpan.textContent = `共${totalCount}条`;
+      if (totalSpan) {
+        totalSpan.textContent = totalRawCount > totalGroupCount
+          ? `共${totalGroupCount}部法规 (含历史共${totalRawCount}个版本)`
+          : `共${totalGroupCount}条`;
+      }
       if (badge) badge.textContent = KB_PAGINATION.page;
       if (jumpInput) jumpInput.value = KB_PAGINATION.page;
 
       tbody.innerHTML = "";
-      if (!docs || docs.length === 0) {
+      if (!groups || groups.length === 0) {
         if (emptyBox) emptyBox.style.display = "block";
         return;
       }
       if (emptyBox) emptyBox.style.display = "none";
 
-      docs.forEach(d => {
+      groups.forEach(g => {
+        const d = g.primaryDoc;
+        const hist = g.historyDocs || [];
+        const isExpanded = EXPANDED_VERSION_GROUPS.has(g.groupKey);
+        const safeGroupKey = g.groupKey.replace(/'/g, "\\'");
+
         const tr = document.createElement("tr");
         const valTag = d.validity_status === "有效" 
-          ? `<span style="background:#f6ffed; color:#52c41a; font-size:11px; padding:2px 8px; border-radius:4px; font-weight:600;">有效</span>`
-          : `<span style="background:#fff1f0; color:#f5222d; font-size:11px; padding:2px 8px; border-radius:4px; font-weight:600;">${d.validity_status}</span>`;
+          ? `<span style="background:#f6ffed; color:#52c41a; font-size:11px; padding:2px 8px; border-radius:4px; font-weight:600; border:1px solid #b7eb8f;">现行有效 (最新)</span>`
+          : `<span style="background:#fff1f0; color:#f5222d; font-size:11px; padding:2px 8px; border-radius:4px; font-weight:600; border:1px solid #ffa39e;">${d.validity_status}</span>`;
+
+        const verLabel = d.version_name || d.version_code || "最新有效版";
+        const verBadge = `<span style="background:#e6f7ff; color:#1890ff; border:1px solid #91d5ff; font-size:11px; padding:1px 6px; border-radius:4px; margin-left:6px; font-weight:500;">${verLabel}</span>`;
+
+        const historyToggleBtn = hist.length > 0
+          ? `<span onclick="toggleVersionHistoryGroup('${safeGroupKey}')" style="display:inline-flex; align-items:center; gap:3px; margin-left:8px; background:#fff7e6; color:#d46b08; border:1px solid #ffd591; font-size:11px; padding:1px 7px; border-radius:10px; cursor:pointer; font-weight:600; user-select:none;" title="点击展开/收起同名法规历史版本演进树">
+               ${isExpanded ? '▴ 收起历史版本' : `▾ 含 ${hist.length} 个历史版本`}
+             </span>`
+          : "";
 
         tr.innerHTML = `
           <td><input type="checkbox" class="doc-chk" value="${d.doc_id}" /></td>
-          <td><strong style="color:var(--text-title);">${d.title}</strong></td>
+          <td>
+            <div style="display:flex; align-items:center; flex-wrap:wrap; gap:2px;">
+              <strong style="color:var(--text-title); font-size:13.5px;">${d.title}</strong>
+              ${verBadge}
+              ${historyToggleBtn}
+            </div>
+          </td>
           <td>${d.kb_type || '外规知识库/法律法规'}</td>
           <td>${d.department || '法律合规部'}</td>
           <td>${(d.created_at || '').substring(0, 10) || '2026-11-04'}</td>
@@ -6111,12 +6345,162 @@
           <td>${valTag}</td>
           <td><span style="color:#52c41a; font-weight:500;">${d.doc_status || '已解析'}</span></td>
           <td>
-            <span class="table-action-link" style="color:#1890ff; cursor:pointer;" onclick="previewDocChunks('${d.doc_id}', '${d.title}')">分段</span>
+            <span class="table-action-link" style="color:#1890ff; cursor:pointer;" onclick="previewDocChunks('${d.doc_id}', '${d.title} [${verLabel}]')">分段</span>
             <span class="table-action-link danger" style="margin-left:8px; color:#f5222d; cursor:pointer;" onclick="deleteKbDoc('${d.doc_id}')">删除</span>
           </td>
         `;
         tbody.appendChild(tr);
+
+        // 若展开，则渲染子级历史版本行
+        if (hist.length > 0 && isExpanded) {
+          hist.forEach((hd, idx) => {
+            const subTr = document.createElement("tr");
+            subTr.style.background = "#fafafa";
+            subTr.style.fontSize = "12.5px";
+            const branchSymbol = (idx === hist.length - 1) ? "└─" : "├─";
+            const hVerLabel = hd.version_name || hd.version_code || `历史版 v${hist.length - idx}`;
+
+            subTr.innerHTML = `
+              <td style="padding-left:18px;"><input type="checkbox" class="doc-chk" value="${hd.doc_id}" /></td>
+              <td style="padding-left:16px;">
+                <span style="color:#8c8c8c; font-family:monospace; margin-right:4px;">${branchSymbol}</span>
+                <span style="color:#595959; font-weight:500;">${hd.title}</span>
+                <span style="background:#f5f5f5; color:#8c8c8c; border:1px solid #d9d9d9; font-size:11px; padding:1px 6px; border-radius:4px; margin-left:6px;">${hVerLabel}</span>
+              </td>
+              <td style="color:#8c8c8c;">${hd.kb_type || d.kb_type || '-'}</td>
+              <td style="color:#8c8c8c;">${hd.department || '法律合规部'}</td>
+              <td style="color:#8c8c8c;">${(hd.created_at || '').substring(0, 10) || '-'}</td>
+              <td style="color:#8c8c8c;">${hd.uploader || 'admin'}</td>
+              <td style="color:#8c8c8c;">${hd.doc_size || '-'}</td>
+              <td><span style="background:#f0f2f5; color:#8c8c8c; padding:1px 5px; border-radius:3px; font-size:11px;">${hd.doc_format || 'TXT'}</span></td>
+              <td><strong style="color:#8c8c8c;">${hd.chunks_count || 1}</strong></td>
+              <td><span style="background:#f5f5f5; color:#8c8c8c; font-size:11px; padding:2px 7px; border-radius:4px; border:1px solid #d9d9d9;">历史归档</span></td>
+              <td><span style="color:#8c8c8c;">${hd.doc_status || '已解析'}</span></td>
+              <td>
+                <span class="table-action-link" style="color:#13c2c2; cursor:pointer; font-weight:600;" onclick="openDocVersionDiffModal('${d.doc_id}', '${hd.doc_id}')" title="与当前最新版进行条文级对比">版本比对</span>
+                <span class="table-action-link" style="margin-left:6px; color:#fa8c16; cursor:pointer;" onclick="setDocAsLatest('${hd.doc_id}', '${hVerLabel}')" title="将该版本切换为当前最新有效版">设为最新</span>
+                <span class="table-action-link" style="margin-left:6px; color:#1890ff; cursor:pointer;" onclick="previewDocChunks('${hd.doc_id}', '${hd.title} [${hVerLabel}]')">分段</span>
+                <span class="table-action-link danger" style="margin-left:6px; color:#f5222d; cursor:pointer;" onclick="deleteKbDoc('${hd.doc_id}')">删除</span>
+              </td>
+            `;
+            tbody.appendChild(subTr);
+          });
+        }
       });
+    }
+
+    async function setDocAsLatest(docId, verLabel) {
+      if (!confirm(`确认将「${verLabel}」切换为当前最新生效版本吗？\n切换后，常规法律检索将优先引用该版本的条文。`)) return;
+      try {
+        const res = await fetch(`/kb/documents/${docId}/set-latest`, { method: "POST" });
+        const d = await res.json();
+        if (d.status === "ok") {
+          showToast(`✓ 已成功将「${verLabel}」设为当前最新有效版本！`);
+          await loadKbDocuments();
+        } else {
+          showToast(d.detail || "切换版本状态失败");
+        }
+      } catch (e) {
+        showToast("请求切换最新版本失败");
+      }
+    }
+
+    async function openDocVersionDiffModal(docIdNew, docIdOld) {
+      const modal = document.getElementById("docVersionDiffModal");
+      if (!modal) return;
+      modal.classList.add("open");
+
+      const sumBar = document.getElementById("versionDiffSummaryBar");
+      const contentBox = document.getElementById("versionDiffContentBox");
+      if (sumBar) sumBar.innerHTML = `<span>⏳ 正在计算两个版本的条文级差分 (Article-level Diff)...</span>`;
+      if (contentBox) contentBox.innerHTML = "";
+
+      try {
+        const res = await fetch(`/kb/documents/diff?doc_id_new=${encodeURIComponent(docIdNew)}&doc_id_old=${encodeURIComponent(docIdOld)}`);
+        const d = await res.json();
+        if (d.status !== "ok") {
+          throw new Error(d.detail || d.message || "比对失败");
+        }
+        const diff = d.result || d;
+        const docNew = diff.doc_new || {};
+        const docOld = diff.doc_old || {};
+        const s = diff.summary || {};
+
+        const titleEl = document.getElementById("versionDiffModalTitle");
+        if (titleEl) {
+          titleEl.textContent = `🔍 《${docNew.title || '法规'}》新旧版本条文差异比对 (${docNew.version_name} vs ${docOld.version_name})`;
+        }
+
+        if (sumBar) {
+          sumBar.innerHTML = `
+            <div>
+              <strong>新版本:</strong> <span style="color:#52c41a; font-weight:600;">${docNew.version_name} (${docNew.chunks_count}条)</span>
+              <span style="margin:0 8px; color:#bfbfbf;">⟷</span>
+              <strong>历史版本:</strong> <span style="color:#8c8c8c; font-weight:600;">${docOld.version_name} (${docOld.chunks_count}条)</span>
+            </div>
+            <div style="display:flex; gap:10px; font-size:12px;">
+              <span style="background:#fff7e6; color:#d46b08; border:1px solid #ffd591; padding:1px 8px; border-radius:4px;">修改条文: <b>${s.modified_count || 0}</b></span>
+              <span style="background:#f6ffed; color:#52c41a; border:1px solid #b7eb8f; padding:1px 8px; border-radius:4px;">新增条文: <b>${s.added_count || 0}</b></span>
+              <span style="background:#fff1f0; color:#f5222d; border:1px solid #ffa39e; padding:1px 8px; border-radius:4px;">删减条文: <b>${s.removed_count || 0}</b></span>
+              <span style="background:#f5f5f5; color:#8c8c8c; padding:1px 8px; border-radius:4px;">无变化: <b>${s.unchanged_count || 0}</b></span>
+            </div>
+          `;
+        }
+
+        const items = diff.diff_items || [
+          ...(diff.modified_articles || []).map(x => ({ ...x, type: "modified" })),
+          ...(diff.added_articles || []).map(x => ({ ...x, type: "added" })),
+          ...(diff.removed_articles || []).map(x => ({ ...x, type: "removed" }))
+        ];
+        if (items.length === 0) {
+          contentBox.innerHTML = `<div style="text-align:center; padding:36px; color:#52c41a; background:#f6ffed; border:1px solid #b7eb8f; border-radius:6px; font-weight:600;">✓ 两个版本的条文内容完全一致，未检测到实质性文字差异。</div>`;
+          return;
+        }
+
+        contentBox.innerHTML = items.map(item => {
+          if (item.type === "modified") {
+            return `
+              <div style="border:1px solid #ffd591; border-radius:6px; overflow:hidden; background:#fff;">
+                <div style="background:#fff7e6; padding:6px 12px; font-size:12.5px; font-weight:700; color:#d46b08; display:flex; justify-content:space-between;">
+                  <span>📝 ${item.article} （条文修订）</span>
+                  <span>${docOld.version_name} ➔ ${docNew.version_name}</span>
+                </div>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; padding:10px 12px; font-size:12px; line-height:1.6;">
+                  <div style="background:#fff1f0; border:1px dashed #ffa39e; padding:8px 10px; border-radius:4px;">
+                    <div style="font-weight:600; color:#cf1322; margin-bottom:4px;">【历史版本 · ${docOld.version_name}】</div>
+                    <div style="color:#595959; white-space:pre-wrap;">${item.old_content || '-'}</div>
+                  </div>
+                  <div style="background:#f6ffed; border:1px dashed #b7eb8f; padding:8px 10px; border-radius:4px;">
+                    <div style="font-weight:600; color:#389e0d; margin-bottom:4px;">【当前版本 · ${docNew.version_name}】</div>
+                    <div style="color:#262626; white-space:pre-wrap;">${item.new_content || '-'}</div>
+                  </div>
+                </div>
+              </div>
+            `;
+          } else if (item.type === "added") {
+            return `
+              <div style="border:1px solid #b7eb8f; border-radius:6px; overflow:hidden; background:#f6ffed; padding:8px 12px; font-size:12px;">
+                <div style="font-weight:700; color:#389e0d; margin-bottom:4px;">➕ ${item.article} （新版本新增条文）</div>
+                <div style="color:#262626; white-space:pre-wrap;">${item.new_content || ''}</div>
+              </div>
+            `;
+          } else {
+            return `
+              <div style="border:1px solid #ffa39e; border-radius:6px; overflow:hidden; background:#fff1f0; padding:8px 12px; font-size:12px;">
+                <div style="font-weight:700; color:#cf1322; margin-bottom:4px;">➖ ${item.article} （新版本已删除/合并）</div>
+                <div style="color:#595959; white-space:pre-wrap;">${item.old_content || ''}</div>
+              </div>
+            `;
+          }
+        }).join("");
+      } catch (e) {
+        if (sumBar) sumBar.innerHTML = `<span style="color:#f5222d;">⚠️ 版本比对加载失败: ${e.message}</span>`;
+      }
+    }
+
+    function closeDocVersionDiffModal() {
+      const modal = document.getElementById("docVersionDiffModal");
+      if (modal) modal.classList.remove("open");
     }
 
     function changeKbPageSize(sz) {

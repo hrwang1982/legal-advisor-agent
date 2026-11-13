@@ -191,8 +191,8 @@ class _BM25:
 
 
 def _load_rows() -> List[dict]:
-    """读取法规原始条目：完全从 MySQL 数据库加载基础法规与外规知识库条文。"""
-    merged: Dict[Tuple[str, str, str], dict] = {}
+    """读取法规原始条目：完全从 MySQL 数据库加载基础法规与外规知识库条文（支持多版本并存隔离）。"""
+    merged: Dict[Tuple[str, str, str, str], dict] = {}
 
     # 1. 从 MySQL 数据库读取 sample_laws 表
     try:
@@ -213,8 +213,12 @@ def _load_rows() -> List[dict]:
                 item["content"] = r.get("content", item.get("content", ""))
                 item["hierarchy"] = r.get("hierarchy", item.get("hierarchy", "法律"))
                 item["validity"] = r.get("validity", item.get("validity", "现行有效"))
+                ver_key = item.get("version_code") or item.get("effective_date") or "v1"
+                item.setdefault("version_code", ver_key)
+                item.setdefault("is_latest", 1 if item["validity"] == "现行有效" else 0)
                 key = (
                     item.get("law_name", ""),
+                    ver_key,
                     normalize_article_id(item.get("article", "")),
                     item.get("paragraph", ""),
                 )
@@ -222,11 +226,13 @@ def _load_rows() -> List[dict]:
     except Exception:
         pass
 
-    # 2. 合并动态 RAG 知识库中导入的外规条文（来自 MySQL law_chunks）
+    # 2. 合并动态 RAG 知识库中导入的外规条文（来自 MySQL law_chunks，按 law_name + version_code 隔离）
     try:
         for kb_row in kb_store.load_all_kb_rows():
+            ver_key = kb_row.get("version_code") or kb_row.get("effective_date") or "v1"
             key = (
                 kb_row.get("law_name", ""),
+                ver_key,
                 normalize_article_id(kb_row.get("article", "")),
                 kb_row.get("paragraph", ""),
             )
@@ -372,6 +378,11 @@ def load_nodes() -> List[TextNode]:
                     "trial": bool(r.get("trial", False)),
                     "verified": bool(r.get("verified", True)),
                     "note": r.get("note", ""),
+                    "version_code": r.get("version_code", "v1"),
+                    "version_name": r.get("version_name", ""),
+                    "is_latest": int(r.get("is_latest", 1)),
+                    "kb_type": r.get("kb_type", ""),
+                    "doc_id": r.get("doc_id", ""),
                     "_embedding": vec,
                 },
             )

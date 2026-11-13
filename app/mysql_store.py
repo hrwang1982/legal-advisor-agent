@@ -418,7 +418,7 @@ class MySQLStore:
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
                     """
                 )
-                # 17. 法规文档总表
+                # 17. 法规文档总表 (支持版本管理、最新标记与施行日期)
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS law_documents (
@@ -434,17 +434,34 @@ class MySQLStore:
                         validity_status VARCHAR(64) DEFAULT '有效',
                         doc_status VARCHAR(64) DEFAULT '已解析',
                         valid_until VARCHAR(64) DEFAULT '',
+                        version_code VARCHAR(64) DEFAULT 'v1',
+                        version_name VARCHAR(128) DEFAULT '现行有效版',
+                        is_latest INT DEFAULT 1,
+                        effective_date VARCHAR(64) DEFAULT '',
                         created_at VARCHAR(64) NOT NULL
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
                     """
                 )
-                # 18. 法规分块表
+                for alter_sql in (
+                    "ALTER TABLE law_documents ADD COLUMN version_code VARCHAR(64) DEFAULT 'v1'",
+                    "ALTER TABLE law_documents ADD COLUMN version_name VARCHAR(128) DEFAULT '现行有效版'",
+                    "ALTER TABLE law_documents ADD COLUMN is_latest INT DEFAULT 1",
+                    "ALTER TABLE law_documents ADD COLUMN effective_date VARCHAR(64) DEFAULT ''",
+                ):
+                    try:
+                        cur.execute(alter_sql)
+                    except Exception:
+                        pass
+
+                # 18. 法规分块表 (支持多版本并存隔离与版本检索)
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS law_chunks (
                         chunk_id VARCHAR(128) PRIMARY KEY,
                         doc_id VARCHAR(128) NOT NULL,
                         law_name VARCHAR(255) NOT NULL,
+                        version_code VARCHAR(64) DEFAULT 'v1',
+                        is_latest INT DEFAULT 1,
                         chapter_path TEXT,
                         article VARCHAR(64) NOT NULL,
                         paragraph VARCHAR(64) DEFAULT '',
@@ -459,10 +476,20 @@ class MySQLStore:
                         embedding_json LONGTEXT,
                         created_at VARCHAR(64) NOT NULL,
                         INDEX idx_chunk_doc (doc_id),
-                        INDEX idx_chunk_law (law_name)
+                        INDEX idx_chunk_law (law_name),
+                        INDEX idx_law_ver_article (law_name, version_code, article, paragraph)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
                     """
                 )
+                for alter_sql in (
+                    "ALTER TABLE law_chunks ADD COLUMN version_code VARCHAR(64) DEFAULT 'v1'",
+                    "ALTER TABLE law_chunks ADD COLUMN is_latest INT DEFAULT 1",
+                    "ALTER TABLE law_chunks ADD INDEX idx_law_ver_article (law_name, version_code, article, paragraph)",
+                ):
+                    try:
+                        cur.execute(alter_sql)
+                    except Exception:
+                        pass
                 # 19. 修正案与生命周期追踪表
                 cur.execute(
                     """
@@ -875,16 +902,33 @@ class MySQLStore:
                         validity_status TEXT DEFAULT '有效',
                         doc_status TEXT DEFAULT '已解析',
                         valid_until TEXT DEFAULT '',
+                        version_code TEXT DEFAULT 'v1',
+                        version_name TEXT DEFAULT '现行有效版',
+                        is_latest INTEGER DEFAULT 1,
+                        effective_date TEXT DEFAULT '',
                         created_at TEXT NOT NULL
                     )
                     """
                 )
+                for alter_sql in (
+                    "ALTER TABLE law_documents ADD COLUMN version_code TEXT DEFAULT 'v1'",
+                    "ALTER TABLE law_documents ADD COLUMN version_name TEXT DEFAULT '现行有效版'",
+                    "ALTER TABLE law_documents ADD COLUMN is_latest INTEGER DEFAULT 1",
+                    "ALTER TABLE law_documents ADD COLUMN effective_date TEXT DEFAULT ''",
+                ):
+                    try:
+                        cur.execute(alter_sql)
+                    except Exception:
+                        pass
+
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS law_chunks (
                         chunk_id TEXT PRIMARY KEY,
                         doc_id TEXT NOT NULL,
                         law_name TEXT NOT NULL,
+                        version_code TEXT DEFAULT 'v1',
+                        is_latest INTEGER DEFAULT 1,
                         chapter_path TEXT DEFAULT '',
                         article TEXT NOT NULL,
                         paragraph TEXT DEFAULT '',
@@ -901,6 +945,14 @@ class MySQLStore:
                     )
                     """
                 )
+                for alter_sql in (
+                    "ALTER TABLE law_chunks ADD COLUMN version_code TEXT DEFAULT 'v1'",
+                    "ALTER TABLE law_chunks ADD COLUMN is_latest INTEGER DEFAULT 1",
+                ):
+                    try:
+                        cur.execute(alter_sql)
+                    except Exception:
+                        pass
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS law_article_revision_log (

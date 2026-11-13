@@ -725,10 +725,43 @@ if _HAS_FASTAPI:
         effective_date: Optional[str] = ""
         promulgation_date: Optional[str] = ""
         host_law: Optional[str] = ""
+        version_code: Optional[str] = ""
+        version_name: Optional[str] = ""
+        conflict_action: Optional[str] = "append_new"  # append_new / overwrite_latest / rename_new
+        custom_new_title: Optional[str] = ""
+
+    class CheckVersionConflictReq(BaseModel):
+        filename: str
+        law_name: Optional[str] = ""
+        kb_type: Optional[str] = "外规知识库/法律法规"
+        raw_text: Optional[str] = ""
+        content_base64: Optional[str] = None
+
+    @app.post("/kb/documents/check-version-conflict")
+    def check_version_conflict_api(req: CheckVersionConflictReq):
+        """上传前检测同名法规冲突并执行智能正文/题注版本嗅探"""
+        import base64
+        content_bytes = None
+        if req.content_base64:
+            try:
+                b64_str = req.content_base64
+                if "," in b64_str:
+                    b64_str = b64_str.split(",", 1)[1]
+                content_bytes = base64.b64decode(b64_str)
+            except Exception:
+                pass
+        res = kb_store.check_version_conflict(
+            filename=req.filename,
+            law_name=req.law_name or "",
+            kb_type=req.kb_type or "",
+            content_bytes=content_bytes,
+            raw_text=req.raw_text or "",
+        )
+        return {"status": "ok", **res}
 
     @app.post("/kb/documents/upload-advanced")
     def upload_advanced_document_api(req: AdvancedDocUploadReq):
-        """对标「AI法盾」知识库文档两步上传与三模式切分入库接口"""
+        """对标「AI法盾」知识库文档上传、版本演进管理与三模式切分入库接口"""
         import base64
 
         if not req.raw_text and not req.filename and not req.content_base64:
@@ -759,6 +792,10 @@ if _HAS_FASTAPI:
             effective_date=req.effective_date or "",
             promulgation_date=req.promulgation_date or "",
             host_law=req.host_law or "",
+            version_code=req.version_code or "",
+            version_name=req.version_name or "",
+            conflict_action=req.conflict_action or "append_new",
+            custom_new_title=req.custom_new_title or "",
         )
         invalidate_cache()
         return {"status": "ok", "result": res}
@@ -829,9 +866,27 @@ if _HAS_FASTAPI:
             raise HTTPException(status_code=400, detail=str(e))
 
     @app.get("/kb/documents/advanced")
-    def list_advanced_documents_api(kb_type: Optional[str] = None, limit: int = 50):
-        """获取法规文档列表（支持所属知识库与层级目录路径筛选）"""
+    def list_advanced_documents_api(kb_type: Optional[str] = None, limit: int = 200):
+        """获取法规文档列表（支持所属知识库与层级目录路径筛选，含全量版本演进元数据）"""
         return {"documents": kb_store.list_law_documents(kb_type=kb_type, limit=limit)}
+
+    @app.post("/kb/documents/{doc_id}/set-latest")
+    def set_document_latest_api(doc_id: str):
+        """将指定历史版本切换为当前最新有效版本"""
+        try:
+            res = kb_store.set_document_as_latest(doc_id)
+            invalidate_cache()
+            return res
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @app.get("/kb/documents/diff")
+    def compare_document_versions_api(doc_id_new: str, doc_id_old: str):
+        """对比同一法规两个版本的条文级差异 (Diff)"""
+        res = kb_store.compare_document_versions(doc_id_new=doc_id_new, doc_id_old=doc_id_old)
+        if res.get("status") != "ok":
+            raise HTTPException(status_code=400, detail=res.get("message", "对比失败"))
+        return res
 
     @app.delete("/kb/documents/advanced/{doc_id}")
     def delete_advanced_document_api(doc_id: str):

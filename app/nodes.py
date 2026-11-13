@@ -212,24 +212,76 @@ def rewrite(state: AgentState) -> Dict:
     }
 
 
-# 3) RAG 混合检索（BM25 + 概念扩展 + P1 引致条款图谱扩展 + P1 新旧法条文对照回填）
+# 3) RAG 混合检索（BM25 + 概念扩展 + 版本感知定向过滤 + P1 引致条款图谱扩展 + P1 新旧法条文对照回填）
 def retrieve(state: AgentState) -> Dict:
     if _is_no_kb(state):
         return {"retrieved": []}
 
+    fs = _ensure_fact_summary(state)
+    act_date = state.get("act_date") or fs.get("act_date") or date.today().isoformat()
+    act_date_source = "explicit" if state.get("act_date") else fs.get("act_date_source", "assumed_today")
+
     nodes = load_nodes()
     node_index: Dict[Tuple[str, str, str], object] = {}
+    # 按 (law_name, article, paragraph) 聚合所有版本节点，便于按 act_date 定向选取版本
+    multi_ver_groups: Dict[Tuple[str, str, str], List[object]] = {}
+    laws_with_latest: set = set()
     for n in nodes:
+        if int(n.metadata.get("is_latest", 1)) == 1 and n.metadata.get("validity", "现行有效") == "现行有效":
+            laws_with_latest.add(n.metadata.get("law_name", ""))
         k = (
             n.metadata.get("law_name", ""),
             n.metadata.get("article", ""),
             n.metadata.get("paragraph", ""),
         )
-        node_index[k] = n
+        multi_ver_groups.setdefault(k, []).append(n)
+        # node_index 默认指向最新有效版或时间匹配的版
+        if k not in node_index or int(n.metadata.get("is_latest", 1)) == 1:
+            node_index[k] = n
+
+    # 版本感知定向筛选：
+    # - 若未指定历史日期 (assumed_today)：同名法规存在最新有效版本时，默认只启用 is_latest=1 的切片，杜绝旧版本法条干扰；
+    # - 若指定了历史事实日期 (act_date)：同名多版本法规按 [effective_date, effective_to] 区间定向优选当时生效的历史版本切片。
+    version_filtered_nodes = []
+    for k, ver_nodes in multi_ver_groups.items():
+        if len(ver_nodes) == 1:
+            n0 = ver_nodes[0]
+            law0 = n0.metadata.get("law_name", "")
+            # 若该同名法律已有其他最新有效版，而此单条是旧版残留 (is_latest=0)，在咨询现行问题时剔除
+            if act_date_source == "assumed_today" and law0 in laws_with_latest and int(n0.metadata.get("is_latest", 1)) == 0:
+                continue
+            version_filtered_nodes.append(n0)
+        else:
+            if act_date_source == "assumed_today":
+                latest_list = [vn for vn in ver_nodes if int(vn.metadata.get("is_latest", 1)) == 1]
+                chosen = latest_list[0] if latest_list else ver_nodes[-1]
+                version_filtered_nodes.append(chosen)
+                node_index[k] = chosen
+            else:
+                # 历史纠纷：优先寻找 effective_date <= act_date <= effective_to 的版本
+                matched_ver = None
+                for vn in ver_nodes:
+                    eff_from = (vn.metadata.get("effective_date") or "").strip()
+                    eff_to = (vn.metadata.get("effective_to") or "").strip()
+                    if eff_from and eff_from <= act_date and (not eff_to or act_date <= eff_to):
+                        matched_ver = vn
+                        break
+                if matched_ver is None:
+                    # 次选生效日早于 act_date 中最晚的一个版本
+                    earlier = [
+                        vn for vn in ver_nodes
+                        if (vn.metadata.get("effective_date") or "9999-99-99") <= act_date
+                    ]
+                    if earlier:
+                        earlier.sort(key=lambda x: x.metadata.get("effective_date") or "")
+                        matched_ver = earlier[-1]
+                chosen = matched_ver or ver_nodes[-1]
+                version_filtered_nodes.append(chosen)
+                node_index[k] = chosen
 
     # 支持知识库范围筛选（支持全库、不使用知识库、自定义多知识库/多文档）
     kb_scope = (state.get("kb_scope") or "all").strip()
-    active_nodes = nodes
+    active_nodes = version_filtered_nodes
     if kb_scope in ("none", "不使用知识库"):
         active_nodes = []
     elif kb_scope and kb_scope not in ("all", "全部知识库", "自由交互识别范围"):
@@ -245,7 +297,7 @@ def retrieve(state: AgentState) -> Dict:
 
         if scopes:
             scoped = []
-            for n in nodes:
+            for n in version_filtered_nodes:
                 kb_t = n.metadata.get("kb_type") or ""
                 cat = n.metadata.get("category") or ""
                 doc_title = n.metadata.get("document_name") or n.metadata.get("law_name") or ""
