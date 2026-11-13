@@ -6284,11 +6284,13 @@
 
       const groupedList = [];
       groupMap.forEach((versions, titleKey) => {
-        // 排序：is_latest=1 排最前，其次按 created_at 倒序
+        // 排序：is_latest=1 排最前，其次按生效日期 (effective_date) 倒序、created_at 倒序
         versions.sort((a, b) => {
           const latA = (a.is_latest === undefined || a.is_latest === null) ? 1 : Number(a.is_latest);
           const latB = (b.is_latest === undefined || b.is_latest === null) ? 1 : Number(b.is_latest);
           if (latA !== latB) return latB - latA;
+          const effCmp = String(b.effective_date || "").localeCompare(String(a.effective_date || ""));
+          if (effCmp !== 0) return effCmp;
           return String(b.created_at || "").localeCompare(String(a.created_at || ""));
         });
         groupedList.push({
@@ -7081,7 +7083,8 @@
               type_code: it.type_code,
               uploader: RBAC_STATE.currentUser,
               publish_date: it.publish || "",
-              effective_date: it.effective_date || ""
+              effective_date: it.effective_date || "",
+              sxx: it.sxx !== undefined ? it.sxx : null
             })
           });
           const d = await res.json();

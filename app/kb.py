@@ -334,6 +334,7 @@ class KnowledgeBaseStore:
     def __init__(self, db_path: Optional[str] = None):
         self.embedder = BGEM3Embedder()
         self.version_counter: int = 0
+        self._manually_pinned_doc_ids: Set[str] = set()
         self._init_db()
 
     def _init_db(self) -> None:
@@ -573,7 +574,7 @@ class KnowledgeBaseStore:
                     item["kb_type"] = r["kb_type"]
                 if r.get("effective_date"):
                     item["effective_date"] = r["effective_date"]
-                if r.get("effective_to"):
+                if r.get("effective_to") is not None:
                     item["effective_to"] = r["effective_to"]
                 if r.get("validity"):
                     item["validity"] = r["validity"]
@@ -602,22 +603,45 @@ class KnowledgeBaseStore:
             clean_law = base_title.strip().strip("《》")
 
         head_text = (raw_text or "")[:3500]
-        combined = f"{fname}\n{head_text}"
+        # 优先截取正文「第一条」之前的题注区，避免条文内部引用的历史日期干扰版本嗅探
+        first_art_match = re.search(r"(?:^|\n)\s*第一条[\s　]", head_text)
+        caption_zone = head_text[: first_art_match.start()] if first_art_match and first_art_match.start() > 20 else head_text
+        combined = f"{fname}\n{caption_zone}"
 
         # 1. 匹配标准题注中的精确日期+动作（如：2018年12月29日...修正 / 1994年7月5日...通过）
         date_action_matches = re.findall(
             r"((?:19|20)\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日[^\n。；;]{0,65}?(修正|修订|通过|公布|施行|制定)",
             combined,
         )
+        if not date_action_matches and caption_zone != head_text:
+            date_action_matches = re.findall(
+                r"((?:19|20)\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日[^\n。；;]{0,65}?(修正|修订|通过|公布|施行|制定)",
+                f"{fname}\n{head_text}",
+            )
         if date_action_matches:
-            # 取题注中最后一个（即最新一次）修正/修订/通过记录
-            y, m, d, action = date_action_matches[-1]
+            # 按真实日期 (年, 月, 日) 升序排列，取题注中时间最晚（即最新一次）的日期记录
+            sorted_matches = sorted(
+                date_action_matches,
+                key=lambda m: (int(m[0]), int(m[1]), int(m[2])),
+            )
+            y, m, d, action = sorted_matches[-1]
             iso_date = f"{int(y):04d}-{int(m):02d}-{int(d):02d}"
-            act_label = "修正版" if action in ("修正", "修订") else ("制定版" if action in ("通过", "制定") else f"{action}版")
-            if action == "修订":
+            # 若同一年份在题注中明确带有「修正」或「修订」，优先标注为修正版/修订版
+            same_year_actions = [act for yr, _mo, _da, act in sorted_matches if yr == y]
+            if "修订" in same_year_actions or "修订" in combined:
                 act_label = "修订版"
+                is_rev = True
+            elif "修正" in same_year_actions or "修正" in combined:
+                act_label = "修正版"
+                is_rev = True
+            elif action in ("通过", "制定"):
+                act_label = "制定版"
+                is_rev = False
+            else:
+                act_label = f"{action}版"
+                is_rev = False
             ver_name = f"{y}年{act_label}"
-            ver_code = f"{y}-{'revised' if action in ('修正', '修订') else 'original'}"
+            ver_code = f"{y}-{'revised' if is_rev else 'original'}"
             return {
                 "law_name": clean_law,
                 "version_name": ver_name,
@@ -748,6 +772,7 @@ class KnowledgeBaseStore:
         version_name: str = "",
         conflict_action: str = "append_new",  # append_new / overwrite_latest / rename_new
         custom_new_title: str = "",
+        official_sxx: Optional[int] = None,
     ) -> Dict[str, Any]:
         """对标「AI法盾」企业级上传、智能版本管理与三模式切分入库流水线：
         1. 抽取纯文本与自动嗅探版本元数据
@@ -815,12 +840,27 @@ class KnowledgeBaseStore:
 
         # 查询库中已有的同名法规版本
         existing_docs = mysql_store.query(
-            "SELECT doc_id, version_code, version_name, is_latest, effective_date FROM law_documents WHERE title = ? ORDER BY is_latest DESC, created_at DESC",
+            "SELECT doc_id, version_code, version_name, is_latest, effective_date, validity_status, created_at FROM law_documents WHERE title = ? ORDER BY is_latest DESC, created_at DESC",
             (clean_law,),
         )
+        for ed in existing_docs:
+            self._manually_pinned_doc_ids.discard(ed["doc_id"])
+
+        doc_id = f"doc_{uuid.uuid4().hex[:12]}"
+        now = datetime.now(timezone.utc).isoformat()
+        val_status = "有效"
+        if official_sxx == 1:
+            val_status = "已废止"
+        elif official_sxx == 2 and existing_docs:
+            val_status = "已修正"
+        elif valid_until and valid_until < datetime.now().strftime("%Y-%m-%d"):
+            val_status = "已过期"
 
         archived_count = 0
         overwritten_doc_id = ""
+        new_doc_is_latest = 1
+        new_doc_valid_until = valid_until if validity_option == "custom" else ""
+
         if existing_docs:
             if conflict_action == "overwrite_latest":
                 # 选项 B：覆盖已有最新版本（彻底清除原最新版本的文档与切片）
@@ -829,50 +869,71 @@ class KnowledgeBaseStore:
                 mysql_store.execute("DELETE FROM law_documents WHERE doc_id = ?", (overwritten_doc_id,))
                 mysql_store.execute("DELETE FROM law_chunks WHERE doc_id = ?", (overwritten_doc_id,))
             else:
-                # 选项 A（默认 append_new）：作为新版本追加，将原同名文档沉淀为历史版本 (is_latest=0)
+                # 选项 A（默认 append_new）：基于施行日期/版本年份与官方时效状态智能判定新旧次序
                 existing_codes = {d.get("version_code") or "v1" for d in existing_docs}
                 if ver_code in existing_codes:
                     ver_code = f"{ver_code}-v{len(existing_docs) + 1}"
                 if ver_name == "现行有效版":
                     ver_name = f"第{len(existing_docs) + 1}版 ({eff_date[:4]}修订)"
 
-                # 计算旧版自动截止日期（新版本生效日前一天）
-                prev_end = ""
-                try:
-                    from datetime import date, timedelta
-                    prev_end = (date.fromisoformat(eff_date[:10]) - timedelta(days=1)).isoformat()
-                except Exception:
-                    prev_end = eff_date
+                candidate_doc = {
+                    "doc_id": doc_id,
+                    "version_code": ver_code,
+                    "version_name": ver_name,
+                    "effective_date": eff_date,
+                    "validity_status": val_status,
+                    "official_sxx": official_sxx,
+                    "created_at": now,
+                }
+                max_existing_doc = max(existing_docs, key=self._extract_version_sort_key)
+                if self._extract_version_sort_key(candidate_doc) < self._extract_version_sort_key(max_existing_doc):
+                    # 本次入库的文档施行日期/版本年份早于库中已有的最新有效版本（如先入库 2025 版，后入库 2021 版）
+                    new_doc_is_latest = 0
+                    if val_status == "有效":
+                        val_status = "已修正"
+                    archived_count = 1
+                    try:
+                        from datetime import date, timedelta
+                        newer_eff = (max_existing_doc.get("effective_date") or "")[:10]
+                        if newer_eff:
+                            new_doc_valid_until = (date.fromisoformat(newer_eff) - timedelta(days=1)).isoformat()
+                    except Exception:
+                        pass
+                else:
+                    # 本次入库的文档确实是更新的版本，将原同名文档沉淀为历史版本 (is_latest=0)
+                    new_doc_is_latest = 1
+                    prev_end = ""
+                    try:
+                        from datetime import date, timedelta
+                        prev_end = (date.fromisoformat(eff_date[:10]) - timedelta(days=1)).isoformat()
+                    except Exception:
+                        prev_end = eff_date
 
-                for old_d in existing_docs:
-                    old_id = old_d["doc_id"]
-                    mysql_store.execute(
-                        """
-                        UPDATE law_documents
-                        SET is_latest = 0,
-                            validity_status = CASE WHEN validity_status = '有效' THEN '已修正' ELSE validity_status END,
-                            valid_until = CASE WHEN valid_until = '' OR valid_until IS NULL THEN ? ELSE valid_until END
-                        WHERE doc_id = ?
-                        """,
-                        (prev_end, old_id),
-                    )
-                    mysql_store.execute(
-                        """
-                        UPDATE law_chunks
-                        SET is_latest = 0,
-                            validity = CASE WHEN validity = '现行有效' THEN '已修正' ELSE validity END,
-                            effective_to = CASE WHEN effective_to = '' OR effective_to IS NULL THEN ? ELSE effective_to END
-                        WHERE doc_id = ?
-                        """,
-                        (prev_end, old_id),
-                    )
-                    archived_count += 1
+                    for old_d in existing_docs:
+                        old_id = old_d["doc_id"]
+                        mysql_store.execute(
+                            """
+                            UPDATE law_documents
+                            SET is_latest = 0,
+                                validity_status = CASE WHEN validity_status = '有效' THEN '已修正' ELSE validity_status END,
+                                valid_until = CASE WHEN valid_until = '' OR valid_until IS NULL THEN ? ELSE valid_until END
+                            WHERE doc_id = ?
+                            """,
+                            (prev_end, old_id),
+                        )
+                        mysql_store.execute(
+                            """
+                            UPDATE law_chunks
+                            SET is_latest = 0,
+                                validity = CASE WHEN validity = '现行有效' THEN '已修正' ELSE validity END,
+                                effective_to = CASE WHEN effective_to = '' OR effective_to IS NULL THEN ? ELSE effective_to END
+                            WHERE doc_id = ?
+                            """,
+                            (prev_end, old_id),
+                        )
+                        archived_count += 1
 
-        doc_id = f"doc_{uuid.uuid4().hex[:12]}"
-        now = datetime.now(timezone.utc).isoformat()
-        val_status = "有效"
-        if valid_until and valid_until < datetime.now().strftime("%Y-%m-%d"):
-            val_status = "已过期"
+        chunk_validity = "现行有效" if (new_doc_is_latest == 1 and val_status == "有效") else ("已废止" if val_status in ("已废止", "已过期") else "已修正")
 
         # 根据分段模式执行切分
         raw_chunks: List[Dict[str, Any]] = []
@@ -888,8 +949,8 @@ class KnowledgeBaseStore:
                 law_name=clean_law,
                 hierarchy=hierarchy,
                 effective_date=eff_date,
-                effective_to=valid_until if validity_option == "custom" else "",
-                validity="现行有效" if val_status == "有效" else "已废止",
+                effective_to=new_doc_valid_until,
+                validity=chunk_validity,
             )
 
         # 为分段批量计算 BGE-M3 稠密语义向量
@@ -920,10 +981,10 @@ class KnowledgeBaseStore:
                 len(raw_chunks),
                 val_status,
                 "已解析",
-                valid_until if validity_option == "custom" else "",
+                new_doc_valid_until,
                 ver_code,
                 ver_name,
-                1,
+                new_doc_is_latest,
                 eff_date,
                 now,
             ),
@@ -936,7 +997,7 @@ class KnowledgeBaseStore:
                 "law_name": clean_law,
                 "version_code": ver_code,
                 "version_name": ver_name,
-                "is_latest": 1,
+                "is_latest": new_doc_is_latest,
                 "kb_type": kb_type,
                 "document_number": "",
                 "hierarchy": c.get("hierarchy", hierarchy),
@@ -946,8 +1007,8 @@ class KnowledgeBaseStore:
                 "promulgation_date": promulgation_date or eff_date,
                 "effective_date": eff_date,
                 "article_effective_date": eff_date,
-                "effective_to": valid_until if validity_option == "custom" else "",
-                "validity": "现行有效" if val_status == "有效" else "已废止",
+                "effective_to": new_doc_valid_until,
+                "validity": chunk_validity,
                 "superseded_by": "",
                 "article": c.get("article", "第1条"),
                 "paragraph": c.get("paragraph", ""),
@@ -965,7 +1026,7 @@ class KnowledgeBaseStore:
             c["content_vector"] = vec
             c["version_code"] = ver_code
             c["version_name"] = ver_name
-            c["is_latest"] = 1
+            c["is_latest"] = new_doc_is_latest
             mysql_store.execute(
                 """
                 REPLACE INTO law_chunks (
@@ -979,7 +1040,7 @@ class KnowledgeBaseStore:
                     doc_id,
                     clean_law,
                     ver_code,
-                    1,
+                    new_doc_is_latest,
                     c.get("chapter_path", ""),
                     c.get("article", "第1条"),
                     c.get("paragraph", ""),
@@ -988,7 +1049,7 @@ class KnowledgeBaseStore:
                     c.get("parent_chunk_id", ""),
                     hierarchy,
                     eff_date,
-                    valid_until if validity_option == "custom" else "",
+                    new_doc_valid_until,
                     meta["validity"],
                     json.dumps(meta, ensure_ascii=False),
                     json.dumps(vec),
@@ -1009,7 +1070,7 @@ class KnowledgeBaseStore:
             "version_code": ver_code,
             "version_name": ver_name,
             "effective_date": eff_date,
-            "is_latest": 1,
+            "is_latest": new_doc_is_latest,
             "conflict_action": conflict_action,
             "archived_history_count": archived_count,
             "overwritten_doc_id": overwritten_doc_id,
@@ -1202,15 +1263,61 @@ class KnowledgeBaseStore:
         self.version_counter += 1
         return True
 
+    def _extract_version_sort_key(self, doc: Dict[str, Any]) -> Tuple[int, str, int, str, str]:
+        """计算同名法规多版本的时效演进排序权重 (返回值越大代表版本越新、越优先作为现行主版本)：
+        1. 是否未被显式废止/过期（已废止/已过期=0，正常/有效/已修正=1）
+        2. 法规版本生效日期/题注年份构成的标准化日期键 (YYYY-MM-DD)
+        3. 官方时效码辅助权重 (sxx=3 现行有效 > 未指定 > sxx=2 已修改 > sxx=1 已废止)
+        4. 入库创建时间 (created_at) — 当生效日期完全相同时，后上传的修正版优先
+        5. 文档唯一标识 (doc_id)
+        """
+        val_status = (doc.get("validity_status") or "").strip()
+        sxx = doc.get("official_sxx")
+        status_rank = 0 if (sxx == 1 or val_status in ("已废止", "已过期")) else 1
+
+        eff = (doc.get("effective_date") or "").strip()[:10]
+        created_day = (doc.get("created_at") or "").strip()[:10]
+        v_text = f"{doc.get('version_code') or ''} {doc.get('version_name') or ''}"
+        year_matches = re.findall(r"(?:19|20)\d{2}", v_text)
+        sniff_year = max(year_matches) if year_matches else ""
+
+        if eff and re.match(r"^\d{4}-\d{2}-\d{2}$", eff):
+            # 若 effective_date 恰好是上传当天默认值，而题注/版本名中明确抽出了不同的历史年份，则以题注年份为准
+            if sniff_year and eff == created_day and not eff.startswith(sniff_year):
+                date_key = f"{sniff_year}-01-01"
+            else:
+                date_key = eff
+        elif sniff_year:
+            date_key = f"{sniff_year}-01-01"
+        else:
+            date_key = created_day or "1970-01-01"
+
+        if sxx == 3:
+            sxx_rank = 2
+        elif sxx in (1, 2):
+            sxx_rank = 0
+        else:
+            sxx_rank = 1
+
+        return (
+            status_rank,
+            date_key,
+            sxx_rank,
+            str(doc.get("created_at") or ""),
+            str(doc.get("doc_id") or ""),
+        )
+
     def _normalize_legacy_duplicate_versions(self) -> None:
-        """自动规范化存量同名重复文档的版本链：
-        若同一法规 (title) 存在多条记录且存在多个 is_latest=1 或相同 version_code，
-        按上传时间 (created_at ASC) 自动赋予差异化版本 (v1, v2, ...)，仅保留最新上传的一条为 is_latest=1。
+        """自动规范化存量同名文档的版本链与新旧时效次序：
+        1. 若同一法规 (title) 存在多条记录，优先按施行日期/版本年份 (_extract_version_sort_key) 升序排列；
+        2. 确保施行日期/版本年份最新的一条为现行有效主版本 (is_latest=1, validity_status='有效')，
+           其余旧版本自动归档为历史版本 (is_latest=0, validity_status='已修正') 并自动补齐截止日期 (valid_until / effective_to)；
+        3. 若用户通过『设为当前版』手动锁定了某版本 (_manually_pinned_doc_ids)，则保留用户的手动锁定。
         """
         from app.mysql_store import mysql_store
         try:
             all_docs = mysql_store.query(
-                "SELECT doc_id, title, kb_type, version_code, version_name, is_latest, effective_date, chunks_count, created_at FROM law_documents ORDER BY created_at ASC, doc_id ASC"
+                "SELECT doc_id, title, kb_type, version_code, version_name, is_latest, effective_date, valid_until, validity_status, chunks_count, created_at FROM law_documents ORDER BY created_at ASC, doc_id ASC"
             )
         except Exception:
             return
@@ -1238,40 +1345,56 @@ class KnowledgeBaseStore:
                     updated_any = True
                 continue
 
-            # 多条同名文档：检查是否需要修复 is_latest 或重复的 version_code
-            latest_cnt = sum(1 for x in items if (1 if x.get("is_latest") is None else int(x.get("is_latest"))) == 1)
-            codes = [x.get("version_code") or "v1" for x in items]
-            if latest_cnt == 1 and len(set(codes)) == len(items):
+            # 若该同名法规组存在用户显式手动置顶的版本，则尊重手动指定
+            if any(x["doc_id"] in self._manually_pinned_doc_ids for x in items):
                 continue
 
-            total_ver = len(items)
-            for idx, item in enumerate(items, 1):
+            # 先尝试为尚未嗅探过年份的默认记录补齐题注嗅探信息，以便准确按年份排序
+            for item in items:
+                cur_code = (item.get("version_code") or "").strip()
+                if not cur_code or cur_code == "v1":
+                    try:
+                        c_rows = mysql_store.query("SELECT content FROM law_chunks WHERE doc_id = ? LIMIT 3", (item["doc_id"],))
+                        sample_txt = "\n".join(r.get("content", "") for r in c_rows)
+                        if sample_txt:
+                            sn = self.sniff_document_version(title, sample_txt)
+                            if sn.get("sniffed"):
+                                item["_sniffed_code"] = sn["version_code"]
+                                item["_sniffed_name"] = sn["version_name"]
+                                if sn.get("effective_date"):
+                                    item["effective_date"] = sn["effective_date"]
+                    except Exception:
+                        pass
+
+            # 按版本生效日期/年份权重升序排列（排在最后的一条即为最新有效版本）
+            sorted_items = sorted(items, key=self._extract_version_sort_key)
+            expected_latest_id = sorted_items[-1]["doc_id"]
+            current_latest_ids = [
+                x["doc_id"] for x in items
+                if (1 if x.get("is_latest") is None else int(x.get("is_latest"))) == 1
+            ]
+            codes = [x.get("version_code") or "v1" for x in items]
+            if (
+                len(current_latest_ids) == 1
+                and current_latest_ids[0] == expected_latest_id
+                and len(set(codes)) == len(items)
+            ):
+                continue
+
+            total_ver = len(sorted_items)
+            for idx, item in enumerate(sorted_items, 1):
                 did = item["doc_id"]
                 is_last = (idx == total_ver)
                 cur_code = (item.get("version_code") or "").strip()
                 cur_name = (item.get("version_name") or "").strip()
                 eff_d = (item.get("effective_date") or "").strip() or (item.get("created_at") or "")[:10]
 
-                # 尝试从该文档的首条 chunk 嗅探真实年份版本
-                sniffed_code = ""
-                sniffed_name = ""
-                if not cur_code or cur_code == "v1":
-                    try:
-                        c_rows = mysql_store.query("SELECT content FROM law_chunks WHERE doc_id = ? LIMIT 3", (did,))
-                        sample_txt = "\n".join(r.get("content", "") for r in c_rows)
-                        if sample_txt:
-                            sn = self.sniff_document_version(title, sample_txt)
-                            if sn.get("sniffed"):
-                                sniffed_code = sn["version_code"]
-                                sniffed_name = sn["version_name"]
-                                if sn.get("effective_date"):
-                                    eff_d = sn["effective_date"]
-                    except Exception:
-                        pass
+                sniffed_code = item.get("_sniffed_code") or ""
+                sniffed_name = item.get("_sniffed_name") or ""
 
                 new_code = sniffed_code or (cur_code if cur_code and cur_code != "v1" else f"v{idx}")
                 # 防止同一组内 code 碰撞
-                if any(other.get("_assigned_code") == new_code for other in items[:idx - 1]):
+                if any(other.get("_assigned_code") == new_code for other in sorted_items[:idx - 1]):
                     new_code = f"{new_code}-v{idx}"
                 item["_assigned_code"] = new_code
 
@@ -1285,21 +1408,32 @@ class KnowledgeBaseStore:
                 new_latest = 1 if is_last else 0
                 new_val_status = "有效" if is_last else "已修正"
 
+                # 计算历史版本的截止日期（下一版本的生效日前一天），最新有效版本则清空截止日期
+                new_valid_until = ""
+                if not is_last:
+                    next_eff = (sorted_items[idx].get("effective_date") or "").strip()[:10]
+                    if next_eff:
+                        try:
+                            from datetime import date, timedelta
+                            new_valid_until = (date.fromisoformat(next_eff) - timedelta(days=1)).isoformat()
+                        except Exception:
+                            new_valid_until = next_eff
+
                 mysql_store.execute(
                     """
                     UPDATE law_documents
-                    SET version_code = ?, version_name = ?, is_latest = ?, effective_date = ?, validity_status = ?
+                    SET version_code = ?, version_name = ?, is_latest = ?, effective_date = ?, valid_until = ?, validity_status = ?
                     WHERE doc_id = ?
                     """,
-                    (new_code, new_name, new_latest, eff_d, new_val_status, did),
+                    (new_code, new_name, new_latest, eff_d, new_valid_until, new_val_status, did),
                 )
                 mysql_store.execute(
                     """
                     UPDATE law_chunks
-                    SET version_code = ?, is_latest = ?, validity = ?
+                    SET version_code = ?, is_latest = ?, effective_to = ?, validity = ?
                     WHERE doc_id = ?
                     """,
-                    (new_code, new_latest, "现行有效" if is_last else "已修正", did),
+                    (new_code, new_latest, new_valid_until, "现行有效" if is_last else "已修正", did),
                 )
                 updated_any = True
 
@@ -1351,12 +1485,14 @@ class KnowledgeBaseStore:
         )
         other_docs = mysql_store.query("SELECT doc_id FROM law_documents WHERE title = ? AND doc_id != ?", (title, doc_id))
         for od in other_docs:
+            self._manually_pinned_doc_ids.discard(od["doc_id"])
             mysql_store.execute(
                 "UPDATE law_chunks SET is_latest = 0, validity = '已修正' WHERE doc_id = ?",
                 (od["doc_id"],),
             )
 
-        # 2. 将当前文档置为最新有效版本
+        # 2. 将当前文档置为最新有效版本并记录手动锁定
+        self._manually_pinned_doc_ids.add(doc_id)
         mysql_store.execute(
             "UPDATE law_documents SET is_latest = 1, validity_status = '有效' WHERE doc_id = ?",
             (doc_id,),

@@ -351,6 +351,7 @@ class FLKDownloader:
         uploader: str = "国家法规库同步器",
         publish_date: str = "",
         effective_date: str = "",
+        sxx: Optional[int] = None,
     ) -> Dict[str, Any]:
         """从国家法律法规数据库实时下载指定法规的官方 Word (.docx) 文件，自动按分类创建知识库并完成法条切分与向量入库。
         绝不使用本地静态模板造假；若重试 3 次（每次超时 5 秒）后网络不可达，返回 `status='network_unreachable'`。
@@ -385,6 +386,8 @@ class FLKDownloader:
             clean_id = matched["id"]
             publish_date = publish_date or matched.get("publish", "")
             effective_date = effective_date or matched.get("effective_date", "")
+            if sxx is None and matched.get("sxx") is not None:
+                sxx = matched.get("sxx")
 
         # 3. 实时从国家法规库拉取官方 Word (.docx) 附件文件流（带 3 次重试、5 秒超时）
         try:
@@ -410,7 +413,17 @@ class FLKDownloader:
                 "title": clean_title,
             }
 
-        # 4. 调用企业级切分与多版本入库管线（支持同名法规自动作为新版本演进或去重）
+        # 若库中已存在同标题且完全相同生效日期 (eff_date) 的记录，先清理该同版本旧记录以避免重复拉取产生冗余副本
+        if eff_date:
+            same_ver_rows = mysql_store.query(
+                "SELECT doc_id FROM law_documents WHERE title = ? AND effective_date = ?",
+                (clean_title, eff_date[:10]),
+            )
+            for svr in same_ver_rows:
+                mysql_store.execute("DELETE FROM law_documents WHERE doc_id = ?", (svr["doc_id"],))
+                mysql_store.execute("DELETE FROM law_chunks WHERE doc_id = ?", (svr["doc_id"],))
+
+        # 4. 调用企业级切分与多版本入库管线（支持同名法规按施行日期与官方时效状态智能排序演进）
         filename = f"{clean_title}.docx" if word_bytes else f"{clean_title}.txt"
         ingest_res = kb_store.import_advanced_document(
             filename=filename,
@@ -426,6 +439,7 @@ class FLKDownloader:
             promulgation_date=pub_date,
             effective_date=eff_date,
             conflict_action="append_new",
+            official_sxx=sxx,
         )
 
         return {

@@ -994,6 +994,7 @@ if _HAS_FASTAPI:
         uploader: Optional[str] = "国家法规库同步器"
         publish_date: Optional[str] = ""
         effective_date: Optional[str] = ""
+        sxx: Optional[int] = None
 
     @app.post("/flk/download-and-import")
     def download_flk_law_api(
@@ -1010,6 +1011,7 @@ if _HAS_FASTAPI:
             uploader=uploader_name,
             publish_date=req.publish_date or "",
             effective_date=req.effective_date or "",
+            sxx=req.sxx,
         )
         if res.get("status") == "success":
             invalidate_cache()
