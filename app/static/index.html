@@ -5262,23 +5262,18 @@
         node_type: "kb",
         description: "国家法律法规、司法解释与部委规章",
         sort_order: 2,
-        children: [
-          { node_id: "folder_guideline", parent_id: "kb_external", name: "指导性文件", node_type: "folder", children: [], doc_count: 0, path: "外规知识库/指导性文件" },
-          { node_id: "folder_laws", parent_id: "kb_external", name: "法律法规", node_type: "folder", children: [], doc_count: 4, path: "外规知识库/法律法规" },
-          { node_id: "folder_other", parent_id: "kb_external", name: "其他文件", node_type: "folder", children: [], doc_count: 0, path: "外规知识库/其他文件" },
-          { node_id: "folder_hl_test", parent_id: "kb_external", name: "hl_test", node_type: "folder", children: [], doc_count: 0, path: "外规知识库/hl_test" }
-        ],
-        doc_count: 4,
+        children: [],
+        doc_count: 0,
         path: "外规知识库"
       }
     ];
 
     let KB_TREE_DATA = [];
     let CURRENT_SELECTED_NODE = {
-      id: "folder_laws",
-      name: "法律法规",
-      path: "外规知识库/法律法规",
-      type: "folder"
+      id: "kb_external",
+      name: "外规知识库",
+      path: "外规知识库",
+      type: "kb"
     };
     let EXPANDED_NODE_IDS = new Set(["kb_external", "kb_internal"]);
     let KB_PAGINATION = {

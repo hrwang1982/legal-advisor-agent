@@ -341,24 +341,22 @@ class KnowledgeBaseStore:
         from app.mysql_store import mysql_store
         mysql_store.init_schema()
 
-        # 预置初始层级知识库与目录（匹配「AI法盾」标准目录树）
-        default_nodes = [
-            ("kb_internal", "", "内规知识库", "kb", "企业内部规章制度与合规政策", 1),
-            ("kb_external", "", "外规知识库", "kb", "国家法律法规、司法解释与部委规章", 2),
-            ("folder_guideline", "kb_external", "指导性文件", "folder", "指导性案例与监管指引", 1),
-            ("folder_laws", "kb_external", "法律法规", "folder", "国家法律法规及司法解释", 2),
-            ("folder_other", "kb_external", "其他文件", "folder", "其他行业合规与外规参考", 3),
-            ("folder_hl_test", "kb_external", "hl_test", "folder", "测试合规分类", 4),
-        ]
-        now_ts = datetime.now(timezone.utc).isoformat()
-        for nid, pid, nname, ntype, ndesc, nsort in default_nodes:
-            mysql_store.execute(
-                """
-                REPLACE INTO kb_tree_nodes (node_id, parent_id, name, node_type, description, sort_order, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (nid, pid, nname, ntype, ndesc, nsort, now_ts),
-            )
+        # 仅在知识库目录树完全为空（全新部署首次启动）时初始化顶层根知识库；已有数据时严格保留，不执行覆盖注入
+        count_row = mysql_store.query_one("SELECT COUNT(*) AS c FROM kb_tree_nodes")
+        if not count_row or (count_row.get("c") or 0) == 0:
+            default_nodes = [
+                ("kb_internal", "", "内规知识库", "kb", "企业内部规章制度与合规政策", 1),
+                ("kb_external", "", "外规知识库", "kb", "国家法律法规、司法解释与部委规章", 2),
+            ]
+            now_ts = datetime.now(timezone.utc).isoformat()
+            for nid, pid, nname, ntype, ndesc, nsort in default_nodes:
+                mysql_store.execute(
+                    """
+                    INSERT INTO kb_tree_nodes (node_id, parent_id, name, node_type, description, sort_order, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (nid, pid, nname, ntype, ndesc, nsort, now_ts),
+                )
         now = datetime.now(timezone.utc).isoformat()
         mysql_store.execute(
             """
