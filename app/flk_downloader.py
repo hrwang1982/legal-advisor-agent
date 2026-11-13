@@ -1,53 +1,84 @@
 """国家法律法规数据库（flk.npc.gov.cn）官方 Word 文档自动拉取、分类与知识库挂载引擎：
-1. 支持按 type 分类代码（flfg: 法律, xzfg: 行政法规, sfjs: 司法解释, dfxfg: 地方性法规）自动匹配与知识库分类映射；
-2. 反爬风控与安全对抗：完整浏览器指纹模拟、随机时延抖动（Jitter）、指数退避重试、防重复抓取缓存；
-3. 自动下载官方 Word (.docx) 格式文档；
-4. 自动在「外规知识库」下创建并维护对应层级的分类目录（如 外规知识库/法律、外规知识库/行政法规 等）；
-5. 自动对接 import_advanced_document 流水线执行法条状态机切分（编章节条款）、BGE-M3 向量化与全文索引。
+1. 支持按 type 分类代码（flfg: 法律, xzfg: 行政法规, sfjs: 司法解释, dfxfg: 地方性法规, jcfg: 监察法规）直连官方新版检索接口 `/law-search/search/list`；
+2. 彻底摒弃静态本地硬编码兜底：所有列表检索与 Word 文档均实时从国家法律法规数据库拉取；
+3. 严格网络探测与重试机制：每次请求最多重试 3 次（max_retries=3），单次超时时长 5 秒（timeout=5.0s）；若 3 次均失败或超时，明确返回 `network_unreachable` 状态并在前端弹出网络不可达提示；
+4. 反爬风控与安全对抗：完整浏览器指纹模拟、随机时延抖动（Jitter）；
+5. 自动下载官方 Word (.docx) 格式文档（直连 `/law-search/download/pc` 与官方 OBS 预签名链接），并自动按分类在「外规知识库」下创建对应知识库目录完成法条切分与向量入库。
 """
 from __future__ import annotations
 
-import io
 import json
 import logging
-import os
 import random
 import re
+import ssl
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from app.counterparts import check_network_available
 from app.kb import kb_store
 
 logger = logging.getLogger(__name__)
 
 # ————————————————————————————————————————————————
-# 1. 国家法规库分类代码与知识库目录映射配置
+# 1. 国家法规库新版分类代码 (flfgCodeId) 与知识库目录映射配置
+# 数据同源于 https://flk.npc.gov.cn/law-search/search/enumData
 # ————————————————————————————————————————————————
-FLK_TYPE_MAPPING = {
+FLK_TYPE_MAPPING: Dict[str, Dict[str, Any]] = {
     "flfg": {
         "name": "法律",
         "description": "全国人民代表大会及其常务委员会制定的国家法律",
         "hierarchy": "法律",
+        # 对应官网“法律”大类全部子项 codeIdList（若仅筛选纯法律正典不含修改决定则为 [102,110,120,130,140,150,155,160,170]）
+        "flfgCodeId": [101, 102, 110, 120, 130, 140, 150, 155, 160, 170, 180, 190, 195, 200],
+        "statuteOnlyCodeId": [102, 110, 120, 130, 140, 150, 155, 160, 170],
     },
     "xzfg": {
         "name": "行政法规",
         "description": "中华人民共和国国务院制定的行政法规",
         "hierarchy": "行政法规",
+        "flfgCodeId": [201, 210, 215],
+        "statuteOnlyCodeId": [210],
     },
     "sfjs": {
         "name": "司法解释",
         "description": "最高人民法院、最高人民检察院发布的司法解释",
         "hierarchy": "司法解释",
+        "flfgCodeId": [311, 320, 330, 340, 350],
+        "statuteOnlyCodeId": [320, 330, 340],
     },
     "dfxfg": {
         "name": "地方性法规",
         "description": "省、自治区、直辖市人民代表大会及其常委会制定的地方性法规",
         "hierarchy": "地方性法规",
+        "flfgCodeId": [221, 222, 230, 260, 270, 290, 295, 300, 305, 310],
+        "statuteOnlyCodeId": [222, 230, 260, 270, 290, 295, 300],
     },
+    "jcfg": {
+        "name": "监察法规",
+        "description": "国家监察委员会制定的监察法规",
+        "hierarchy": "监察法规",
+        "flfgCodeId": [220],
+        "statuteOnlyCodeId": [220],
+    },
+    "xf": {
+        "name": "宪法",
+        "description": "中华人民共和国宪法及修正案",
+        "hierarchy": "宪法",
+        "flfgCodeId": [100],
+        "statuteOnlyCodeId": [100],
+    },
+}
+
+# 时效性状态码映射（对应新版官网 sxx 字段）
+SXX_STATUS_MAP: Dict[int, str] = {
+    3: "现行有效",
+    4: "尚未生效",
+    2: "已修改",
+    1: "已废止",
 }
 
 # 伪装现代真实浏览器报头池
@@ -58,26 +89,36 @@ USER_AGENTS = [
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
 ]
 
-FLK_API_BASE = "https://flk.npc.gov.cn/api"
-FLK_CDN_BASE = "https://wb.flk.npc.gov.cn"
+FLK_HOST = "https://flk.npc.gov.cn"
+FLK_SEARCH_LIST_URL = f"{FLK_HOST}/law-search/search/list"
+FLK_DOWNLOAD_PC_URL = f"{FLK_HOST}/law-search/download/pc"
+FLK_DETAILS_URL = f"{FLK_HOST}/law-search/search/flfgDetails"
+
+# 固定重试与超时参数：重试 3 次，单次超时 5 秒
+MAX_RETRIES = 3
+TIMEOUT_SECONDS = 5.0
 
 
-def get_random_headers() -> Dict[str, str]:
+def get_random_headers(is_json_post: bool = False) -> Dict[str, str]:
     """生成具备反爬对抗能力的动态真实浏览器请求头。"""
-    return {
+    headers = {
         "User-Agent": random.choice(USER_AGENTS),
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-        "Referer": "https://flk.npc.gov.cn/",
+        "Origin": FLK_HOST,
+        "Referer": f"{FLK_HOST}/search",
         "Connection": "keep-alive",
         "Sec-Fetch-Dest": "empty",
         "Sec-Fetch-Mode": "cors",
         "Sec-Fetch-Site": "same-origin",
     }
+    if is_json_post:
+        headers["Content-Type"] = "application/json;charset=utf-8"
+    return headers
 
 
 def ensure_kb_category_folder(type_code: str) -> Tuple[str, str]:
-    """检查并自动创建外规知识库下的分类子目录（如 外规知识库/行政法规）。
+    """检查并自动创建外规知识库下的分类子目录（如 外规知识库/法律、外规知识库/行政法规）。
     返回: (kb_type_path, hierarchy)
     """
     conf = FLK_TYPE_MAPPING.get(type_code) or {
@@ -88,11 +129,9 @@ def ensure_kb_category_folder(type_code: str) -> Tuple[str, str]:
     target_name = conf["name"]
     hierarchy = conf["hierarchy"]
 
-    # 1. 查找是否存在「外规知识库」根节点 (node_id: kb_external)
     tree = kb_store.get_kb_tree()
     ext_node = next((n for n in tree if n.get("node_id") == "kb_external" or n.get("name") == "外规知识库"), None)
     if not ext_node:
-        # 若根节点不存在则创建
         ext_node = kb_store.create_kb_tree_node(
             name="外规知识库",
             node_type="kb",
@@ -101,7 +140,6 @@ def ensure_kb_category_folder(type_code: str) -> Tuple[str, str]:
 
     ext_node_id = ext_node.get("node_id", "kb_external")
 
-    # 2. 检查外规知识库子节点中是否已有该目录
     children = ext_node.get("children", [])
     child_node = next((c for c in children if c.get("name") == target_name), None)
 
@@ -121,87 +159,189 @@ def ensure_kb_category_folder(type_code: str) -> Tuple[str, str]:
     return kb_type_path, hierarchy
 
 
+class FLKNetworkUnreachableError(Exception):
+    """当连续重试 MAX_RETRIES (3) 次、每次超时 TIMEOUT_SECONDS (5s) 均无法连通国家法规库时抛出。"""
+
+    def __init__(self, message: str, last_error: str = "", retries: int = MAX_RETRIES, timeout: float = TIMEOUT_SECONDS):
+        super().__init__(message)
+        self.message = message
+        self.last_error = last_error
+        self.retries = retries
+        self.timeout = timeout
+
+
 class FLKDownloader:
-    """国家法律法规数据库自动化下载、反爬防护与智能入库器。"""
+    """国家法律法规数据库实时检索、Word下载与知识库归类入库器（无任何本地硬编码兜底）。"""
 
-    def __init__(self, request_delay_range: Tuple[float, float] = (0.8, 1.8)):
+    def __init__(
+        self,
+        request_delay_range: Tuple[float, float] = (0.35, 0.95),
+        max_retries: int = MAX_RETRIES,
+        timeout: float = TIMEOUT_SECONDS,
+    ):
         self.delay_range = request_delay_range
+        self.max_retries = max_retries
+        self.timeout = timeout
+        self._ssl_ctx = ssl._create_unverified_context()
 
-    def _sleep_jitter(self):
-        """随机休眠抖动，避免频繁触发防火墙 WAF 频控特征。"""
+    def _sleep_jitter(self) -> None:
+        """随机休眠抖动，避免高频并发触发防火墙 WAF 频控。"""
         delay = random.uniform(*self.delay_range)
         time.sleep(delay)
+
+    def _request_with_retry(
+        self,
+        url: str,
+        method: str = "GET",
+        json_body: Optional[Dict[str, Any]] = None,
+        custom_headers: Optional[Dict[str, str]] = None,
+    ) -> bytes:
+        """执行带有严格「重试 3 次、单次超时 5 秒」机制的 HTTP 请求。
+        若 3 次尝试全部超时或网络异常，抛出 FLKNetworkUnreachableError。
+        """
+        is_post = method.upper() == "POST"
+        data_bytes = json.dumps(json_body, ensure_ascii=False).encode("utf-8") if (is_post and json_body is not None) else None
+        last_err_str = ""
+
+        for attempt in range(1, self.max_retries + 1):
+            headers = custom_headers or get_random_headers(is_json_post=is_post)
+            req = urllib.request.Request(url, data=data_bytes, headers=headers, method=method.upper())
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout, context=self._ssl_ctx) as resp:
+                    body = resp.read()
+                    if not body:
+                        raise urllib.error.URLError("响应体为空")
+                    return body
+            except Exception as e:
+                last_err_str = f"{type(e).__name__}: {e}"
+                logger.warning(
+                    f"[FLKDownloader] 请求国家法规库超时/异常 (第 {attempt}/{self.max_retries} 次尝试, 超时阈值 {self.timeout}s): {url} -> {last_err_str}"
+                )
+                if attempt < self.max_retries:
+                    time.sleep(0.4 * attempt)
+
+        raise FLKNetworkUnreachableError(
+            message=f"网络不可达：连接国家法律法规数据库 (flk.npc.gov.cn) 失败（已重试 {self.max_retries} 次，单次超时 {int(self.timeout)} 秒），请检查网络连接或防火墙策略后重试。",
+            last_error=last_err_str,
+            retries=self.max_retries,
+            timeout=self.timeout,
+        )
 
     def search_laws(
         self,
         keyword: str = "",
         type_code: str = "flfg",
         page: int = 1,
-        size: int = 10,
+        size: int = 20,
+        sxx: Optional[List[int]] = None,
     ) -> Dict[str, Any]:
-        """在线向国家法律法规数据库检索法律文件列表。
-        支持智能识别网络连通状态与优雅降级。
+        """实时向国家法律法规数据库新版接口 `/law-search/search/list` 检索法规列表。
+        绝不使用任何本地静态硬编码；若重试 3 次（每次 5 秒）后仍不可达，返回 `status='network_unreachable'`。
         """
         clean_kw = (keyword or "").strip()
-        net_ok = check_network_available(timeout=0.8)
+        conf = FLK_TYPE_MAPPING.get(type_code) or FLK_TYPE_MAPPING["flfg"]
+        code_id_list = conf["flfgCodeId"]
 
-        if not net_ok:
-            # 离线环境返回内置权威法律检索索引
-            return self._fallback_offline_search(clean_kw, type_code, page, size)
-
-        params = {
-            "type": type_code,
-            "searchType": "title;vague" if clean_kw else "all",
-            "sortTr": "f_bbrq_s;desc",
-            "page": page,
-            "size": size,
-            "_": int(time.time() * 1000),
+        payload: Dict[str, Any] = {
+            "searchRange": 1,
+            "sxrq": [],
+            "gbrq": [],
+            "searchType": 2,  # 2: 模糊检索, 1: 精确检索
+            "sxx": sxx if sxx is not None else [],
+            "gbrqYear": [],
+            "flfgCodeId": code_id_list,
+            "zdjgCodeId": [],
+            "searchContent": clean_kw,
+            "orderByParam": {"order": "-1", "sort": ""},
+            "pageNum": max(1, int(page)),
+            "pageSize": max(1, min(int(size), 100)),
         }
-        if clean_kw:
-            params["title"] = clean_kw
-
-        query_str = urllib.parse.urlencode(params)
-        req_url = f"{FLK_API_BASE}/?{query_str}"
-        headers = get_random_headers()
 
         try:
-            req = urllib.request.Request(req_url, headers=headers)
-            with urllib.request.urlopen(req, timeout=4.0) as resp:
-                resp_text = resp.read().decode("utf-8")
-                # 检查是否被 WAF 单页 HTML 拦截
-                if resp_text.startswith("<!doctype html") or "<html" in resp_text[:100]:
-                    logger.info("[FLKDownloader] 触发国家法规库网宿 WAF 静态响应，平滑切换权威基准镜像检索")
-                    return self._fallback_offline_search(clean_kw, type_code, page, size)
+            raw_bytes = self._request_with_retry(
+                url=FLK_SEARCH_LIST_URL,
+                method="POST",
+                json_body=payload,
+            )
+            resp_text = raw_bytes.decode("utf-8", errors="replace")
+            if resp_text.lstrip().startswith("<!doctype html") or "<html" in resp_text[:120].lower():
+                raise FLKNetworkUnreachableError(
+                    message=f"网络不可达：国家法律法规数据库 (flk.npc.gov.cn) 返回了网关拦截页而非有效数据（已校验重试策略 {self.max_retries} 次 / {int(self.timeout)} 秒超时）。",
+                    last_error="WAF HTML Challenge Response",
+                )
 
-                data = json.loads(resp_text)
-                if data.get("code") == 200:
-                    res = data.get("result", {})
-                    items = []
-                    for it in res.get("data", []):
-                        items.append(
-                            {
-                                "id": it.get("id"),
-                                "title": it.get("title", "").strip(),
-                                "type": it.get("type") or FLK_TYPE_MAPPING.get(type_code, {}).get("name", "法律"),
-                                "type_code": type_code,
-                                "office": it.get("office", "全国人民代表大会"),
-                                "publish": str(it.get("publish", ""))[:10],
-                                "has_word": True,
-                                "source": "official_live",
-                            }
-                        )
-                    return {
-                        "status": "success",
-                        "total": res.get("totalSizes", len(items)),
-                        "page": page,
-                        "size": size,
+            data = json.loads(resp_text)
+            if data.get("code") != 200:
+                raise FLKNetworkUnreachableError(
+                    message=f"国家法律法规数据库接口返回异常状态 (code={data.get('code')}, msg={data.get('msg')})",
+                    last_error=str(data.get("msg") or ""),
+                )
+
+            rows = data.get("rows") or []
+            total = int(data.get("total") or len(rows))
+            items: List[Dict[str, Any]] = []
+            for it in rows:
+                raw_title = it.get("title") or ""
+                clean_title = re.sub(r"<[^>]+>", "", raw_title).strip()
+                sxx_val = it.get("sxx")
+                sxx_label = SXX_STATUS_MAP.get(sxx_val, "有效" if sxx_val is None else str(sxx_val))
+                items.append(
+                    {
+                        "id": it.get("bbbs") or it.get("id") or "",
+                        "bbbs": it.get("bbbs") or it.get("id") or "",
+                        "title": clean_title,
+                        "type": it.get("flxz") or conf.get("name", "法律"),
+                        "type_code": type_code,
+                        "office": it.get("zdjgName") or "全国人民代表大会常务委员会",
+                        "publish": str(it.get("gbrq") or "")[:10],
+                        "effective_date": str(it.get("sxrq") or "")[:10],
+                        "sxx": sxx_val,
+                        "validity_label": sxx_label,
+                        "has_word": True,
                         "source": "official_live",
-                        "laws": items,
                     }
-        except Exception as e:
-            logger.debug(f"[FLKDownloader] 在线检索国家法规库异常/超时: {e}")
+                )
 
-        return self._fallback_offline_search(clean_kw, type_code, page, size)
+            return {
+                "status": "success",
+                "total": total,
+                "page": int(page),
+                "size": int(size),
+                "type_code": type_code,
+                "type_name": conf.get("name", "法律"),
+                "source": "official_live",
+                "laws": items,
+            }
+
+        except FLKNetworkUnreachableError as net_err:
+            return {
+                "status": "network_unreachable",
+                "message": net_err.message,
+                "error": net_err.message,
+                "detail": net_err.last_error,
+                "retry_count": self.max_retries,
+                "timeout_seconds": int(self.timeout),
+                "total": 0,
+                "page": int(page),
+                "size": int(size),
+                "source": "network_unreachable",
+                "laws": [],
+            }
+        except Exception as e:
+            err_msg = f"网络不可达：连接国家法律法规数据库 (flk.npc.gov.cn) 异常（重试 {self.max_retries} 次，超时 {int(self.timeout)} 秒）：{e}"
+            return {
+                "status": "network_unreachable",
+                "message": err_msg,
+                "error": err_msg,
+                "detail": str(e),
+                "retry_count": self.max_retries,
+                "timeout_seconds": int(self.timeout),
+                "total": 0,
+                "page": int(page),
+                "size": int(size),
+                "source": "network_unreachable",
+                "laws": [],
+            }
 
     def download_and_import(
         self,
@@ -209,45 +349,73 @@ class FLKDownloader:
         title: Optional[str] = None,
         type_code: str = "flfg",
         uploader: str = "国家法规库同步器",
+        publish_date: str = "",
+        effective_date: str = "",
     ) -> Dict[str, Any]:
-        """下载指定法律法规的 Word (.docx) 文件并执行自动分类创建知识库与解析入库。"""
-        clean_title = (title or "").strip().strip("《》")
-        if not clean_title and not flk_id:
-            raise ValueError("必须提供法规标题或国家法规库条目 ID")
+        """从国家法律法规数据库实时下载指定法规的官方 Word (.docx) 文件，自动按分类创建知识库并完成法条切分与向量入库。
+        绝不使用本地静态模板造假；若重试 3 次（每次超时 5 秒）后网络不可达，返回 `status='network_unreachable'`。
+        """
+        clean_title = re.sub(r"<[^>]+>", "", (title or "")).strip().strip("《》")
+        clean_id = (flk_id or "").strip()
+        if not clean_title and not clean_id:
+            raise ValueError("必须提供法规标题或国家法规库唯一标识 (bbbs)")
 
-        # 1. 自动确保分类知识库存在 (如 外规知识库/法律)
+        # 1. 自动确保分类知识库存在 (如 外规知识库/法律、外规知识库/行政法规)
         kb_path, hierarchy = ensure_kb_category_folder(type_code)
 
-        # 2. 检查库内是否已有同名法规（去重防重复入库）
-        from app.mysql_store import mysql_store
-        existing_doc = mysql_store.query_one("SELECT doc_id, title FROM law_documents WHERE title = ?", (clean_title,))
-        if existing_doc:
+        # 2. 若未传入 flk_id (bbbs)，先通过实时检索接口按标题定位 bbbs
+        if not clean_id and clean_title:
+            search_res = self.search_laws(keyword=clean_title, type_code=type_code, page=1, size=10)
+            if search_res.get("status") == "network_unreachable":
+                return {
+                    "status": "network_unreachable",
+                    "message": search_res.get("message") or "网络不可达：无法连接国家法律法规数据库",
+                    "retry_count": self.max_retries,
+                    "timeout_seconds": int(self.timeout),
+                    "title": clean_title,
+                }
+            laws = search_res.get("laws") or []
+            matched = next((x for x in laws if x.get("title") == clean_title), laws[0] if laws else None)
+            if not matched or not matched.get("id"):
+                return {
+                    "status": "error",
+                    "message": f"未在国家法律法规数据库中检索到《{clean_title}》的对应条目。",
+                    "title": clean_title,
+                }
+            clean_id = matched["id"]
+            publish_date = publish_date or matched.get("publish", "")
+            effective_date = effective_date or matched.get("effective_date", "")
+
+        # 3. 实时从国家法规库拉取官方 Word (.docx) 附件文件流（带 3 次重试、5 秒超时）
+        try:
+            word_bytes, fetched_pub_date, fetched_eff_date, raw_text_fallback = self._fetch_live_word_bytes(clean_id)
+        except FLKNetworkUnreachableError as net_err:
             return {
-                "status": "already_exists",
-                "message": f"法规《{clean_title}》在知识库中已存在（文档标识: {existing_doc['doc_id']}），已跳过重复抓取。",
-                "doc_id": existing_doc["doc_id"],
-                "kb_type": kb_path,
+                "status": "network_unreachable",
+                "message": net_err.message,
+                "error": net_err.message,
+                "detail": net_err.last_error,
+                "retry_count": self.max_retries,
+                "timeout_seconds": int(self.timeout),
                 "title": clean_title,
             }
 
-        # 3. 尝试从国家法规库拉取 Word 附件文件流
-        word_bytes: Optional[bytes] = None
-        doc_format = "DOCX"
-        pub_date = datetime.now().strftime("%Y-%m-%d")
+        pub_date = publish_date or fetched_pub_date or datetime.now().strftime("%Y-%m-%d")
+        eff_date = effective_date or fetched_eff_date or pub_date
 
-        net_ok = check_network_available(timeout=0.8)
-        if net_ok and flk_id:
-            word_bytes, pub_date = self._fetch_live_word_bytes(flk_id)
+        if not word_bytes and not raw_text_fallback:
+            return {
+                "status": "error",
+                "message": f"国家法律法规数据库暂未提供《{clean_title}》(bbbs={clean_id}) 的可下载 Word 文档或正文内容。",
+                "title": clean_title,
+            }
 
-        # 4. 若离线或未获取到官方文件，采用系统原生内置的高保真法规 Word 字节流构建器
-        if not word_bytes or len(word_bytes) < 100:
-            word_bytes = self._build_official_word_document_bytes(clean_title, type_code)
-
-        # 5. 调用系统企业级切分与多模态入库管线
-        filename = f"{clean_title}.docx"
+        # 4. 调用企业级切分与多版本入库管线（支持同名法规自动作为新版本演进或去重）
+        filename = f"{clean_title}.docx" if word_bytes else f"{clean_title}.txt"
         ingest_res = kb_store.import_advanced_document(
             filename=filename,
             content_bytes=word_bytes,
+            raw_text=raw_text_fallback if not word_bytes else None,
             law_name=clean_title,
             kb_type=kb_path,
             department="法律合规部",
@@ -256,158 +424,65 @@ class FLKDownloader:
             validity_option="permanent",
             hierarchy=hierarchy,
             promulgation_date=pub_date,
-            effective_date=pub_date,
+            effective_date=eff_date,
+            conflict_action="append_new",
         )
 
         return {
             "status": "success",
-            "message": f"成功从国家法律法规数据库获取《{clean_title}》(Word版)，并自动归类导入至「{kb_path}」！",
+            "message": f"成功从国家法律法规数据库下载《{clean_title}》(官方Word版)，并自动归类导入至「{kb_path}」！",
             "title": clean_title,
             "kb_type": kb_path,
             "hierarchy": hierarchy,
             "doc_id": ingest_res.get("doc_id"),
+            "version_name": ingest_res.get("version_name", ""),
             "chunks_count": ingest_res.get("chunks_count", 0),
-            "doc_size": ingest_res.get("doc_size", "0 KB"),
-            "format": doc_format,
+            "doc_size": f"{len(word_bytes) / 1024:.1f} KB" if word_bytes else f"{len((raw_text_fallback or '').encode('utf-8')) / 1024:.1f} KB",
+            "format": "DOCX" if word_bytes else "TXT",
         }
 
-    def _fetch_live_word_bytes(self, flk_id: str) -> Tuple[Optional[bytes], str]:
-        """向国家法规库请求详情并解析真实 Word (.docx) 文件流。"""
-        self._sleep_jitter()
-        detail_url = f"{FLK_API_BASE}/detail"
-        headers = get_random_headers()
-        body = urllib.parse.urlencode({"id": flk_id}).encode("utf-8")
-
-        try:
-            req = urllib.request.Request(detail_url, data=body, headers=headers)
-            with urllib.request.urlopen(req, timeout=5.0) as resp:
-                text = resp.read().decode("utf-8")
-                if "<html" in text[:100]:
-                    return None, ""
-                data = json.loads(text)
-                res = data.get("result", {})
-                pub_date = str(res.get("publish", ""))[:10]
-                body_list = res.get("body", [])
-                if not body_list:
-                    return None, pub_date
-
-                # 优先匹配 docx / doc 文件路径
-                target_path = ""
-                for b in body_list:
-                    p = b.get("path", "")
-                    if p.lower().endswith(".docx") or p.lower().endswith(".doc"):
-                        target_path = p
-                        break
-                if not target_path and body_list:
-                    target_path = body_list[0].get("path", "")
-
-                if target_path:
-                    dl_url = f"{FLK_CDN_BASE}{target_path}" if target_path.startswith("/") else target_path
-                    self._sleep_jitter()
-                    req_dl = urllib.request.Request(dl_url, headers=headers)
-                    with urllib.request.urlopen(req_dl, timeout=15.0) as dl_resp:
-                        return dl_resp.read(), pub_date
-        except Exception as e:
-            logger.debug(f"[FLKDownloader] 抓取附件异常: {e}")
-        return None, ""
-
-    def _build_official_word_document_bytes(self, title: str, type_code: str) -> bytes:
-        """原生构建标准 OpenXML (.docx) 格式官方法规 Word 附件流。
-        确保无论是否处于断网隔离环境，都能输出合法的、可供法条状态机解析的 Word 字节流。
+    def _fetch_live_word_bytes(self, bbbs: str) -> Tuple[Optional[bytes], str, str, str]:
+        """向国家法规库请求 `/law-search/download/pc` 获取官方预签名 Word (.docx) 下载链接并拉取二进制流。
+        若单次超时（5秒），自动按 3 次重试策略执行；若 3 次均超时则向上抛出 FLKNetworkUnreachableError。
+        返回: (word_bytes, publish_date, effective_date, raw_text_from_details_if_no_docx)
         """
-        import io
-        import zipfile
+        self._sleep_jitter()
+        query = urllib.parse.urlencode({"format": "docx", "bbbs": bbbs, "fileId": ""})
+        dl_meta_url = f"{FLK_DOWNLOAD_PC_URL}?{query}"
 
-        conf = FLK_TYPE_MAPPING.get(type_code, {"name": "法律", "hierarchy": "法律"})
-        type_name = conf["name"]
-        now_date = datetime.now().strftime("%Y年%m月%d日")
+        raw_meta = self._request_with_retry(url=dl_meta_url, method="GET")
+        meta_json = json.loads(raw_meta.decode("utf-8", errors="replace"))
 
-        # 生成标准的法规正文骨架
-        paragraphs = [
-            f"{title}",
-            f"（全国人民代表大会常务委员会发布 · {type_name}）",
-            f"第一章 总则",
-            f"第一条 【立法宗旨】为了规范合规管理，保障各方合法权益，维护社会主义市场经济秩序，制定本法。",
-            f"第二条 【适用范围】在中华人民共和国境内从事相关法律活动、履行合同与权益救济，适用本法。",
-            f"第三条 【基本原则】从事相关活动应当遵循自愿、公平、诚实信用和不得损害国家利益与社会公共利益的原则。",
-            f"第二章 核心要件与法律责任",
-            f"第四条 【主体资质】相关市场主体应当依法成立，具备法律、行政法规规定的从业资质和履约能力。",
-            f"第五条 【履行义务】当事人应当按照约定全面履行自己的义务。遵循诚信原则，恪守保密与协作准则。",
-            f"第六条 【违约责任】当事人一方不履行合同义务或者履行合同义务不符合约定的，应当承担继续履行、采取补救措施或者赔偿损失等违约责任。",
-            f"第三章 附则",
-            f"第七条 【施行日期】本法自{now_date}起施行。",
-        ]
+        dl_url = ""
+        if meta_json.get("code") == 200 and isinstance(meta_json.get("data"), dict):
+            dl_url = (meta_json["data"].get("url") or "").strip()
 
-        # 优先使用 python-docx 库生成真正标准的 docx
-        try:
-            import docx
+        if dl_url:
+            self._sleep_jitter()
+            # 下载 OBS 预签名 Word 文件（同样遵循重试 3 次，单次超时 5 秒）
+            dl_headers = {
+                "User-Agent": random.choice(USER_AGENTS),
+                "Accept": "*/*",
+                "Referer": f"{FLK_HOST}/",
+            }
+            word_bytes = self._request_with_retry(url=dl_url, method="GET", custom_headers=dl_headers)
+            if word_bytes and len(word_bytes) > 100:
+                return word_bytes, "", "", ""
 
-            doc = docx.Document()
-            doc.add_heading(title, level=0)
-            doc.add_paragraph(f"（权威发布类别：{type_name} · 官方核定版本）")
-            for p in paragraphs[2:]:
-                if "章" in p and len(p) < 15:
-                    doc.add_heading(p, level=1)
-                else:
-                    doc.add_paragraph(p)
+        # 若该法规在官网仅提供在线正文（如早期决定无独立 docx 附件），实时查询官网详情接口 `/law-search/search/flfgDetails`
+        det_query = urllib.parse.urlencode({"bbbs": bbbs})
+        det_url = f"{FLK_DETAILS_URL}?{det_query}"
+        raw_det = self._request_with_retry(url=det_url, method="GET")
+        det_json = json.loads(raw_det.decode("utf-8", errors="replace"))
+        if det_json.get("code") == 200 and isinstance(det_json.get("data"), dict):
+            d_obj = det_json["data"]
+            pub_date = str(d_obj.get("gbrq") or "")[:10]
+            eff_date = str(d_obj.get("sxrq") or "")[:10]
+            content_html = d_obj.get("content") or ""
+            clean_text = re.sub(r"<[^>]+>", "\n", content_html).strip()
+            return None, pub_date, eff_date, clean_text
 
-            buf = io.BytesIO()
-            doc.save(buf)
-            return buf.getvalue()
-        except Exception:
-            pass
-
-        # 降级：原生手工封装最小合规 zip/word/document.xml 容器
-        xml_content = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'
-        for p in paragraphs:
-            xml_content += f'<w:p><w:r><w:t>{p}</w:t></w:r></w:p>'
-        xml_content += '</w:body></w:document>'
-
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-            z.writestr("[Content_Types].xml", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>')
-            z.writestr("_rels/.rels", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>')
-            z.writestr("word/document.xml", xml_content)
-        return buf.getvalue()
-
-    def _fallback_offline_search(self, keyword: str, type_code: str, page: int, size: int) -> Dict[str, Any]:
-        """内置国家法规库权威索引镜像（当处于断网环境、沙箱隔离或触发 WAF 时平滑提供服务）。"""
-        OFFLINE_REGISTRY = [
-            {"id": "flk_flfg_001", "title": "中华人民共和国民法典", "type_code": "flfg", "type": "法律", "office": "全国人民代表大会", "publish": "2020-05-28"},
-            {"id": "flk_flfg_002", "title": "中华人民共和国公司法", "type_code": "flfg", "type": "法律", "office": "全国人民代表大会常务委员会", "publish": "2023-12-29"},
-            {"id": "flk_flfg_003", "title": "中华人民共和国劳动合同法", "type_code": "flfg", "type": "法律", "office": "全国人民代表大会常务委员会", "publish": "2012-12-28"},
-            {"id": "flk_flfg_004", "title": "中华人民共和国数据安全法", "type_code": "flfg", "type": "法律", "office": "全国人民代表大会常务委员会", "publish": "2021-06-10"},
-            {"id": "flk_flfg_005", "title": "中华人民共和国个人信息保护法", "type_code": "flfg", "type": "法律", "office": "全国人民代表大会常务委员会", "publish": "2021-08-20"},
-            {"id": "flk_xzfg_001", "title": "保障农民工工资支付条例", "type_code": "xzfg", "type": "行政法规", "office": "国务院", "publish": "2019-12-30"},
-            {"id": "flk_xzfg_002", "title": "重大行政决策程序暂行条例", "type_code": "xzfg", "type": "行政法规", "office": "国务院", "publish": "2019-04-20"},
-            {"id": "flk_xzfg_003", "title": "优化营商环境条例", "type_code": "xzfg", "type": "行政法规", "office": "国务院", "publish": "2019-10-22"},
-            {"id": "flk_sfjs_001", "title": "最高人民法院关于适用〈中华人民共和国民法典〉时间效力的若干规定", "type_code": "sfjs", "type": "司法解释", "office": "最高人民法院", "publish": "2020-12-29"},
-            {"id": "flk_sfjs_002", "title": "最高人民法院关于适用〈中华人民共和国民法典〉合同编通则若干问题的解释", "type_code": "sfjs", "type": "司法解释", "office": "最高人民法院", "publish": "2023-11-28"},
-            {"id": "flk_dfxfg_001", "title": "北京市促进科技成果转化条例", "type_code": "dfxfg", "type": "地方性法规", "office": "北京市人民代表大会常务委员会", "publish": "2019-11-27"},
-            {"id": "flk_dfxfg_002", "title": "上海市优化营商环境条例", "type_code": "dfxfg", "type": "地方性法规", "office": "上海市人民代表大会常务委员会", "publish": "2020-04-10"},
-        ]
-
-        filtered = [it for it in OFFLINE_REGISTRY if it["type_code"] == type_code]
-        if keyword:
-            filtered = [it for it in filtered if keyword.lower() in it["title"].lower()]
-
-        total = len(filtered)
-        start = (page - 1) * size
-        page_items = filtered[start : start + size]
-
-        for it in page_items:
-            it["has_word"] = True
-            it["source"] = "authoritative_cache"
-
-        return {
-            "status": "success",
-            "total": total,
-            "page": page,
-            "size": size,
-            "source": "authoritative_cache",
-            "laws": page_items,
-        }
+        return None, "", "", ""
 
 
 flk_downloader = FLKDownloader()
-

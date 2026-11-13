@@ -2955,43 +2955,62 @@
 
   <!-- ======================== 模态框: 国家法规库 Word 文档自动拉取与归类入库 ======================== -->
   <div class="modal-overlay" id="flkDownloaderModal">
-    <div class="modal-box" style="max-width:840px; width:92%;">
+    <div class="modal-box" style="max-width:900px; width:94%;">
       <div class="modal-header">
-        <div class="modal-title">📥 国家法律法规数据库（flk.npc.gov.cn）官方 Word 文档自动拉取与归类入库</div>
+        <div class="modal-title">📥 国家法律法规数据库（flk.npc.gov.cn）官方 Word 文档实时拉取与归类入库</div>
         <div class="modal-close" onclick="closeFlkDownloaderModal()">✕</div>
       </div>
       <div class="modal-body" style="max-height:calc(85vh - 120px); overflow-y:auto;">
         <div class="card-desc" style="margin-bottom:12px;">
-          支持直连国家法规库官方接口安全下载原版 Word (.docx) 文件。系统内置<strong>反爬风控对抗管线</strong>（模拟真实浏览器指纹与请求抖动延时），并根据 <code>type</code> 分类代码自动在「外规知识库」下创建对应目录（法律/行政法规/司法解释/地方性法规），一键完成法条状态机切分与向量索引。
+          实时直连国家法律法规数据库（<code>flk.npc.gov.cn</code>）官方接口检索并下载原版 Word (<code>.docx</code>) 文件（<strong>无任何本地硬编码数据，网络探测自动重试 3 次、单次超时 5 秒</strong>）。根据 <code>type</code> 分类代码自动在「外规知识库」下创建对应目录（法律/行政法规/司法解释/地方性法规），一键完成法条切分与向量入库。
+        </div>
+
+        <!-- 网络不可达醒目告警横幅（默认隐藏，超时重试3次失败后弹出） -->
+        <div id="flkNetworkErrorBanner" style="display:none; background:#fff2f0; border:1px solid #ffccc7; border-radius:8px; padding:10px 14px; margin-bottom:12px; color:#cf1322; font-size:13px; align-items:center; justify-content:space-between; gap:10px;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-size:16px;">🚨</span>
+            <span id="flkNetworkErrorText" style="font-weight:600;">网络不可达：连接国家法律法规数据库 (flk.npc.gov.cn) 超时（已重试 3 次，单次超时 5 秒），请检查网络连接后重试。</span>
+          </div>
+          <button class="btn-reset" style="padding:3px 10px; font-size:12px; color:#cf1322; border-color:#ffa39e; white-space:nowrap;" onclick="searchFlkLaws(1)">🔄 重新探测</button>
         </div>
 
         <!-- 筛选栏 -->
-        <div style="background:#fafbfc; border:1px solid var(--border-color); border-radius:8px; padding:12px 16px; margin-bottom:14px; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+        <div style="background:#fafbfc; border:1px solid var(--border-color); border-radius:8px; padding:12px 16px; margin-bottom:12px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
           <div style="display:flex; align-items:center; gap:6px;">
             <span style="font-size:12.5px; font-weight:600; color:var(--text-title);">法规分类:</span>
-            <select class="filter-select" id="flkSearchTypeSelect" style="width:160px;" onchange="searchFlkLaws()">
+            <select class="filter-select" id="flkSearchTypeSelect" style="width:155px;" onchange="searchFlkLaws(1)">
               <option value="flfg">法律 (flfg)</option>
               <option value="xzfg">行政法规 (xzfg)</option>
               <option value="sfjs">司法解释 (sfjs)</option>
               <option value="dfxfg">地方性法规 (dfxfg)</option>
+              <option value="jcfg">监察法规 (jcfg)</option>
+            </select>
+          </div>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span style="font-size:12.5px; font-weight:600; color:var(--text-title);">时效状态:</span>
+            <select class="filter-select" id="flkSearchSxxSelect" style="width:130px;" onchange="searchFlkLaws(1)">
+              <option value="3">现行有效</option>
+              <option value="">全部状态</option>
+              <option value="4">尚未生效</option>
+              <option value="2">已修改</option>
             </select>
           </div>
           <div style="flex:1; min-width:200px; display:flex; gap:8px;">
-            <input type="text" class="filter-input" id="flkSearchKeyword" placeholder="输入法规名称关键字（如：公司法、数据安全、营商环境...）" style="flex:1;" onkeydown="if(event.key==='Enter') searchFlkLaws()" />
-            <button class="btn-search" onclick="searchFlkLaws()">🔍 检索</button>
+            <input type="text" class="filter-input" id="flkSearchKeyword" placeholder="输入法规名称关键字（如：公司法、数据安全、营商环境...）" style="flex:1;" onkeydown="if(event.key==='Enter') searchFlkLaws(1)" />
+            <button class="btn-search" onclick="searchFlkLaws(1)">🔍 实时检索</button>
           </div>
         </div>
 
         <!-- 检索结果表格 -->
-        <div style="border:1px solid var(--border-light); border-radius:6px; overflow:hidden; margin-bottom:14px;">
+        <div style="border:1px solid var(--border-light); border-radius:6px; overflow:hidden; margin-bottom:10px; max-height:290px; overflow-y:auto;">
           <table class="data-table" style="font-size:12.5px;">
             <thead>
-              <tr style="background:#f4f5f7;">
-                <th style="width:40px; text-align:center;"><input type="checkbox" id="flkSelectAllChk" onchange="document.querySelectorAll('.flk-chk').forEach(c => c.checked = this.checked)" checked /></th>
-                <th style="min-width:200px;">法规名称</th>
-                <th style="width:90px;">类型</th>
-                <th style="width:160px;">发布机关</th>
-                <th style="width:95px;">发布日期</th>
+              <tr style="background:#f4f5f7; position:sticky; top:0; z-index:2;">
+                <th style="width:38px; text-align:center;"><input type="checkbox" id="flkSelectAllChk" onchange="document.querySelectorAll('.flk-chk').forEach(c => c.checked = this.checked)" checked /></th>
+                <th style="min-width:210px;">法规名称</th>
+                <th style="width:95px;">类型 / 时效</th>
+                <th style="width:155px;">制定 / 发布机关</th>
+                <th style="width:95px;">公布 / 施行日</th>
                 <th style="width:110px; text-align:center;">官方格式 / 操作</th>
               </tr>
             </thead>
@@ -3001,9 +3020,25 @@
           </table>
         </div>
 
+        <!-- 实时分页控制栏 -->
+        <div id="flkPaginationBar" style="display:flex; justify-content:space-between; align-items:center; font-size:12px; color:var(--text-sub); margin-bottom:12px; padding:4px 2px;">
+          <div id="flkTotalStatText">共 0 部法律法规</div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <select id="flkPageSizeSelect" class="filter-select" style="width:95px; height:26px; font-size:12px; padding:0 6px;" onchange="searchFlkLaws(1)">
+              <option value="10">10 条/页</option>
+              <option value="20" selected>20 条/页</option>
+              <option value="50">50 条/页</option>
+              <option value="100">100 条/页</option>
+            </select>
+            <button class="btn-reset" id="flkPrevPageBtn" style="padding:2px 10px; font-size:12px;" onclick="changeFlkPage(-1)">上一页</button>
+            <span id="flkPageIndicator" style="font-weight:600; color:var(--text-title);">第 1 / 1 页</span>
+            <button class="btn-reset" id="flkNextPageBtn" style="padding:2px 10px; font-size:12px;" onclick="changeFlkPage(1)">下一页</button>
+          </div>
+        </div>
+
         <!-- 终端日志框 -->
         <div style="font-size:12px; font-weight:600; color:var(--text-title); margin-bottom:6px;">执行控制台输出与分类入库状态：</div>
-        <div id="flkDownloadLogs" style="background:#1f2329; color:#a6e22e; border-radius:6px; padding:12px; font-family:Menlo, Monaco, Consolas, monospace; font-size:12px; height:140px; overflow-y:auto; white-space:pre-wrap; line-height:1.6;">等待执行自动拉取...</div>
+        <div id="flkDownloadLogs" style="background:#1f2329; color:#a6e22e; border-radius:6px; padding:12px; font-family:Menlo, Monaco, Consolas, monospace; font-size:12px; height:130px; overflow-y:auto; white-space:pre-wrap; line-height:1.6;">等待执行自动拉取...</div>
       </div>
       <div class="modal-footer" style="display:flex; justify-content:space-between; align-items:center;">
         <span style="font-size:12px; color:var(--text-muted);">💡 自动对齐分类：flfg ➔ 外规知识库/法律 | xzfg ➔ 行政法规 | sfjs ➔ 司法解释 | dfxfg ➔ 地方性法规</span>
@@ -6868,54 +6903,129 @@
       }
     }
 
-    // 模态框 5: 国家法规库 Word 文档自动拉取与分类入库
+    // 模态框 5: 国家法规库 Word 文档实时拉取与分类入库（无本地静态硬编码，超时重试3次每次5秒）
     let FLK_SEARCH_RESULTS_CACHE = [];
+    const FLK_PAGE_STATE = { page: 1, size: 20, total: 0, maxPage: 1 };
+
     function openFlkDownloaderModal() {
       document.getElementById("flkDownloaderModal").classList.add("open");
-      searchFlkLaws();
+      searchFlkLaws(1);
     }
     function closeFlkDownloaderModal() {
       document.getElementById("flkDownloaderModal").classList.remove("open");
     }
 
-    async function searchFlkLaws() {
+    function changeFlkPage(delta) {
+      const nextP = FLK_PAGE_STATE.page + delta;
+      if (nextP < 1 || nextP > FLK_PAGE_STATE.maxPage) return;
+      searchFlkLaws(nextP);
+    }
+
+    async function searchFlkLaws(targetPage = null) {
+      if (targetPage !== null && typeof targetPage === "number") {
+        FLK_PAGE_STATE.page = Math.max(1, targetPage);
+      }
+      const sizeSel = document.getElementById("flkPageSizeSelect");
+      if (sizeSel) {
+        FLK_PAGE_STATE.size = parseInt(sizeSel.value, 10) || 20;
+      }
+
       const kw = (document.getElementById("flkSearchKeyword").value || "").trim();
       const typeCode = document.getElementById("flkSearchTypeSelect").value;
+      const sxxVal = document.getElementById("flkSearchSxxSelect") ? document.getElementById("flkSearchSxxSelect").value : "3";
       const tbody = document.getElementById("flkSearchTableBody");
       const logs = document.getElementById("flkDownloadLogs");
+      const errBanner = document.getElementById("flkNetworkErrorBanner");
+      const errText = document.getElementById("flkNetworkErrorText");
+      const totalStat = document.getElementById("flkTotalStatText");
+      const pageInd = document.getElementById("flkPageIndicator");
+
+      if (errBanner) errBanner.style.display = "none";
       if (tbody) {
-        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:24px; color:var(--text-muted);">⏳ 正在向国家法律法规数据库检索 [${typeCode}] 最新文件...</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:28px; color:var(--text-muted);">⏳ 正在实时连接国家法律法规数据库 (flk.npc.gov.cn) 检索 [${typeCode}] 第 ${FLK_PAGE_STATE.page} 页（探测超时 5s × 最多重试 3 次）...</td></tr>`;
       }
+
       try {
-        const res = await fetch(`/flk/search?keyword=${encodeURIComponent(kw)}&type_code=${typeCode}&size=10`);
+        const url = `/flk/search?keyword=${encodeURIComponent(kw)}&type_code=${encodeURIComponent(typeCode)}&page=${FLK_PAGE_STATE.page}&size=${FLK_PAGE_STATE.size}&sxx=${encodeURIComponent(sxxVal)}`;
+        const res = await fetch(url);
         const d = await res.json();
-        const laws = d.laws || [];
-        FLK_SEARCH_RESULTS_CACHE = laws;
-        if (logs) {
-          logs.textContent = `[${new Date().toLocaleTimeString()}] 检索完成，找到 ${d.total || laws.length} 部法律法规。\n数据源状态: ${d.source === 'official_live' ? '🟢 官方在线直连' : '🟡 权威法规镜像'}\n`;
-        }
-        if (laws.length === 0) {
-          tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:24px; color:var(--text-muted);">未检索到匹配的法规，请更换关键词重试。</td></tr>`;
+
+        // 若后端探测重试 3 次（每次 5 秒）后判定网络不可达，绝不使用静态硬编码，立即弹出网络不可达提示
+        if (d.status === "network_unreachable") {
+          const netMsg = d.message || d.error || "网络不可达：连接国家法律法规数据库 (flk.npc.gov.cn) 超时（已重试 3 次，单次超时 5 秒），请检查网络连接后重试。";
+          FLK_SEARCH_RESULTS_CACHE = [];
+          if (errBanner) errBanner.style.display = "flex";
+          if (errText) errText.textContent = netMsg;
+          if (totalStat) totalStat.textContent = "共 0 部法律法规（网络不可达）";
+          if (pageInd) pageInd.textContent = "第 0 / 0 页";
+          if (tbody) {
+            tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:28px; color:#cf1322; font-weight:600; background:#fff2f0;">🚨 ${netMsg}</td></tr>`;
+          }
+          if (logs) {
+            logs.textContent = `[${new Date().toLocaleTimeString()}] ❌ ${netMsg}\n重试详情: 已执行 ${d.retry_count || 3} 次连接重试，单次超时阈值 ${d.timeout_seconds || 5} 秒 (${d.detail || 'Timeout'})。\n`;
+          }
+          showToast(`🚨 ${netMsg}`);
+          alert(netMsg);
           return;
         }
+
+        const laws = d.laws || [];
+        FLK_SEARCH_RESULTS_CACHE = laws;
+        FLK_PAGE_STATE.total = d.total || laws.length;
+        FLK_PAGE_STATE.maxPage = Math.max(1, Math.ceil(FLK_PAGE_STATE.total / FLK_PAGE_STATE.size));
+
+        if (totalStat) {
+          totalStat.innerHTML = `国家法规库实时共匹配 <strong style="color:var(--primary);">${FLK_PAGE_STATE.total}</strong> 部法律法规（当前页展示 ${laws.length} 部）`;
+        }
+        if (pageInd) {
+          pageInd.textContent = `第 ${FLK_PAGE_STATE.page} / ${FLK_PAGE_STATE.maxPage} 页`;
+        }
+        const prevBtn = document.getElementById("flkPrevPageBtn");
+        const nextBtn = document.getElementById("flkNextPageBtn");
+        if (prevBtn) prevBtn.disabled = FLK_PAGE_STATE.page <= 1;
+        if (nextBtn) nextBtn.disabled = FLK_PAGE_STATE.page >= FLK_PAGE_STATE.maxPage;
+
+        if (logs) {
+          logs.textContent = `[${new Date().toLocaleTimeString()}] 实时检索完成：国家法律法规数据库共返回 ${FLK_PAGE_STATE.total} 部法规（当前第 ${FLK_PAGE_STATE.page}/${FLK_PAGE_STATE.maxPage} 页，本页 ${laws.length} 部）。\n数据源状态: 🟢 国家法律法规数据库 (flk.npc.gov.cn) 官方在线直连\n`;
+        }
+
+        if (laws.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:24px; color:var(--text-muted);">未检索到匹配的法规，请更换关键词或切换时效状态重试。</td></tr>`;
+          return;
+        }
+
         tbody.innerHTML = "";
         laws.forEach((it, idx) => {
           const tr = document.createElement("tr");
+          const valBadgeColor = it.sxx === 3 ? "background:#f6ffed; color:#52c41a; border:1px solid #b7eb8f;" : (it.sxx === 4 ? "background:#e6f7ff; color:#1890ff; border:1px solid #91d5ff;" : "background:#fff7e6; color:#d46b08; border:1px solid #ffd591;");
           tr.innerHTML = `
             <td style="text-align:center;"><input type="checkbox" class="flk-chk" value="${idx}" checked /></td>
             <td><strong style="color:var(--text-title); font-size:13px;">${it.title}</strong></td>
-            <td><span style="background:#e6f7ff; color:#1890ff; padding:2px 6px; border-radius:3px; font-size:11.5px;">${it.type}</span></td>
-            <td style="font-size:12px; color:var(--text-sub);">${it.office || '全国人大'}</td>
-            <td style="font-size:12px; color:var(--text-muted);">${it.publish || '-'}</td>
+            <td>
+              <div style="display:flex; flex-direction:column; gap:2px; align-items:flex-start;">
+                <span style="background:#e6f7ff; color:#1890ff; padding:1px 6px; border-radius:3px; font-size:11px;">${it.type}</span>
+                <span style="${valBadgeColor} padding:0px 5px; border-radius:3px; font-size:10.5px;">${it.validity_label || '现行有效'}</span>
+              </div>
+            </td>
+            <td style="font-size:12px; color:var(--text-sub);">${it.office || '全国人大常委会'}</td>
+            <td style="font-size:11.5px; color:var(--text-muted); line-height:1.4;">
+              <div>公布: ${it.publish || '-'}</div>
+              ${it.effective_date ? `<div style="color:#52c41a;">施行: ${it.effective_date}</div>` : ''}
+            </td>
             <td style="text-align:center;">
-              <span style="background:#f6ffed; color:#52c41a; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600;">DOCX</span>
-              <button class="btn-reset" style="padding:2px 8px; font-size:11px; margin-left:6px; color:#1890ff;" onclick="importSingleFlkLaw(${idx})">📥 导入</button>
+              <span style="background:#f6ffed; color:#52c41a; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:600;">DOCX</span>
+              <button class="btn-reset" style="padding:2px 8px; font-size:11px; margin-left:4px; color:#1890ff;" onclick="importSingleFlkLaw(${idx})">📥 导入</button>
             </td>
           `;
           tbody.appendChild(tr);
         });
       } catch (e) {
-        if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:24px; color:#ff4d4f;">检索请求异常: ${e.message}</td></tr>`;
+        const netMsg = `网络不可达：连接国家法律法规数据库失败（${e.message || '请求超时'}），请检查网络连接！`;
+        if (errBanner) errBanner.style.display = "flex";
+        if (errText) errText.textContent = netMsg;
+        if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:24px; color:#ff4d4f; font-weight:600;">🚨 ${netMsg}</td></tr>`;
+        showToast(`🚨 ${netMsg}`);
+        alert(netMsg);
       }
     }
 
@@ -6938,13 +7048,15 @@
     async function executeFlkImportQueue(items) {
       const btn = document.getElementById("btnExecuteFlkDownload");
       const logs = document.getElementById("flkDownloadLogs");
+      const errBanner = document.getElementById("flkNetworkErrorBanner");
+      const errText = document.getElementById("flkNetworkErrorText");
       if (btn) {
         btn.disabled = true;
         btn.style.opacity = "0.6";
         btn.style.cursor = "not-allowed";
-        btn.textContent = "⏳ 正在自动拉取并归类入库中...";
+        btn.textContent = "⏳ 正在实时下载官方 Word 并归类入库中...";
       }
-      showToast(`⏳ 开始处理 ${items.length} 部法规自动下载与入库...`);
+      showToast(`⏳ 开始处理 ${items.length} 部法规实时下载与入库...`);
 
       let successCount = 0;
       let alreadyExistsCount = 0;
@@ -6952,7 +7064,7 @@
       for (let i = 0; i < items.length; i++) {
         const it = items[i];
         if (logs) {
-          logs.textContent += `\n[${i+1}/${items.length}] 正在从国家法规库拉取: 《${it.title}》(Word版)...\n`;
+          logs.textContent += `\n[${i+1}/${items.length}] 正在从国家法规库拉取: 《${it.title}》(官方Word版)...\n`;
           logs.scrollTop = logs.scrollHeight;
         }
         try {
@@ -6967,15 +7079,28 @@
               flk_id: it.id,
               title: it.title,
               type_code: it.type_code,
-              uploader: RBAC_STATE.currentUser
+              uploader: RBAC_STATE.currentUser,
+              publish_date: it.publish || "",
+              effective_date: it.effective_date || ""
             })
           });
           const d = await res.json();
-          if (d.status === "success") {
+          if (d.status === "network_unreachable") {
+            const netMsg = d.message || d.error || "网络不可达：下载国家法规库 Word 文档超时（已重试 3 次，单次超时 5 秒）";
+            if (errBanner) errBanner.style.display = "flex";
+            if (errText) errText.textContent = netMsg;
+            if (logs) {
+              logs.textContent += `  🚨 ${netMsg}\n`;
+              logs.scrollTop = logs.scrollHeight;
+            }
+            showToast(`🚨 ${netMsg}`);
+            alert(netMsg);
+            break;
+          } else if (d.status === "success") {
             successCount++;
             if (logs) {
-              logs.textContent += `  ✓ 自动对齐分类: [${d.kb_type}] (位阶: ${d.hierarchy})\n`;
-              logs.textContent += `  ✓ Word纯文本抽取与编章节条款状态机切分完成: 共 ${d.chunks_count} 个分段切片\n`;
+              logs.textContent += `  ✓ 自动对齐分类: [${d.kb_type}] (位阶: ${d.hierarchy}, 文件大小: ${d.doc_size || '-'})\n`;
+              logs.textContent += `  ✓ 官方 Word 纯文本抽取与编章节条款状态机切分完成: 共 ${d.chunks_count} 个分段切片\n`;
               logs.textContent += `  ✓ BGE-M3 向量化与全文索引同步完成\n`;
               logs.scrollTop = logs.scrollHeight;
             }
@@ -6992,10 +7117,14 @@
             }
           }
         } catch (err) {
+          const netMsg = `网络不可达：拉取《${it.title}》请求失败 (${err.message})`;
           if (logs) {
-            logs.textContent += `  ❌ 请求异常: ${err.message}\n`;
+            logs.textContent += `  🚨 ${netMsg}\n`;
             logs.scrollTop = logs.scrollHeight;
           }
+          showToast(`🚨 ${netMsg}`);
+          alert(netMsg);
+          break;
         }
       }
 
@@ -7003,7 +7132,9 @@
         logs.textContent += `\n🎉 批量处理完毕！成功入库 ${successCount} 部，已存在 ${alreadyExistsCount} 部。\n知识库目录树与文档列表已自动刷新。`;
         logs.scrollTop = logs.scrollHeight;
       }
-      showToast(`🎉 导入完成！成功入库 ${successCount} 部法规。`);
+      if (successCount > 0) {
+        showToast(`🎉 导入完成！成功入库 ${successCount} 部官方 Word 法规。`);
+      }
 
       if (btn) {
         btn.disabled = false;

@@ -969,16 +969,31 @@ if _HAS_FASTAPI:
         keyword: str = "",
         type_code: str = "flfg",
         page: int = 1,
-        size: int = 10,
+        size: int = 20,
+        sxx: Optional[str] = None,
     ):
-        """在线检索国家法规库法规列表"""
-        return flk_downloader.search_laws(keyword=keyword, type_code=type_code, page=page, size=size)
+        """实时在线检索国家法规库法规列表（重试3次，单次超时5秒，无任何静态硬编码）"""
+        sxx_list: Optional[List[int]] = None
+        if sxx:
+            try:
+                sxx_list = [int(x.strip()) for x in sxx.split(",") if x.strip().isdigit()]
+            except Exception:
+                sxx_list = None
+        return flk_downloader.search_laws(
+            keyword=keyword,
+            type_code=type_code,
+            page=page,
+            size=size,
+            sxx=sxx_list,
+        )
 
     class FLKDownloadReq(BaseModel):
         flk_id: Optional[str] = None
         title: Optional[str] = None
         type_code: str = "flfg"
         uploader: Optional[str] = "国家法规库同步器"
+        publish_date: Optional[str] = ""
+        effective_date: Optional[str] = ""
 
     @app.post("/flk/download-and-import")
     def download_flk_law_api(
@@ -993,7 +1008,11 @@ if _HAS_FASTAPI:
             title=req.title,
             type_code=req.type_code,
             uploader=uploader_name,
+            publish_date=req.publish_date or "",
+            effective_date=req.effective_date or "",
         )
+        if res.get("status") == "success":
+            invalidate_cache()
         return res
 else:
     app = None
