@@ -553,6 +553,10 @@ class AuditStore:
                 syn_map = cfg.setdefault("legal_synonym_map", {})
                 syn_map[p_key] = p_data.get("formal", "")
                 knowledge_center.save(cfg)
+            elif p_type == "cross_reference_graph":
+                from app.graph_builder import apply_cross_references_to_config
+                refs_list = p_data if isinstance(p_data, list) else [p_data]
+                apply_cross_references_to_config(refs_list)
             else:
                 knowledge_center.save(cfg)
         except Exception as e:

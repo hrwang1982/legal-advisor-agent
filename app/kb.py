@@ -1061,6 +1061,28 @@ class KnowledgeBaseStore:
             es_vector_store.init_index(dims=len(vectors[0]) if vectors else 128)
             es_indexed_count = es_vector_store.index_chunks(raw_chunks)
 
+        # 文档入库即自动静默抽取条文明示引致关系，沉淀至待审规则提案池
+        auto_refs_count = 0
+        if new_doc_is_latest == 1:
+            try:
+                from app.graph_builder import extract_quick_regex_references, _record_graph_proposals
+
+                auto_refs: List[Dict[str, Any]] = []
+                seen_auto = set()
+                for c in raw_chunks:
+                    if c.get("chunk_type") == "hierarchical_parent":
+                        continue
+                    for r in extract_quick_regex_references(clean_law, c.get("article", ""), c.get("content", "")):
+                        k = (r["source_law"], r["source_article"], r["target_law"], r["target_article"])
+                        if k not in seen_auto:
+                            seen_auto.add(k)
+                            auto_refs.append(r)
+                if auto_refs:
+                    _record_graph_proposals(auto_refs, query_prefix="文档入库自动抽取")
+                    auto_refs_count = len(auto_refs)
+            except Exception:
+                pass
+
         self.version_counter += 1
         return {
             "doc_id": doc_id,
@@ -1076,6 +1098,7 @@ class KnowledgeBaseStore:
             "chunks_count": len(raw_chunks),
             "es_indexed": es_indexed_count > 0,
             "embed_backend": backend,
+            "auto_extracted_graph_refs": auto_refs_count,
             "preview_chunks": [
                 {
                     "chunk_id": c["chunk_id"],

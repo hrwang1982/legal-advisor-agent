@@ -2873,39 +2873,92 @@
 
   <!-- ======================== 模态框: 知识图谱离线构建 ======================== -->
   <div class="modal-overlay" id="graphBuilderModal">
-    <div class="modal-box" style="max-width:680px;">
+    <div class="modal-box" style="max-width:720px;">
       <div class="modal-header">
         <div class="modal-title">🕸️ LLM-Graph Builder 知识图谱离线构建</div>
         <div class="modal-close" onclick="closeGraphBuilderModal()">✕</div>
       </div>
       <div class="modal-body">
-        <div class="card-desc">离线大模型批处理扫描条文，抽取关联、参照、兜底引致关系；或输入最高院司法解释《理解与适用》文本，自动提取法条锚定关系。</div>
-        <div class="form-group" style="margin-bottom:10px;">
-          <label class="form-label">法规 / 司法解释名称</label>
-          <input type="text" class="filter-input" id="graphLawName" placeholder="如：最高人民法院关于适用〈民法典〉合同编通则若干问题的解释" />
+        <div class="card-desc" style="margin-bottom:12px;">自动扫描已入库法规条文或司法解释论述，提取明示引致、实体法赔偿依赖与特别法衔接关系，助力智能问答多跳关联推理。</div>
+
+        <!-- 双模式 Tab 切换栏 -->
+        <div style="display:flex; gap:8px; margin-bottom:14px; border-bottom:1px solid var(--border-color); padding-bottom:10px;">
+          <button type="button" id="graphTabBtnKb" class="btn-search" style="padding:6px 14px; font-size:12.5px; background:#d32029; color:#fff;" onclick="switchGraphBuilderTab('kb_batch')">📚 从知识库选择批量构建（免手输）</button>
+          <button type="button" id="graphTabBtnManual" class="btn-reset" style="padding:6px 14px; font-size:12.5px;" onclick="switchGraphBuilderTab('manual')">✍️ 手动粘贴条文 /《理解与适用》抽取</button>
         </div>
-        <div class="form-grid-2">
-          <div class="form-group">
-            <label class="form-label">条号</label>
-            <input type="text" class="filter-input" id="graphArticle" placeholder="如：第65条" />
-          </div>
-          <div class="form-group">
-            <label class="form-label">抽取类型</label>
-            <select class="filter-select" id="graphExtractType">
-              <option value="cross_ref">条文法理引致（明示/实体依赖/特别法）</option>
-              <option value="interpretation">司法解释《理解与适用》法理锚定抽取</option>
+
+        <!-- 模式 1：从知识库批量抽取（默认） -->
+        <div id="graphTabKbBatch">
+          <div class="form-group" style="margin-bottom:10px;">
+            <label class="form-label">构建范围</label>
+            <select class="filter-select" id="graphKbScopeType" onchange="onGraphScopeTypeChange()">
+              <option value="selected">✅ 当前列表已勾选法规文档</option>
+              <option value="single_doc">📄 指定单部已入库法规</option>
+              <option value="current_folder">📁 当前左侧选中知识库目录全部有效法规</option>
+              <option value="all_docs">🌐 全库所有现行有效法规</option>
             </select>
           </div>
+
+          <div id="graphSelectedDocsTip" style="display:none; background:#f6ffed; border:1px solid #b7eb8f; border-radius:6px; padding:8px 12px; font-size:12px; color:#389e0d; margin-bottom:10px;"></div>
+
+          <div class="form-group" id="graphKbSingleDocRow" style="display:none; margin-bottom:10px;">
+            <label class="form-label">选择已入库法规（自动读取切片条文，无需手工粘贴）</label>
+            <select class="filter-select" id="graphKbDocSelect">
+              <option value="">正在加载知识库法规...</option>
+            </select>
+          </div>
+
+          <div id="graphCurrentFolderTip" style="display:none; background:#e6f7ff; border:1px solid #91d5ff; border-radius:6px; padding:8px 12px; font-size:12px; color:#096dd9; margin-bottom:10px;"></div>
+
+          <div class="form-group" style="margin-bottom:10px;">
+            <label class="form-label">扫描与抽取策略</label>
+            <select class="filter-select" id="graphScanModeSelect">
+              <option value="smart">🧠 智能漏斗扫描（全量正则明示 + 重点条文深层实体依赖抽取，推荐）</option>
+              <option value="regex">⚡ 极速规则扫描（仅扫描全量条文明示引致，毫秒级零 Token 消耗）</option>
+            </select>
+          </div>
+
+          <div style="display:flex; align-items:center; gap:8px; margin-top:8px; padding:8px 10px; background:#fafafa; border:1px solid var(--border-color); border-radius:6px;">
+            <input type="checkbox" id="graphAutoApplyChk" style="cursor:pointer;" />
+            <label for="graphAutoApplyChk" style="font-size:12.5px; color:var(--text-title); cursor:pointer;">抽取完成后<strong>直接采纳并写入线上图谱库</strong>（不勾选则先进入待审规则提案池，也可在下方结果中一键采纳）</label>
+          </div>
         </div>
-        <div class="form-group" style="margin-top:10px;">
-          <label class="form-label">正文或《理解与适用》论述内容</label>
-          <textarea class="filter-input" id="graphContent" style="height:110px; font-size:12.5px;" placeholder="粘贴条文正文或最高法《理解与适用》论述..."></textarea>
+
+        <!-- 模式 2：手动输入/《理解与适用》辅助抽取 -->
+        <div id="graphTabManual" style="display:none;">
+          <div class="form-group" style="margin-bottom:10px;">
+            <label class="form-label">法规 / 司法解释名称</label>
+            <input type="text" class="filter-input" id="graphLawName" placeholder="如：最高人民法院关于适用〈民法典〉合同编通则若干问题的解释" />
+          </div>
+          <div class="form-grid-2">
+            <div class="form-group">
+              <label class="form-label">条号</label>
+              <input type="text" class="filter-input" id="graphArticle" placeholder="如：第65条" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">抽取类型</label>
+              <select class="filter-select" id="graphExtractType">
+                <option value="cross_ref">条文法理引致（明示/实体依赖/特别法）</option>
+                <option value="interpretation">司法解释《理解与适用》法理锚定抽取</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group" style="margin-top:10px;">
+            <label class="form-label">正文或《理解与适用》论述内容</label>
+            <textarea class="filter-input" id="graphContent" style="height:110px; font-size:12.5px;" placeholder="粘贴条文正文或最高法《理解与适用》论述..."></textarea>
+          </div>
         </div>
-        <div id="graphResultBox" style="display:none; background:#f7f8fa; border:1px solid var(--border-color); border-radius:6px; padding:10px; margin-top:10px; font-size:12px; max-height:140px; overflow-y:auto;"></div>
+
+        <div id="graphResultBox" style="display:none; background:#f7f8fa; border:1px solid var(--border-color); border-radius:6px; padding:10px; margin-top:12px; font-size:12px; max-height:190px; overflow-y:auto; line-height:1.6;"></div>
       </div>
-      <div class="modal-footer">
-        <button class="btn-reset" onclick="closeGraphBuilderModal()">取消</button>
-        <button class="btn-search" style="background:#d32029; color:#fff;" onclick="executeGraphExtraction()">开始离线抽取并生成提案</button>
+      <div class="modal-footer" style="justify-content:space-between;">
+        <div>
+          <button id="btnApplyGraphDirect" class="btn-search" style="display:none; background:#52c41a; color:#fff;" onclick="applyExtractedGraphNow()">✅ 一键采纳结果并写入图谱库</button>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn-reset" onclick="closeGraphBuilderModal()">取消</button>
+          <button id="btnExecuteGraphExtract" class="btn-search" style="background:#d32029; color:#fff;" onclick="executeGraphExtraction()">开始批量扫描构建</button>
+        </div>
       </div>
     </div>
   </div>
@@ -6799,23 +6852,200 @@
       loadKbDocuments();
     }
 
-    // 模态框 2: 知识图谱离线构建
-    function openGraphBuilderModal() { document.getElementById("graphBuilderModal").classList.add("open"); }
+    // 模态框 2: 知识图谱离线构建（支持知识库自动批量构建 + 手动辅助抽取）
+    let GRAPH_BUILDER_MODE = "kb_batch";
+    let LAST_EXTRACTED_GRAPH_REFS = [];
+
+    function switchGraphBuilderTab(mode) {
+      GRAPH_BUILDER_MODE = mode;
+      const kbPanel = document.getElementById("graphTabKbBatch");
+      const manualPanel = document.getElementById("graphTabManual");
+      const kbBtn = document.getElementById("graphTabBtnKb");
+      const manualBtn = document.getElementById("graphTabBtnManual");
+      const execBtn = document.getElementById("btnExecuteGraphExtract");
+      if (mode === "kb_batch") {
+        if (kbPanel) kbPanel.style.display = "block";
+        if (manualPanel) manualPanel.style.display = "none";
+        if (kbBtn) { kbBtn.className = "btn-search"; kbBtn.style.background = "#d32029"; kbBtn.style.color = "#fff"; }
+        if (manualBtn) { manualBtn.className = "btn-reset"; manualBtn.style.background = ""; manualBtn.style.color = ""; }
+        if (execBtn) execBtn.textContent = "开始批量扫描构建";
+      } else {
+        if (kbPanel) kbPanel.style.display = "none";
+        if (manualPanel) manualPanel.style.display = "block";
+        if (manualBtn) { manualBtn.className = "btn-search"; manualBtn.style.background = "#d32029"; manualBtn.style.color = "#fff"; }
+        if (kbBtn) { kbBtn.className = "btn-reset"; kbBtn.style.background = ""; kbBtn.style.color = ""; }
+        if (execBtn) execBtn.textContent = "开始离线抽取并生成提案";
+      }
+    }
+
+    function onGraphScopeTypeChange() {
+      const scope = document.getElementById("graphKbScopeType").value;
+      const selTip = document.getElementById("graphSelectedDocsTip");
+      const docRow = document.getElementById("graphKbSingleDocRow");
+      const folderTip = document.getElementById("graphCurrentFolderTip");
+      if (selTip) selTip.style.display = "none";
+      if (docRow) docRow.style.display = "none";
+      if (folderTip) folderTip.style.display = "none";
+
+      if (scope === "selected") {
+        const checkedEls = Array.from(document.querySelectorAll(".doc-chk:checked"));
+        if (selTip) {
+          selTip.style.display = "block";
+          if (checkedEls.length > 0) {
+            const titles = checkedEls.map(el => {
+              const d = (RBAC_STATE.kbDocuments || []).find(item => item.doc_id === el.value);
+              return d ? `《${d.title}》` : el.value;
+            });
+            selTip.style.background = "#f6ffed";
+            selTip.style.borderColor = "#b7eb8f";
+            selTip.style.color = "#389e0d";
+            selTip.innerHTML = `已联动勾选 <strong>${checkedEls.length}</strong> 部法规：${escapeHtml(titles.join("、"))}`;
+          } else {
+            selTip.style.background = "#fff7e6";
+            selTip.style.borderColor = "#ffd591";
+            selTip.style.color = "#d46b08";
+            selTip.textContent = "当前列表中暂未勾选文档，请先在表格勾选或切换为「指定单部已入库法规 / 当前目录」。";
+          }
+        }
+      } else if (scope === "single_doc") {
+        if (docRow) docRow.style.display = "block";
+      } else if (scope === "current_folder") {
+        const curPath = (typeof CURRENT_SELECTED_NODE !== "undefined" && CURRENT_SELECTED_NODE && CURRENT_SELECTED_NODE.path)
+          ? CURRENT_SELECTED_NODE.path : "外规知识库";
+        if (folderTip) {
+          folderTip.style.display = "block";
+          folderTip.innerHTML = `将自动读取知识库目录 <strong>「${escapeHtml(curPath)}」</strong> 下所有现行有效法规条文切片并扫描构建。`;
+        }
+      }
+    }
+
+    async function loadGraphBuilderDocOptions() {
+      const sel = document.getElementById("graphKbDocSelect");
+      if (!sel) return;
+      try {
+        const res = await fetch("/kb/documents/advanced?limit=200");
+        const data = await res.json();
+        const docs = (data.documents || []).filter(d => d.is_latest === undefined || Number(d.is_latest) === 1);
+        const listToUse = docs.length > 0 ? docs : (data.documents || []);
+        if (listToUse.length === 0) {
+          sel.innerHTML = '<option value="">暂无已解析的法规文档</option>';
+          return;
+        }
+        sel.innerHTML = listToUse.map(d =>
+          `<option value="${escapeHtml(d.doc_id)}">《${escapeHtml(d.title)}》 [${escapeHtml(d.kb_type || '默认库')} · ${d.chunks_count || 0}条切片]</option>`
+        ).join("");
+      } catch (e) {
+        sel.innerHTML = '<option value="">加载法规列表失败</option>';
+      }
+    }
+
+    function openGraphBuilderModal() {
+      document.getElementById("graphBuilderModal").classList.add("open");
+      const box = document.getElementById("graphResultBox");
+      const applyBtn = document.getElementById("btnApplyGraphDirect");
+      if (box) { box.style.display = "none"; box.innerHTML = ""; }
+      if (applyBtn) applyBtn.style.display = "none";
+      LAST_EXTRACTED_GRAPH_REFS = [];
+      switchGraphBuilderTab("kb_batch");
+
+      const checkedEls = Array.from(document.querySelectorAll(".doc-chk:checked"));
+      const scopeSel = document.getElementById("graphKbScopeType");
+      if (scopeSel) {
+        scopeSel.value = checkedEls.length > 0 ? "selected" : "single_doc";
+      }
+      onGraphScopeTypeChange();
+      loadGraphBuilderDocOptions();
+    }
+
     function closeGraphBuilderModal() { document.getElementById("graphBuilderModal").classList.remove("open"); }
+
     async function executeGraphExtraction() {
+      const box = document.getElementById("graphResultBox");
+      const applyBtn = document.getElementById("btnApplyGraphDirect");
+      const execBtn = document.getElementById("btnExecuteGraphExtract");
+      if (applyBtn) applyBtn.style.display = "none";
+      LAST_EXTRACTED_GRAPH_REFS = [];
+
+      if (GRAPH_BUILDER_MODE === "kb_batch") {
+        const scope = document.getElementById("graphKbScopeType").value;
+        const scanMode = document.getElementById("graphScanModeSelect").value;
+        const autoApply = document.getElementById("graphAutoApplyChk").checked;
+        const payload = { scan_mode: scanMode, auto_propose: true, auto_apply: autoApply };
+
+        if (scope === "selected") {
+          const checkedIds = Array.from(document.querySelectorAll(".doc-chk:checked")).map(c => c.value);
+          if (checkedIds.length === 0) {
+            showToast("请先在列表中勾选文档，或切换抽取范围");
+            return;
+          }
+          payload.doc_ids = checkedIds;
+        } else if (scope === "single_doc") {
+          const docId = document.getElementById("graphKbDocSelect").value;
+          if (!docId) {
+            showToast("请选择一部已入库法规");
+            return;
+          }
+          payload.doc_ids = [docId];
+        } else if (scope === "current_folder") {
+          payload.kb_type = (typeof CURRENT_SELECTED_NODE !== "undefined" && CURRENT_SELECTED_NODE && CURRENT_SELECTED_NODE.path)
+            ? CURRENT_SELECTED_NODE.path : "外规知识库";
+        } else {
+          payload.kb_type = "ALL";
+        }
+
+        if (execBtn) { execBtn.disabled = true; execBtn.textContent = "⏳ 扫描构建中..."; }
+        showToast("⏳ 正在从知识库自动读取条文切片并批量构建知识图谱...");
+        box.style.display = "block";
+        box.innerHTML = "正在扫描所选法规条文切片并分析法条引致与依赖关系，请稍候...";
+
+        try {
+          const res = await fetch("/graph-builder/batch-extract-kb", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          const d = await res.json();
+          const items = d.references || [];
+          LAST_EXTRACTED_GRAPH_REFS = items;
+
+          const statusNote = autoApply
+            ? `已直接采纳写入线上图谱库（新增 ${d.applied_count || 0} 条）`
+            : `已自动登记至待审规则提案池`;
+
+          if (items.length === 0) {
+            box.innerHTML = `<strong>扫描完成：</strong>共扫描 ${d.scanned_docs || 0} 部法规（${d.scanned_chunks || 0} 条切片），未发现新的法条引致关系。`;
+          } else {
+            box.innerHTML =
+              `<strong>🎉 批量构建完成：</strong>扫描 ${d.scanned_docs || 0} 部法规（${d.scanned_chunks || 0} 条切片），提取 <strong>${items.length}</strong> 条关系（${statusNote}）：<br/>` +
+              items.map(it =>
+                `• [${escapeHtml(it.relation_type || "explicit")}] 《${escapeHtml(it.source_law)}》${escapeHtml(it.source_article)} → 《${escapeHtml(it.target_law)}》${escapeHtml(it.target_article)} <span style="color:#666;">(${escapeHtml(it.reason || "")})</span>`
+              ).join("<br/>");
+            if (!autoApply && applyBtn) {
+              applyBtn.style.display = "inline-block";
+            }
+          }
+        } catch (e) {
+          box.innerHTML = "❌ 批量构建请求失败，请检查后端服务状态。";
+        } finally {
+          if (execBtn) { execBtn.disabled = false; execBtn.textContent = "开始批量扫描构建"; }
+        }
+        return;
+      }
+
+      // 手动输入/《理解与适用》辅助模式
       const law = document.getElementById("graphLawName").value.trim();
       const art = document.getElementById("graphArticle").value.trim();
       const content = document.getElementById("graphContent").value.trim();
       const type = document.getElementById("graphExtractType").value;
       if (!law || !content) { showToast("请填写法规名称与正文"); return; }
+      if (execBtn) { execBtn.disabled = true; execBtn.textContent = "⏳ 抽取中..."; }
       showToast("⏳ 正在执行离线引致关系与法理锚定抽取...");
-      const box = document.getElementById("graphResultBox");
       box.style.display = "block";
       box.innerHTML = "正在调用 LLM-Graph Builder 扫描法条依赖关系...";
 
       try {
         const url = type === "interpretation" ? "/graph-builder/extract-interpretation" : "/graph-builder/extract";
-        const payload = type === "interpretation" 
+        const payload = type === "interpretation"
           ? { interpretation_name: law, article: art || "第1条", text_content: content }
           : { law_name: law, article: art || "第1条", content: content, auto_propose: true };
         const res = await fetch(url, {
@@ -6825,10 +7055,38 @@
         });
         const d = await res.json();
         const items = d.references || d.relations || [];
+        LAST_EXTRACTED_GRAPH_REFS = items;
         box.innerHTML = `<strong>🎉 成功提取 ${items.length} 条引致与锚定关系（已自动登记至待审规则提案表）：</strong><br/>` +
-          items.map(it => `• [${it.relation_type || it.relation}] ${it.target_law || it.anchor_law} ${it.target_article || it.anchor_article} (${it.reason || it.notes})`).join("<br/>");
+          items.map(it => `• [${escapeHtml(it.relation_type || it.relation)}] ${escapeHtml(it.target_law || it.anchor_law)} ${escapeHtml(it.target_article || it.anchor_article)} (${escapeHtml(it.reason || it.notes)})`).join("<br/>");
+        if (items.length > 0 && applyBtn) {
+          applyBtn.style.display = "inline-block";
+        }
       } catch (e) {
         box.innerHTML = "抽取请求失败，请检查模型服务。";
+      } finally {
+        if (execBtn) { execBtn.disabled = false; execBtn.textContent = "开始离线抽取并生成提案"; }
+      }
+    }
+
+    async function applyExtractedGraphNow() {
+      if (!LAST_EXTRACTED_GRAPH_REFS || LAST_EXTRACTED_GRAPH_REFS.length === 0) {
+        showToast("暂无可采纳的图谱关系");
+        return;
+      }
+      const btn = document.getElementById("btnApplyGraphDirect");
+      if (btn) { btn.disabled = true; btn.textContent = "⏳ 写入图谱库中..."; }
+      try {
+        const res = await fetch("/graph-builder/apply-to-config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(LAST_EXTRACTED_GRAPH_REFS)
+        });
+        const d = await res.json();
+        showToast(`✅ 已成功写入 ${d.applied_count || 0} 条新关系至线上图谱库并即时生效！`);
+        if (btn) { btn.style.display = "none"; btn.disabled = false; btn.textContent = "✅ 一键采纳结果并写入图谱库"; }
+      } catch (e) {
+        showToast("❌ 写入图谱库失败，请稍后重试");
+        if (btn) { btn.disabled = false; btn.textContent = "✅ 一键采纳结果并写入图谱库"; }
       }
     }
 

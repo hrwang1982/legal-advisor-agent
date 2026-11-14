@@ -706,6 +706,7 @@ if _HAS_FASTAPI:
     from app.graph_builder import (
         apply_cross_references_to_config,
         batch_build_law_graph,
+        batch_extract_from_kb_docs,
         extract_article_cross_references,
         extract_interpretation_and_application_relations,
     )
@@ -930,10 +931,33 @@ if _HAS_FASTAPI:
         )
         return {"status": "ok", "relations": refs}
 
+    class BatchKbGraphReq(BaseModel):
+        doc_ids: Optional[List[str]] = None
+        kb_type: Optional[str] = None
+        scan_mode: Optional[str] = "smart"
+        auto_propose: Optional[bool] = True
+        auto_apply: Optional[bool] = False
+
+    @app.post("/graph-builder/batch-extract-kb")
+    def batch_extract_kb_graph_api(req: BatchKbGraphReq):
+        """从已有知识库文档/目录批量扫描条文构建知识图谱（免人工输入）"""
+        res = batch_extract_from_kb_docs(
+            doc_ids=req.doc_ids,
+            kb_type=req.kb_type,
+            scan_mode=req.scan_mode or "smart",
+            auto_propose=bool(req.auto_propose),
+            auto_apply=bool(req.auto_apply),
+        )
+        if req.auto_apply:
+            invalidate_cache()
+        return res
+
     @app.post("/graph-builder/apply-to-config")
     def apply_graph_to_config_api(references: List[Dict[str, Any]]):
         """将抽检通过的引致关系合入知识中心热生效"""
         cnt = apply_cross_references_to_config(references)
+        if cnt > 0:
+            invalidate_cache()
         return {"status": "ok", "applied_count": cnt}
 
     @app.post("/counterparts/batch-import")

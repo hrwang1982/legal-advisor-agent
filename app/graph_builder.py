@@ -45,6 +45,110 @@ def build_cross_reference_prompt(law_name: str, article: str, content: str) -> s
     )
 
 
+_LEGAL_DEPENDENCY_KEYWORDS = (
+    "赔偿", "补偿", "参照", "依照", "按照", "适用", "承担", "责任",
+    "解除", "无效", "违约", "追偿", "连带", "优先", "另行规定", "有关规定",
+)
+
+
+_ART_NUM_PAT = r"第[零〇一二两三四五六七八九十百千0-9]+条"
+_INVALID_LAW_PREFIXES = (
+    "本", "该", "前款", "前条", "有关", "相关", "其他", "另行",
+    "上位", "上述", "下列", "依照", "按照", "根据", "参照", "适用",
+    "依据", "违反", "符合", "属于", "认定为", "执行", "遵守", "于",
+)
+_INVALID_LAW_CONTAINS = ("本法", "本条例", "本规定", "本办法", "本细则", "适用", "符合", "情形", "情况", "规定之")
+
+
+def extract_quick_regex_references(
+    law_name: str,
+    article: str,
+    content: str,
+) -> List[Dict[str, Any]]:
+    """正则快速抽取单条条文中的明示引致关系（毫秒级、零幻觉）。"""
+    from app.kb import normalize_article_id
+
+    clean_law = (law_name or "").strip().strip("《》")
+    raw_art = (article or "").strip()
+    norm_art = normalize_article_id(raw_art) if raw_art else ""
+    if not clean_law or not norm_art or not content:
+        return []
+
+    results: List[Dict[str, Any]] = []
+    seen = set()
+
+    def _add_ref(t_law: str, t_art_raw: str, reason: str) -> None:
+        t_art = normalize_article_id(t_art_raw)
+        if not t_law or not t_art or (t_law == clean_law and t_art == norm_art):
+            return
+        k = (clean_law, norm_art, t_law, t_art)
+        if k not in seen:
+            seen.add(k)
+            results.append(
+                {
+                    "source_law": clean_law,
+                    "source_article": norm_art,
+                    "target_law": t_law,
+                    "target_article": t_art,
+                    "relation_type": "explicit",
+                    "reason": reason,
+                }
+            )
+
+    # 1) 匹配本法/本条例/本规定等内部条文引致（支持顿号连续引用如「本法第二十六条、第二十七条」）
+    for m in re.finditer(
+        rf"(?:本法|本条例|本规定|本办法|本细则|本解释)\s*({_ART_NUM_PAT}(?:\s*[、和及]\s*{_ART_NUM_PAT})*)",
+        content,
+    ):
+        for art_m in re.finditer(_ART_NUM_PAT, m.group(1)):
+            t_art = normalize_article_id(art_m.group(0))
+            _add_ref(clean_law, t_art, f"正文明确引致本法{t_art}")
+
+    # 2) 匹配带书名号的跨法引致，如「《XX法》第XX条」
+    for m in re.finditer(
+        rf"《([^》]{{2,80}})》\s*({_ART_NUM_PAT}(?:\s*[、和及]\s*{_ART_NUM_PAT})*)",
+        content,
+    ):
+        t_law = m.group(1).strip()
+        for art_m in re.finditer(_ART_NUM_PAT, m.group(2)):
+            t_art = normalize_article_id(art_m.group(0))
+            _add_ref(t_law, t_art, f"正文明确引致《{t_law}》{t_art}")
+
+    # 3) 匹配不带书名号的常用法律法规引致，如「按照监察法第五十三条」「根据民事诉讼法第一百条」
+    for m in re.finditer(
+        rf"(?:依照|按照|根据|参照|适用|依据|违反|符合|属于|认定为|遵守)\s*([\u4e00-\u9fa5]{{2,20}}(?:法典|法|条例|规定|办法|解释|细则))\s*({_ART_NUM_PAT}(?:\s*[、和及]\s*{_ART_NUM_PAT})*)",
+        content,
+    ):
+        t_law = m.group(1).strip()
+        if (
+            any(t_law.startswith(p) for p in _INVALID_LAW_PREFIXES)
+            or any(c in t_law for c in _INVALID_LAW_CONTAINS)
+            or (len(t_law) < 3 and t_law != "刑法")
+        ):
+            continue
+        for art_m in re.finditer(_ART_NUM_PAT, m.group(2)):
+            t_art = normalize_article_id(art_m.group(0))
+            _add_ref(t_law, t_art, f"正文明确引致《{t_law}》{t_art}")
+
+    return results
+
+
+def _record_graph_proposals(refs: List[Dict[str, Any]], query_prefix: str = "离线图谱构建") -> None:
+    """将抽取的引致关系批量登记至 audit_store 待审规则提案池。"""
+    for ref in refs:
+        key = f"{ref['source_law']}|{ref['source_article']}->{ref['target_law']}|{ref['target_article']}"
+        try:
+            audit_store.record_rule_proposal(
+                thread_id="offline_llm_graph_builder",
+                proposal_type="cross_reference_graph",
+                proposal_key=key,
+                proposal_data=ref,
+                query=f"{query_prefix}: 《{ref['source_law']}》{ref['source_article']}",
+            )
+        except Exception:
+            pass
+
+
 def extract_article_cross_references(
     law_name: str,
     article: str,
@@ -55,37 +159,7 @@ def extract_article_cross_references(
     norm_art = article.strip()
 
     # 1) 正则快速明示抽取（零依赖离线保证）
-    quick_results: List[Dict[str, Any]] = []
-    # 匹配「依照本法第XX条」
-    for m in re.finditer(r"依照本法第([零〇一二两三四五六七八九十百千0-9]+)条", content):
-        from app.kb import normalize_article_id
-        t_art = normalize_article_id(f"第{m.group(1)}条")
-        quick_results.append(
-            {
-                "source_law": clean_law,
-                "source_article": norm_art,
-                "target_law": clean_law,
-                "target_article": t_art,
-                "relation_type": "explicit",
-                "reason": f"正文明确规定依照本法{t_art}",
-            }
-        )
-
-    # 匹配「《XX法》第XX条」
-    for m in re.finditer(r"《([^》]{2,80})》\s*(第[零〇一二两三四五六七八九十百千0-9]+条)", content):
-        from app.kb import normalize_article_id
-        t_law = m.group(1).strip()
-        t_art = normalize_article_id(m.group(2).strip())
-        quick_results.append(
-            {
-                "source_law": clean_law,
-                "source_article": norm_art,
-                "target_law": t_law,
-                "target_article": t_art,
-                "relation_type": "explicit",
-                "reason": f"正文明确引致《{t_law}》{t_art}",
-            }
-        )
+    quick_results = extract_quick_regex_references(clean_law, norm_art, content)
 
     if settings.mock:
         return quick_results
@@ -138,21 +212,235 @@ def batch_build_law_graph(
             all_refs.extend(refs)
 
     if auto_propose and all_refs:
-        # 将抽取的引致关系以提案形式记录至 audit_store
-        for ref in all_refs:
-            key = f"{ref['source_law']}|{ref['source_article']}->{ref['target_law']}|{ref['target_article']}"
-            try:
-                audit_store.record_rule_proposal(
-                    thread_id="offline_llm_graph_builder",
-                    proposal_type="cross_reference_graph",
-                    proposal_key=key,
-                    proposal_data=ref,
-                    query=f"离线图谱构建: 《{ref['source_law']}》{ref['source_article']}",
-                )
-            except Exception:
-                pass
+        _record_graph_proposals(all_refs)
 
     return all_refs
+
+
+def _batch_llm_extract_references(
+    law_name: str,
+    articles_batch: List[Dict[str, str]],
+) -> List[Dict[str, Any]]:
+    """合并多条重点条文一次性调用大模型批量抽取引致与实体法依赖关系，减少调用次数与 Token 消耗。"""
+    if not articles_batch or settings.mock:
+        return []
+
+    from app.kb import normalize_article_id
+
+    clean_law = (law_name or "").strip().strip("《》")
+    items_text = "\n".join(
+        f"- 【{a['article']}】{a['content'][:600]}"
+        for a in articles_batch
+    )
+    prompt = (
+        "你是一名权威立法专家与法学教授。请批量分析以下同一部法规的多条重点条文，识别每条的法条引致与实体法规范连接关系：\n"
+        f"【法规全称】《{clean_law}》\n"
+        f"【待分析条文列表】\n{items_text}\n\n"
+        "引致关系分类：\n"
+        "1. explicit（明示引致）：条文明确提及本法其他条文或其他法律规定；\n"
+        "2. substantive_dependent（实体法效果依赖）：本条权利主张成立后，其赔偿计算、经济补偿、救济途径或责任承担需依赖本法或其他法律的专门条款；\n"
+        "3. general_special（特别/一般法衔接）：优先或补充适用其他法律。\n\n"
+        "注意：请仅输出确定存在的真实法条编号，不要编造不存在的条号。严格输出 JSON 数组：\n"
+        "[\n"
+        "  {\n"
+        f'    "source_law": "{clean_law}",\n'
+        '    "source_article": "来源条号（如 第38条）",\n'
+        '    "target_law": "目标法规全称（本法请填原法规全称）",\n'
+        '    "target_article": "目标条号（标准格式如 第46条）",\n'
+        '    "relation_type": "explicit / substantive_dependent / general_special",\n'
+        '    "reason": "引致依据与法理关系简述"\n'
+        "  }\n"
+        "]"
+    )
+    out: List[Dict[str, Any]] = []
+    try:
+        data = _extract_json(_call(prompt))
+        if isinstance(data, list):
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                s_art = normalize_article_id(str(item.get("source_article") or ""))
+                t_law = str(item.get("target_law") or clean_law).strip().strip("《》")
+                t_art = normalize_article_id(str(item.get("target_article") or ""))
+                if not s_art or not t_law or not t_art:
+                    continue
+                if t_law == clean_law and s_art == t_art:
+                    continue
+                out.append(
+                    {
+                        "source_law": str(item.get("source_law") or clean_law).strip().strip("《》"),
+                        "source_article": s_art,
+                        "target_law": t_law,
+                        "target_article": t_art,
+                        "relation_type": item.get("relation_type", "substantive_dependent"),
+                        "reason": item.get("reason", "大模型批量漏斗抽取"),
+                    }
+                )
+    except Exception as e:
+        logger.warning(f"大模型批量合并抽取引致关系异常: {e}")
+    return out
+
+
+def _heuristic_cross_references(
+    law_name: str,
+    chunks: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """基于同法条文内容的确定性实体依赖启发式抽取（确保离线/Mock环境下仍能产出核心赔偿/补偿衔接关系）。"""
+    from app.kb import normalize_article_id
+
+    clean_law = (law_name or "").strip().strip("《》")
+    if not clean_law or not chunks:
+        return []
+
+    norm_chunks: List[Tuple[str, str]] = []
+    for c in chunks:
+        art = normalize_article_id(str(c.get("article") or ""))
+        cnt = (c.get("content") or "").strip()
+        if art and cnt:
+            norm_chunks.append((art, cnt))
+
+    # 识别同法中专门定义计算标准的核心条文（仅基于真实存在的条文，绝不虚构条号）
+    anchor_targets: List[Tuple[str, str, str, str]] = []
+    for art, cnt in norm_chunks:
+        if "经济补偿" in cnt and ("每满一年" in cnt or "月工资" in cnt or "标准" in cnt):
+            anchor_targets.append(("经济补偿", art, "经济补偿金计算标准", "substantive_dependent"))
+            break
+    for art, cnt in norm_chunks:
+        if "赔偿金" in cnt and ("二倍" in cnt or "经济补偿标准" in cnt):
+            anchor_targets.append(("赔偿金", art, "违法行为赔偿金计算标准", "substantive_dependent"))
+            break
+    for art, cnt in norm_chunks:
+        if "违约金" in cnt and ("过分高于" in cnt or "适当减少" in cnt or "损失" in cnt):
+            anchor_targets.append(("违约金", art, "违约金调整与损失赔偿规则", "substantive_dependent"))
+            break
+
+    results: List[Dict[str, Any]] = []
+    if not anchor_targets:
+        return results
+
+    for art, cnt in norm_chunks:
+        for kw, target_art, desc, rel_type in anchor_targets:
+            if art == target_art or kw not in cnt:
+                continue
+            # 仅针对明确提出主张/责任但条文本身未给出计算标准的条款建立关联
+            if any(trigger in cnt for trigger in ("支付", "承担", "赔偿", "解除", "终止", "依照")):
+                results.append(
+                    {
+                        "source_law": clean_law,
+                        "source_article": art,
+                        "target_law": clean_law,
+                        "target_article": target_art,
+                        "relation_type": rel_type,
+                        "reason": f"本条涉及「{kw}」主张，实体计算/救济依据衔接本法{target_art}（{desc}）",
+                    }
+                )
+    return results
+
+
+def batch_extract_from_kb_docs(
+    doc_ids: Optional[List[str]] = None,
+    kb_type: Optional[str] = None,
+    scan_mode: str = "smart",
+    auto_propose: bool = True,
+    auto_apply: bool = False,
+) -> Dict[str, Any]:
+    """从已有知识库（law_documents / law_chunks）自动读取法规条文并执行漏斗式批量图谱构建。"""
+    from app.mysql_store import mysql_store
+    from app.kb import normalize_article_id
+
+    clean_doc_ids = [str(d).strip() for d in (doc_ids or []) if str(d).strip()]
+    if clean_doc_ids:
+        placeholders = ",".join(["?"] * len(clean_doc_ids))
+        docs = mysql_store.query(
+            f"SELECT doc_id, title, kb_type FROM law_documents WHERE doc_id IN ({placeholders})",
+            tuple(clean_doc_ids),
+        )
+    elif kb_type and kb_type.strip() and kb_type.strip().upper() != "ALL":
+        clean_kb = kb_type.strip().rstrip("/")
+        docs = mysql_store.query(
+            "SELECT doc_id, title, kb_type FROM law_documents WHERE (kb_type = ? OR kb_type LIKE ?) AND is_latest = 1",
+            (clean_kb, clean_kb + "/%"),
+        )
+    else:
+        docs = mysql_store.query("SELECT doc_id, title, kb_type FROM law_documents WHERE is_latest = 1")
+
+    if not docs:
+        return {
+            "status": "ok",
+            "scanned_docs": 0,
+            "scanned_chunks": 0,
+            "extracted_count": 0,
+            "applied_count": 0,
+            "doc_titles": [],
+            "references": [],
+            "message": "所选范围内暂无已解析的有效法规文档",
+        }
+
+    all_refs: List[Dict[str, Any]] = []
+    seen_keys = set()
+    total_chunks = 0
+    doc_titles: List[str] = []
+
+    def _append_ref(ref: Dict[str, Any]) -> None:
+        k = (ref["source_law"], ref["source_article"], ref["target_law"], ref["target_article"])
+        if k not in seen_keys:
+            seen_keys.add(k)
+            all_refs.append(ref)
+
+    for doc in docs:
+        did = doc["doc_id"]
+        title = (doc.get("title") or "").strip().strip("《》")
+        if not title:
+            continue
+        doc_titles.append(title)
+        chunks = mysql_store.query(
+            "SELECT article, content, chunk_type FROM law_chunks WHERE doc_id = ? AND chunk_type != 'hierarchical_parent'",
+            (did,),
+        )
+        total_chunks += len(chunks)
+
+        # 第一阶段：全量毫秒级正则明示扫描
+        smart_candidates: List[Dict[str, str]] = []
+        for c in chunks:
+            art = normalize_article_id(str(c.get("article") or "")) or str(c.get("article") or "").strip()
+            cnt = (c.get("content") or "").strip()
+            if not art or not cnt:
+                continue
+            for r in extract_quick_regex_references(title, art, cnt):
+                _append_ref(r)
+            if scan_mode == "smart" and any(kw in cnt for kw in _LEGAL_DEPENDENCY_KEYWORDS):
+                smart_candidates.append({"article": art, "content": cnt})
+
+        # 第二阶段：智能深层依赖扫描（启发式兜底 + 重点条文合并批处理调用 LLM）
+        if scan_mode == "smart":
+            for r in _heuristic_cross_references(title, chunks):
+                _append_ref(r)
+
+            if not settings.mock and smart_candidates:
+                # 最多抽取前 18 条高价值重点条文，分批（每批 6 条）打包调用 LLM 防止超时
+                capped_candidates = smart_candidates[:18]
+                batch_size = 6
+                for idx in range(0, len(capped_candidates), batch_size):
+                    batch = capped_candidates[idx : idx + batch_size]
+                    for r in _batch_llm_extract_references(title, batch):
+                        _append_ref(r)
+
+    if auto_propose and all_refs:
+        _record_graph_proposals(all_refs, query_prefix="知识库批量图谱构建")
+
+    applied_count = 0
+    if auto_apply and all_refs:
+        applied_count = apply_cross_references_to_config(all_refs)
+
+    return {
+        "status": "ok",
+        "scanned_docs": len(docs),
+        "scanned_chunks": total_chunks,
+        "extracted_count": len(all_refs),
+        "applied_count": applied_count,
+        "doc_titles": doc_titles,
+        "references": all_refs,
+    }
 
 
 # ————————————————————————————————————————————————
