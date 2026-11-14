@@ -1783,7 +1783,6 @@
               <!-- 截图标志性红色大按钮 -->
               <button class="btn-tool primary" style="background:#d32029; color:#fff; border:none; padding:8px 18px; border-radius:4px; font-weight:600; cursor:pointer;" id="btnImportDoc" onclick="openImportModal()">上传文档</button>
               <button class="btn-tool" onclick="openGraphBuilderModal()">🕸️ 知识图谱离线构建</button>
-              <button class="btn-tool" onclick="openCounterpartsModal()">🔄 官方新旧法对照录入</button>
               <button class="btn-tool" onclick="openFlkCrawlerModal()">🌐 国家法规库同步</button>
               <button class="btn-tool" style="background:#1890ff; color:#fff; border:none; padding:8px 14px; border-radius:4px; font-weight:600; cursor:pointer;" onclick="openFlkDownloaderModal()">📥 国家法规库拉取(Word)</button>
             </div>
@@ -2963,42 +2962,18 @@
     </div>
   </div>
 
-  <!-- ======================== 模态框: 官方新旧法律对照录入 ======================== -->
-  <div class="modal-overlay" id="counterpartsModal">
-    <div class="modal-box" style="max-width:680px;">
-      <div class="modal-header">
-        <div class="modal-title">🔄 官方《新旧法律条文对照表》数字化录入</div>
-        <div class="modal-close" onclick="closeCounterpartsModal()">✕</div>
-      </div>
-      <div class="modal-body">
-        <div class="card-desc">内置全国人大常委会法工委编写的权威《新旧法律条文对照表》（涵盖《公司法新旧对照表》2018 vs 2023、《民法典新旧对照表》等），点击即可一次性批量录入知识中心。</div>
-        <div style="background:#fafbfc; border:1px solid var(--border-color); border-radius:6px; padding:12px; font-size:12.5px; line-height:1.8;">
-          <div>✅ <strong>公司法出资期限新旧对照</strong>：2023版第47条 (5年认缴) ⟷ 2018版第26条 (无期限认缴)</div>
-          <div>✅ <strong>出资加速到期新旧对照</strong>：2023版第54条 ⟷ 2018版第28条</div>
-          <div>✅ <strong>民法典违约责任新旧对照</strong>：民法典第577条 ⟷ 旧合同法第107条</div>
-          <div>✅ <strong>违约金调减规则新旧对照</strong>：民法典第585条 ⟷ 旧合同法第114条</div>
-          <div>✅ <strong>行政处罚首违不罚新旧对照</strong>：2021修订版第33条 ⟷ 1996版第27条</div>
-        </div>
-        <div id="counterpartsStatus" style="margin-top:10px; font-size:12px; color:#52c41a; font-weight:600;"></div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn-reset" onclick="closeCounterpartsModal()">关闭</button>
-        <button class="btn-search" id="btnBatchImportCounterparts" style="background:#d32029; color:#fff;" onclick="executeBatchImportCounterparts()">一键批量录入法工委官方对照表</button>
-      </div>
-    </div>
-  </div>
 
-  <!-- ======================== 模态框: 国家法规库监听同步 ======================== -->
+  <!-- ======================== 模态框: 国家法规库动态差分与时效同步 ======================== -->
   <div class="modal-overlay" id="flkCrawlerModal">
     <div class="modal-box" style="max-width:680px;">
       <div class="modal-header">
-        <div class="modal-title">🌐 国家法律法规数据库（flk.npc.gov.cn）监听同步</div>
+        <div class="modal-title">🌐 国家法律法规数据库（flk.npc.gov.cn）动态差分同步</div>
         <div class="modal-close" onclick="closeFlkCrawlerModal()">✕</div>
       </div>
       <div class="modal-body">
-        <div class="card-desc">定时监听国家法律法规数据库的法律废止与修正案公告。发现废止后自动将旧法状态置为「已废止」并推导失效日；发现条款修正案后自动沉淀为条款级修改日志。</div>
-        <button class="btn-search" style="background:var(--primary); color:#fff; border:none; margin-bottom:12px;" onclick="executeFlkSync()">🚀 立即执行差分监听与时效同步</button>
-        <div id="flkSyncLogs" style="background:#1f2329; color:#a6e22e; border-radius:6px; padding:12px; font-family:monospace; font-size:12px; height:160px; overflow-y:auto; white-space:pre-wrap;">等待执行国家法规库公告同步...</div>
+        <div class="card-desc">实时向国家法律法规数据库官网核对已入库外规的最新施行状态与版本。发现官网废止后自动将本地旧法置为「已废止」并推导失效日；发现多版本演进时自动提取条文修改日志与新旧法对照建议（无后台定时静默任务）。</div>
+        <button class="btn-search" style="background:var(--primary); color:#fff; border:none; margin-bottom:12px;" onclick="executeFlkSync()">🚀 立即执行官方动态差分比对与时效同步</button>
+        <div id="flkSyncLogs" style="background:#1f2329; color:#a6e22e; border-radius:6px; padding:12px; font-family:monospace; font-size:12px; height:170px; overflow-y:auto; white-space:pre-wrap;">等待执行国家法规库差分比对...</div>
       </div>
       <div class="modal-footer">
         <button class="btn-reset" onclick="closeFlkCrawlerModal()">关闭</button>
@@ -7090,71 +7065,37 @@
       }
     }
 
-    // 模态框 3: 官方新旧对照录入
-    function openCounterpartsModal() {
-      const statusEl = document.getElementById("counterpartsStatus");
-      if (statusEl) statusEl.textContent = "";
-      document.getElementById("counterpartsModal").classList.add("open");
-    }
-    function closeCounterpartsModal() { document.getElementById("counterpartsModal").classList.remove("open"); }
-    async function executeBatchImportCounterparts() {
-      const btn = document.getElementById("btnBatchImportCounterparts");
-      const statusEl = document.getElementById("counterpartsStatus");
-      if (btn) {
-        btn.disabled = true;
-        btn.style.opacity = "0.6";
-        btn.style.cursor = "not-allowed";
-        btn.textContent = "⏳ 正在探测网络并录入中...";
-      }
-      if (statusEl) {
-        statusEl.style.color = "#1890ff";
-        statusEl.textContent = "⏳ 正在检查网络连通性并同步法工委官方新旧对照表，请稍候...";
-      }
-      showToast("⏳ 正在批量写入全国人大常委会法工委官方新旧对照表...");
-      try {
-        const res = await fetch("/counterparts/batch-import", { method: "POST", headers: { "Content-Type": "application/json" } });
-        const d = await res.json();
-        const msg = d.message || "批量录入完成";
-        if (statusEl) {
-          statusEl.style.color = "#52c41a";
-          statusEl.textContent = `🎉 ${msg}`;
-        }
-        showToast(msg);
-      } catch(e) {
-        if (statusEl) {
-          statusEl.style.color = "#d32029";
-          statusEl.textContent = "❌ 录入失败，请稍后重试";
-        }
-        showToast("录入失败，请检查网络或后端服务");
-      } finally {
-        if (btn) {
-          btn.disabled = false;
-          btn.style.opacity = "1";
-          btn.style.cursor = "pointer";
-          btn.textContent = "一键批量录入法工委官方对照表";
-        }
-      }
-    }
-
-    // 模态框 4: 国家法规库监听
+    // 模态框 4: 国家法规库动态差分同步（真动态官网比对，无后台定时静默任务）
     function openFlkCrawlerModal() { document.getElementById("flkCrawlerModal").classList.add("open"); }
     function closeFlkCrawlerModal() { document.getElementById("flkCrawlerModal").classList.remove("open"); }
     async function executeFlkSync() {
       const logs = document.getElementById("flkSyncLogs");
-      logs.textContent = "正在连接国家法律法规数据库 (flk.npc.gov.cn)...\n查询最新修正案与废止公告...\n";
+      logs.textContent = "正在连接国家法律法规数据库 (flk.npc.gov.cn)...\n检索本地已入库外规法规在官网的实时时效与版本状态...\n";
       try {
         const res = await fetch("/crawler/sync-flk", { method: "POST", headers: { "Content-Type": "application/json" } });
         const d = await res.json();
-        logs.textContent += `[${d.sync_time}] 监听任务同步完成！\n`;
-        logs.textContent += `已更新废止法规: ${d.updated_laws_count} 部\n`;
-        (d.updated_laws || []).forEach(l => logs.textContent += `  ✓ ${l}\n`);
-        logs.textContent += `已生成条款项粒度修改日志: ${d.revision_logs_count} 条\n`;
-        (d.revision_logs || []).forEach(r => logs.textContent += `  ✓ ${r}\n`);
-        logs.textContent += "系统全局法规时效缓存已自动刷新生效！";
-        showToast("国家法规库时效公告同步完成！");
+        if (d.status === "network_unreachable") {
+          logs.textContent += `\n❌ 网络不可达或官方网关阻断：\n${d.message || d.error || "无法连接国家法律法规数据库官网"}\n（已按策略停止，未产生伪造数据）\n`;
+          showToast("国家法规库网络连接异常");
+          return;
+        }
+        logs.textContent += `[${d.sync_time || new Date().toISOString()}] 动态差分比对完成！\n`;
+        logs.textContent += `• 扫描本地有效外规: ${d.scanned_laws_count || 0} 部\n`;
+        logs.textContent += `• 官网标记废止更新: ${d.updated_laws_count || 0} 部\n`;
+        (d.updated_laws || []).forEach(l => logs.textContent += `    ✓ ${l}\n`);
+        logs.textContent += `• 发现官网新修订版本: ${d.new_versions_found_count || 0} 部\n`;
+        (d.new_versions_found || []).forEach(n => logs.textContent += `    ℹ️ ${n}\n`);
+        logs.textContent += `• 自动沉淀条文修改日志: ${d.revision_logs_count || 0} 条\n`;
+        (d.revision_logs || []).forEach(r => logs.textContent += `    📝 ${r}\n`);
+        if (d.counterpart_proposals_count) {
+          logs.textContent += `• 自动推导新旧法对照建议: ${d.counterpart_proposals_count} 条（已登记至待审池，可在「字典管理」一键采纳）\n`;
+        }
+        logs.textContent += "\n🎉 规则与时效缓存已自动刷新生效！";
+        showToast("国家法规库时效状态同步完成！");
         loadKbDocuments();
       } catch(e) {
-        logs.textContent += "监听请求异常。";
+        logs.textContent += `\n❌ 同步请求异常: ${e.message || e}`;
+        showToast("同步请求失败，请检查后端服务");
       }
     }
 

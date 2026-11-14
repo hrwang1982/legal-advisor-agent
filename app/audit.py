@@ -557,6 +557,27 @@ class AuditStore:
                 from app.graph_builder import apply_cross_references_to_config
                 refs_list = p_data if isinstance(p_data, list) else [p_data]
                 apply_cross_references_to_config(refs_list)
+            elif p_type == "article_succession":
+                succ_list = cfg.setdefault("article_succession_list", [])
+                items = p_data if isinstance(p_data, list) else [p_data]
+                for it in items:
+                    entry = {
+                        "old_law": it.get("old_law", ""),
+                        "old_article": it.get("old_article", ""),
+                        "new_law": it.get("new_law", ""),
+                        "new_article": it.get("new_article", ""),
+                        "switch_date": it.get("switch_date", ""),
+                        "diff_note": it.get("diff_note", "新旧法条承继"),
+                    }
+                    if not any(
+                        s.get("old_law") == entry["old_law"]
+                        and s.get("old_article") == entry["old_article"]
+                        and s.get("new_law") == entry["new_law"]
+                        and s.get("new_article") == entry["new_article"]
+                        for s in succ_list
+                    ):
+                        succ_list.append(entry)
+                knowledge_center.update_section("article_succession_list", succ_list)
             else:
                 knowledge_center.save(cfg)
         except Exception as e:
