@@ -3176,8 +3176,14 @@
           <!-- 动态生成条文级 Diff 列表 -->
         </div>
       </div>
-      <div class="modal-footer">
-        <button class="btn-reset" onclick="closeDocVersionDiffModal()">关闭</button>
+      <div class="modal-footer" style="display:flex; justify-content:space-between; align-items:center;">
+        <div style="font-size:12px; color:var(--text-muted);">
+          <span>💡 对齐规则：<b>≥90%</b> 文字承继 ｜ <b>80%~90%</b> 实质修订 ｜ <b>&lt;80%</b> 增废不建对照</span>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn-reset" onclick="closeDocVersionDiffModal()">关闭</button>
+          <button class="btn-primary" id="btnSyncDiffToCounterparts" onclick="syncCurrentDiffToCounterparts()" style="background:#fa8c16; border-color:#fa8c16;">⚡ 一键沉淀为新旧法条文对照并生效</button>
+        </div>
       </div>
     </div>
   </div>
@@ -6465,7 +6471,19 @@
       }
     }
 
+    let CURRENT_DIFF_DOC_NEW = "";
+    let CURRENT_DIFF_DOC_OLD = "";
+
     async function openDocVersionDiffModal(docIdNew, docIdOld) {
+      CURRENT_DIFF_DOC_NEW = docIdNew;
+      CURRENT_DIFF_DOC_OLD = docIdOld;
+
+      const btnSync = document.getElementById("btnSyncDiffToCounterparts");
+      if (btnSync) {
+        btnSync.disabled = false;
+        btnSync.textContent = "⚡ 一键沉淀为新旧法条文对照并生效";
+      }
+
       const modal = document.getElementById("docVersionDiffModal");
       if (!modal) return;
       modal.classList.add("open");
@@ -6555,6 +6573,52 @@
         }).join("");
       } catch (e) {
         if (sumBar) sumBar.innerHTML = `<span style="color:#f5222d;">⚠️ 版本比对加载失败: ${e.message}</span>`;
+      }
+    }
+
+    async function syncCurrentDiffToCounterparts() {
+      if (!CURRENT_DIFF_DOC_NEW || !CURRENT_DIFF_DOC_OLD) {
+        showToast("⚠️ 未获取到当前比对的版本标识");
+        return;
+      }
+      const btnSync = document.getElementById("btnSyncDiffToCounterparts");
+      if (btnSync) {
+        btnSync.disabled = true;
+        btnSync.textContent = "⏳ 正在推导并合入条文对照...";
+      }
+      try {
+        const res = await fetch("/kb/documents/counterparts/generate-from-diff", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            doc_id_new: CURRENT_DIFF_DOC_NEW,
+            doc_id_old: CURRENT_DIFF_DOC_OLD,
+            auto_apply: true
+          })
+        });
+        const d = await res.json();
+        if (d.status !== "ok") {
+          throw new Error(d.detail || d.message || "对照推导失败");
+        }
+        showToast(`⚡ ${d.message}`);
+        if (btnSync) {
+          btnSync.textContent = `✓ 已生效 ${d.applied_count || d.count} 条对照`;
+        }
+        if (typeof CACHED_KNOWLEDGE_FULL !== "undefined") {
+          CACHED_KNOWLEDGE_FULL = null;
+        }
+        if (typeof loadRuleConfigSection === "function") {
+          loadRuleConfigSection();
+        }
+        if (typeof loadRuleProposals === "function") {
+          loadRuleProposals();
+        }
+      } catch (err) {
+        showToast(`⚠️ 推导失败: ${err.message}`);
+        if (btnSync) {
+          btnSync.disabled = false;
+          btnSync.textContent = "⚡ 一键沉淀为新旧法条文对照并生效";
+        }
       }
     }
 
@@ -7839,11 +7903,25 @@
           container.innerHTML = `<div style="font-size:13px; color:var(--text-muted); padding:10px 0;">当前暂无大模型反哺待审提案</div>`;
         } else {
           list.forEach(p => {
+            let badgeBg = "#e6f7ff";
+            let badgeColor = "#1890ff";
+            let typeName = p.proposal_type;
+            if (p.proposal_type === "article_succession") {
+              badgeBg = "#fff7e6";
+              badgeColor = "#fa8c16";
+              typeName = "新旧法条文对照";
+            } else if (p.proposal_type === "cross_reference_graph") {
+              badgeBg = "#f6ffed";
+              badgeColor = "#52c41a";
+              typeName = "知识图谱引致关系";
+            }
+
             container.innerHTML += `
-              <div style="background:#fafafa; border:1px solid var(--border-color); border-radius:6px; padding:12px 16px; display:flex; align-items:center; justify-content:space-between;">
+              <div style="background:#fafafa; border:1px solid var(--border-color); border-radius:6px; padding:12px 16px; display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
                 <div>
-                  <span style="font-weight:600; color:var(--primary);">${p.proposal_type}</span>: ${p.proposal_key || '新案由'}
-                  <div style="font-size:12px; color:var(--text-muted); margin-top:2px;">相关提问: ${p.query || '-'}</div>
+                  <span style="font-weight:600; color:${badgeColor}; background:${badgeBg}; padding:2px 8px; border-radius:4px; font-size:12px;">${typeName}</span>
+                  <span style="font-weight:600; font-size:13px; margin-left:6px; color:#262626;">${p.proposal_key || '新提案'}</span>
+                  <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">来源说明: ${p.query || '-'}</div>
                 </div>
                 <div class="flex-row">
                   <button class="btn-search" style="padding:5px 14px; font-size:12px;" onclick="adoptProposal(${p.id})">一键采纳</button>

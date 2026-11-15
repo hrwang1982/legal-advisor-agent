@@ -1083,6 +1083,36 @@ class KnowledgeBaseStore:
             except Exception:
                 pass
 
+        # 多版本同名法规追加新版本入库：自动触发条文级相似度对齐（阈值>=80%），沉淀至新旧法待审提案池
+        auto_counterparts_count = 0
+        if existing_docs and conflict_action == "append_new":
+            try:
+                from app.crawler import align_articles_for_counterparts
+                from app.audit import audit_store
+
+                if new_doc_is_latest == 1:
+                    new_did, old_did = doc_id, existing_docs[0]["doc_id"]
+                else:
+                    target_newer = max_existing_doc["doc_id"] if "max_existing_doc" in locals() else existing_docs[0]["doc_id"]
+                    new_did, old_did = target_newer, doc_id
+
+                cps = align_articles_for_counterparts(new_did, old_did, similarity_threshold=0.80)
+                for cp in cps:
+                    prop_key = f"{cp['old_law']}|{cp['old_article']}->{cp['new_law']}|{cp['new_article']}"
+                    try:
+                        audit_store.record_rule_proposal(
+                            thread_id="kb_version_import_deducer",
+                            proposal_type="article_succession",
+                            proposal_key=prop_key,
+                            proposal_data=cp,
+                            query=f"法规新版本入库对齐推导: 《{cp['new_law']}》{cp['new_article']}",
+                        )
+                        auto_counterparts_count += 1
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
         self.version_counter += 1
         return {
             "doc_id": doc_id,
@@ -1099,6 +1129,7 @@ class KnowledgeBaseStore:
             "es_indexed": es_indexed_count > 0,
             "embed_backend": backend,
             "auto_extracted_graph_refs": auto_refs_count,
+            "auto_aligned_counterparts_count": auto_counterparts_count,
             "preview_chunks": [
                 {
                     "chunk_id": c["chunk_id"],

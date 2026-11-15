@@ -889,6 +889,81 @@ if _HAS_FASTAPI:
             raise HTTPException(status_code=400, detail=res.get("message", "对比失败"))
         return res
 
+    class GenerateCounterpartsFromDiffReq(BaseModel):
+        doc_id_new: str
+        doc_id_old: str
+        auto_apply: Optional[bool] = True
+
+    @app.post("/kb/documents/counterparts/generate-from-diff")
+    def generate_counterparts_from_diff_api(req: GenerateCounterpartsFromDiffReq):
+        """基于版本比对，按阈值规则智能推导新旧法对照条文并一键沉淀生效或入待审池：
+        - >= 90%：条文文字承继
+        - 80%~90%：条文实质修订
+        - < 80%：过滤不沉淀
+        """
+        from app.crawler import align_articles_for_counterparts
+        from app.audit import audit_store
+        from app.knowledge import knowledge_center
+
+        counterparts = align_articles_for_counterparts(req.doc_id_new, req.doc_id_old, similarity_threshold=0.80)
+        if not counterparts:
+            return {
+                "status": "ok",
+                "message": "未发现匹配度 >= 80% 的新旧法条文对应关系（可能多为全新增或已废止条款）",
+                "count": 0,
+                "items": [],
+            }
+
+        # 记录至待审规则提案池
+        for cp in counterparts:
+            prop_key = f"{cp['old_law']}|{cp['old_article']}->{cp['new_law']}|{cp['new_article']}"
+            try:
+                audit_store.record_rule_proposal(
+                    thread_id="diff_counterparts_generator",
+                    proposal_type="article_succession",
+                    proposal_key=prop_key,
+                    proposal_data=cp,
+                    query=f"版本差异比对一键推导: 《{cp['new_law']}》{cp['new_article']}",
+                )
+            except Exception:
+                pass
+
+        applied_count = 0
+        if req.auto_apply:
+            cfg = knowledge_center.get_all(reload=True)
+            succ_list = cfg.get("article_succession_list") or []
+            existing_map = {
+                (s.get("old_law"), s.get("old_article"), s.get("new_law"), s.get("new_article")): idx
+                for idx, s in enumerate(succ_list)
+            }
+            for cp in counterparts:
+                key = (cp["old_law"], cp["old_article"], cp["new_law"], cp["new_article"])
+                entry = {
+                    "old_law": cp["old_law"],
+                    "old_article": cp["old_article"],
+                    "new_law": cp["new_law"],
+                    "new_article": cp["new_article"],
+                    "switch_date": cp.get("switch_date", ""),
+                    "diff_note": cp.get("diff_note", "新旧法条承继"),
+                }
+                if key in existing_map:
+                    succ_list[existing_map[key]] = entry
+                else:
+                    succ_list.append(entry)
+                    existing_map[key] = len(succ_list) - 1
+                applied_count += 1
+
+            knowledge_center.update_section("article_succession_list", succ_list)
+            invalidate_cache()
+
+        return {
+            "status": "ok",
+            "message": f"成功推导 {len(counterparts)} 条新旧法条文对照（匹配度 ≥ 80%）" + (f"，已自动沉淀生效 {applied_count} 条！" if req.auto_apply else "，已存入待审规则池。"),
+            "count": len(counterparts),
+            "applied_count": applied_count if req.auto_apply else 0,
+            "items": counterparts,
+        }
+
     @app.delete("/kb/documents/advanced/{doc_id}")
     def delete_advanced_document_api(doc_id: str):
         """删除指定法规文档及所有分块"""

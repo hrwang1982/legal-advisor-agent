@@ -31,12 +31,59 @@ def _day_before(d_str: str) -> str:
         return d_str
 
 
+def _summarize_article_diff(old_content: str, new_content: str, ratio: float) -> str:
+    """提取新旧条文修订的实质变动说明：优先尝试调用大模型提炼，离线/未配置时规则差异比对兜底。"""
+    pct = int(ratio * 100)
+    try:
+        from app.llm import get_llm
+
+        llm = get_llm()
+        if llm:
+            prompt = (
+                "你是一名资深中国法务专家。请对比以下同一部法规新旧版本的条文修改，"
+                "用一句话（15至25字以内）概括实质修改要点，直接输出要点，不要任何前缀客套话：\n"
+                f"【旧版条文】：{old_content[:200]}\n"
+                f"【新版条文】：{new_content[:200]}"
+            )
+            resp = llm.invoke(prompt)
+            summary = getattr(resp, "content", str(resp)).strip().replace("\n", " ")
+            if summary and len(summary) >= 4 and len(summary) <= 60:
+                return f"条文实质修订（内容匹配度 {pct}%）：{summary}"
+    except Exception:
+        pass
+
+    # 规则差异比对降级：提取差异增删片段
+    diff = list(difflib.ndiff(old_content[:120], new_content[:120]))
+    added_chars = [d[2:] for d in diff if d.startswith("+ ") and d[2:].strip()]
+    removed_chars = [d[2:] for d in diff if d.startswith("- ") and d[2:].strip()]
+
+    hint = "条款实质修订，优化适用要件与法理表述"
+    if added_chars and not removed_chars:
+        add_str = "".join(added_chars[:8]).strip()
+        hint = f"新增限定与规范要件（增加“{add_str}”等表述）" if add_str else hint
+    elif removed_chars and not added_chars:
+        rem_str = "".join(removed_chars[:8]).strip()
+        hint = f"精简规范要件（删除“{rem_str}”等表述）" if rem_str else hint
+    elif added_chars and removed_chars:
+        rem_str = "".join(removed_chars[:6]).strip()
+        add_str = "".join(added_chars[:6]).strip()
+        if rem_str and add_str:
+            hint = f"调整要件表述（变更“{rem_str}”为“{add_str}”等）"
+
+    return f"条文实质修订（内容匹配度 {pct}%）：{hint}"
+
+
 def align_articles_for_counterparts(
     new_doc_id: str,
     old_doc_id: str,
-    similarity_threshold: float = 0.5,
+    similarity_threshold: float = 0.80,
 ) -> List[Dict[str, Any]]:
-    """基于条文内容相似度对同一部法规的新旧两个版本进行条文级自动对齐推导，生成新旧法对照映射。"""
+    """基于条文内容相似度对同一部法规的新旧两个版本进行条文级自动对齐推导，生成新旧法对照映射。
+    规则阈值：
+    - >= 90%：条文文字承继（文字基本无实质变动）；
+    - 80% ~ 90%：条文实质修订，提取实质修改说明；
+    - < 80%：视为新增条款或废止条款，不建立新旧对照（不沉淀至新旧法条文对照表）。
+    """
     from app.mysql_store import mysql_store
 
     res_new = kb_store.get_document_chunks(new_doc_id)
@@ -74,6 +121,7 @@ def align_articles_for_counterparts(
 
     for o_art, o_cnt in old_articles:
         best_n_art = ""
+        best_n_cnt = ""
         best_ratio = 0.0
 
         for n_art, n_cnt in new_articles:
@@ -81,15 +129,17 @@ def align_articles_for_counterparts(
             if ratio > best_ratio:
                 best_ratio = ratio
                 best_n_art = n_art
+                best_n_cnt = n_cnt
 
+        # 匹配度低于 80% 视为新增或废止条款，不建立对照
         if best_ratio >= similarity_threshold and best_n_art:
             pair_key = (old_title, o_art, new_title, best_n_art)
             if pair_key not in seen:
                 seen.add(pair_key)
-                if best_ratio >= 0.85:
-                    note = f"条文文字承继（内容匹配度 {int(best_ratio * 100)}%）"
+                if best_ratio >= 0.90:
+                    note = f"条文文字承继（内容匹配度 {int(best_ratio * 100)}%），表述微调承继，无实质变动"
                 else:
-                    note = f"条文修订展开（内容匹配度 {int(best_ratio * 100)}%）"
+                    note = _summarize_article_diff(o_cnt, best_n_cnt, best_ratio)
 
                 item = {
                     "old_law": old_title,
