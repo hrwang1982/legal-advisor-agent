@@ -79,6 +79,12 @@ services:
       # —— 独立 Docling 深度文档解析微服务连接 ——
       DOCLING_SERVICE_URL: "http://docling:8002/parse"
 
+      # —— Arize Phoenix 生产可观测性监控配置 ——
+      PHOENIX_ENABLED: "true"
+      PHOENIX_COLLECTOR_ENDPOINT: "http://phoenix:6006/v1/traces"
+      PHOENIX_PROJECT_NAME: "legal-advisor-prod"
+      PHOENIX_UI_BASE_URL: "http://localhost:6006"
+
       # —— 接入真实大模型时可取消注释覆盖 ——
       # MOCK: "false"
       # LLM_PROVIDER: "qwen"
@@ -126,10 +132,56 @@ services:
       timeout: 5s
       retries: 5
 
+  # —— 6. Arize Phoenix 专用 PostgreSQL 8.x/15+ 关系型持久化存储容器 ——
+  phoenix-postgres:
+    image: postgres:15-alpine
+    container_name: legal-advisor-phoenix-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: phoenix
+      POSTGRES_PASSWORD: phoenix_password
+      POSTGRES_DB: phoenix
+    ports:
+      - "5433:5432"
+    volumes:
+      - phoenix_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U phoenix -d phoenix"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # —— 7. Arize Phoenix 生产级 AI & RAG 可观测性监控平台 ——
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: legal-advisor-phoenix
+    restart: unless-stopped
+    depends_on:
+      phoenix-postgres:
+        condition: service_healthy
+    ports:
+      - "6006:6006"   # Phoenix Web UI 控制台 & OTLP HTTP Collector (/v1/traces)
+      - "4317:4317"   # OTLP gRPC Collector
+    environment:
+      PHOENIX_PORT: "6006"
+      PHOENIX_GRPC_PORT: "4317"
+      PHOENIX_SQL_DATABASE_URL: "postgresql://phoenix:phoenix_password@phoenix-postgres:5432/phoenix"
+    volumes:
+      - phoenix_data:/mnt/data
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:6006/healthz')\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   mysql_data:
     driver: local
   es_data:
     driver: local
   docling_cache:
+    driver: local
+  phoenix_pg_data:
+    driver: local
+  phoenix_data:
     driver: local

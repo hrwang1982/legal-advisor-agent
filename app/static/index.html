@@ -2117,8 +2117,11 @@
         <div class="full-width-card">
           <div class="flex-row" style="justify-content:space-between; margin-bottom:8px;">
             <h3>🛡️ SHA-256 防篡改审计哈希链（Tamper-Evident Hash Chain）</h3>
-            <div class="flex-row">
+            <div class="flex-row" style="gap:8px;">
               <span class="answer-pill done" id="auditChainStatusPill">✓ 审计哈希链完整无篡改</span>
+              <a href="http://localhost:6006" target="_blank" class="btn-reset" style="text-decoration:none; color:#722ed1; border-color:#d3adf7; background:#f9f0ff; display:inline-flex; align-items:center; gap:4px;" title="打开 Arize Phoenix 生产可观测性大盘">
+                <span>⚡</span><span>Phoenix 监控平台</span>
+              </a>
               <button class="btn-reset" onclick="loadAuditTrail()">一键验签与重算</button>
             </div>
           </div>
@@ -5226,6 +5229,13 @@
       const modelTag = data.model_used || selectedModel || "qwen-plus";
       if (data.thread_id) CURRENT_QA_THREAD_ID = data.thread_id;
 
+      const phoenixUrl = data.phoenix_url || (data.trace_id ? `http://localhost:6006/projects/legal-advisor-prod/traces/${data.trace_id}` : '');
+      const phoenixBtnHtml = phoenixUrl ? `
+        <a href="${phoenixUrl}" target="_blank" class="chat-btn-copy" style="text-decoration:none; color:#722ed1; border-color:#d3adf7; background:#f9f0ff; margin-right:6px; display:inline-flex; align-items:center; gap:3px;" title="在 Arize Phoenix 中查看本条问答的完整调用链路与 RAG 检索细节">
+          <span>⚡</span><span>Phoenix 监控</span>
+        </a>
+      ` : '';
+
       // 记录到多轮对话历史数组中
       QA_CHAT_HISTORY.push({ role: "user", content: q });
       QA_CHAT_HISTORY.push({ role: "assistant", content: answerText });
@@ -5260,9 +5270,12 @@
               <span style="font-size:11px; font-weight:normal; color:#8c8c8c; background:#f0f2f5; padding:1px 6px; border-radius:4px; margin-left:4px;">${modelTag}</span>
               ${isNoKb ? '<span style="font-size:11px; color:#52c41a; font-weight:normal;">[自由直答]</span>' : ''}
             </div>
-            <button class="chat-btn-copy" onclick="copyAnswerText(this)" title="复制答复内容">
-              📋 复制
-            </button>
+            <div style="display:flex; align-items:center;">
+              ${phoenixBtnHtml}
+              <button class="chat-btn-copy" onclick="copyAnswerText(this)" title="复制答复内容">
+                📋 复制
+              </button>
+            </div>
           </div>
           <div class="chat-ai-content">${escapeHtml(answerText)}</div>
           ${citationsHtml}
@@ -8111,7 +8124,10 @@
             <td style="max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:normal; font-size:13px; line-height:1.5;" title="${r.query}">${r.query}</td>
             <td style="max-width:360px; overflow:hidden; text-overflow:ellipsis; white-space:normal; font-size:12px; line-height:1.5; color:#555;" title="${r.answer_summary}">${r.answer_summary}</td>
             <td>${statusBadge}</td>
-            <td><span style="color:#1890ff; cursor:pointer; font-size:12px; text-decoration:underline;" onclick="traceAuditLog('${r.thread_id}')">审计追溯</span></td>
+            <td>
+              <span style="color:#1890ff; cursor:pointer; font-size:12px; text-decoration:underline;" onclick="traceAuditLog('${r.thread_id}')">审计追溯</span>
+              ${(r.phoenix_url || r.thread_id) ? `<a href="${r.phoenix_url || ('http://localhost:6006/projects/legal-advisor-prod/traces/' + r.thread_id)}" target="_blank" style="color:#722ed1; font-size:12px; margin-left:8px; text-decoration:underline;" title="在 Arize Phoenix 中查看该条问答调用链路与指标">链路追踪</a>` : ''}
+            </td>
           `;
           tbody.appendChild(tr);
         });

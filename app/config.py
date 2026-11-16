@@ -112,6 +112,15 @@ class Settings:
     llm_config_path: str = os.getenv("LLM_CONFIG_PATH", "app/data/llm_config.json")
     kb_db_path: str = os.getenv("KB_DB_PATH", "app/data/kb_vectors.db")
 
+    # —— 生产级可观测性监控 (Arize Phoenix & OpenTelemetry) ——
+    phoenix_enabled: bool = _bool(os.getenv("PHOENIX_ENABLED", "false"), False)
+    phoenix_collector_endpoint: str = os.getenv(
+        "PHOENIX_COLLECTOR_ENDPOINT", "http://localhost:6006/v1/traces"
+    )
+    phoenix_project_name: str = os.getenv("PHOENIX_PROJECT_NAME", "legal-advisor-prod")
+    phoenix_ui_base_url: str = os.getenv("PHOENIX_UI_BASE_URL", "http://localhost:6006")
+    phoenix_eval_sample_rate: float = float(os.getenv("PHOENIX_EVAL_SAMPLE_RATE", "1.0"))
+
     # —— 存储引擎扩展（MySQL + Elasticsearch 8.x 选配，缺省自动使用内置 SQLite + 内存 BM25+BGE-M3）——
     storage_backend: str = os.getenv("STORAGE_BACKEND", "sqlite")  # mysql / sqlite
     mysql_host: str = os.getenv("MYSQL_HOST", "localhost")
@@ -345,6 +354,11 @@ class Settings:
             "presets": LLM_PROVIDER_PRESETS,
             "available_models": available_models,
             "platform_credentials": public_credentials,
+            "phoenix_enabled": self.phoenix_enabled,
+            "phoenix_collector_endpoint": self.phoenix_collector_endpoint,
+            "phoenix_project_name": self.phoenix_project_name,
+            "phoenix_ui_base_url": self.phoenix_ui_base_url,
+            "phoenix_eval_sample_rate": self.phoenix_eval_sample_rate,
         }
 
     def save_to_disk(self) -> None:

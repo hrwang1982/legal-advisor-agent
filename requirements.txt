@@ -9,3 +9,9 @@ pymysql>=1.1.0
 cryptography>=42.0.0
 pypdf>=5.0.0
 python-docx>=1.1.0
+# 可观测性监控 (Arize Phoenix & OpenTelemetry)
+arize-phoenix-otel>=0.7.0
+openinference-semantic-conventions>=0.1.9
+opentelemetry-api>=1.25.0
+opentelemetry-sdk>=1.25.0
+opentelemetry-exporter-otlp>=1.25.0

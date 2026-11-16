@@ -38,6 +38,7 @@ from app.kb import kb_store
 from app.knowledge import knowledge_center
 from app.models import BaseModel, Field
 from app.mysql_store import mysql_store
+from app.observability import obs, setup_observability
 from app.rbac import ALL_KB_COLLECTIONS, ALL_MENUS, rbac_manager
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -236,40 +237,53 @@ def handle_legal_query(req: QueryReq, user_id: Optional[str] = None) -> Dict[str
     if req.deep_thinking is not None:
         payload["deep_thinking"] = req.deep_thinking
 
-    graph.invoke(payload, cfg)
-    snap = _snapshot(cfg, tid, user_id=user_id, kb_scope=req.kb_scope)
-    fo = snap.get("final_output") or {}
-    plan = snap.get("rule_plan") or {}
-    audit_rec = audit_store.record_audit_event(
+    with obs.trace_legal_query(
+        query=req.query,
         thread_id=tid,
-        event_type="query_generated",
-        decision="pending_review",
-        confidence=snap.get("answer_confidence") or "",
-        review_level=plan.get("review", ""),
-        citations=fo.get("citations", []),
-        draft_answer=fo.get("answer", ""),
-        final_answer=fo.get("answer", ""),
-    )
-    base = {
-        "thread_id": tid,
-        "result": snap["final_output"],
-        "fact_summary": snap.get("fact_summary"),
-        "compliance_info": snap.get("compliance_info"),
-        "rule_plan": snap.get("rule_plan"),
-        "rule_notes": snap.get("rule_notes", []),
-        "precedence": snap.get("precedence", []),
-        "answer_confidence": snap.get("answer_confidence"),
-        "audit_entry": audit_rec,
-        "kb_scope": req.kb_scope or "all",
-        "model_used": req.model or (settings.llm_model if not settings.mock else "mock"),
-    }
-    if snap["needs_review"]:
-        return {"status": "needs_review", "review": snap["review_payload"], **base}
-    return {"status": "done", **base}
+        user_id=user_id,
+        kb_scope=req.kb_scope,
+        model=req.model,
+    ) as trace_ctx:
+        graph.invoke(payload, cfg)
+        snap = _snapshot(cfg, tid, user_id=user_id, kb_scope=req.kb_scope)
+        fo = snap.get("final_output") or {}
+        plan = snap.get("rule_plan") or {}
+        audit_rec = audit_store.record_audit_event(
+            thread_id=tid,
+            event_type="query_generated",
+            decision="pending_review",
+            confidence=snap.get("answer_confidence") or "",
+            review_level=plan.get("review", ""),
+            citations=fo.get("citations", []),
+            draft_answer=fo.get("answer", ""),
+            final_answer=fo.get("answer", ""),
+        )
+        base = {
+            "thread_id": tid,
+            "result": snap["final_output"],
+            "fact_summary": snap.get("fact_summary"),
+            "compliance_info": snap.get("compliance_info"),
+            "rule_plan": snap.get("rule_plan"),
+            "rule_notes": snap.get("rule_notes", []),
+            "precedence": snap.get("precedence", []),
+            "answer_confidence": snap.get("answer_confidence"),
+            "audit_entry": audit_rec,
+            "kb_scope": req.kb_scope or "all",
+            "model_used": req.model or (settings.llm_model if not settings.mock else "mock"),
+            "trace_id": trace_ctx["trace_id"],
+            "phoenix_url": trace_ctx["phoenix_url"],
+        }
+        if snap["needs_review"]:
+            out = {"status": "needs_review", "review": snap["review_payload"], **base}
+        else:
+            out = {"status": "done", **base}
+        obs.record_query_completion(trace_ctx, out)
+        return out
 
 
 if _HAS_FASTAPI:
     app = FastAPI(title="法律顾问 Agent（可交付版 v3.5）", version="3.5.0")
+    setup_observability(app)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/")
@@ -290,6 +304,9 @@ if _HAS_FASTAPI:
             "audit_chain_valid": chain_ok,
             "audit_logs_count": total_logs,
             "audit_chain_message": chain_msg,
+            "phoenix_enabled": settings.phoenix_enabled,
+            "phoenix_ui_url": settings.phoenix_ui_base_url,
+            "phoenix_status": "connected" if obs.enabled else ("disabled" if not settings.phoenix_enabled else "degraded"),
         }
 
     @app.post("/legal-query")
@@ -322,6 +339,18 @@ if _HAS_FASTAPI:
         }
         graph.invoke(Command(resume=resume_payload), cfg)
         snap = _snapshot(cfg, req.thread_id)
+        rev_audit = snap.get("review_audit") or {}
+        obs.record_lawyer_review_feedback(
+            thread_id=req.thread_id,
+            decision=dec,
+            reviewer_name=req.reviewer_name,
+            comments=req.comments,
+            draft_answer=rev_audit.get("draft_answer", ""),
+            final_answer=rev_audit.get("final_answer", req.edited_answer),
+            diff_str=rev_audit.get("answer_diff", ""),
+            add_citations=req.add_citations,
+            remove_citations=req.remove_citations,
+        )
         base = {
             "thread_id": req.thread_id,
             "result": snap["final_output"],
@@ -332,6 +361,7 @@ if _HAS_FASTAPI:
             "precedence": snap.get("precedence", []),
             "answer_confidence": snap.get("answer_confidence"),
             "review_audit": snap.get("review_audit"),
+            "phoenix_url": obs.get_phoenix_trace_url(req.thread_id),
         }
         if snap["needs_review"]:
             return {"status": "needs_review", "review": snap["review_payload"], **base}
@@ -548,6 +578,10 @@ if _HAS_FASTAPI:
             end_date=end_date,
             limit=limit,
         )
+        for r in records:
+            tid = r.get("thread_id")
+            if tid:
+                r["phoenix_url"] = obs.get_phoenix_trace_url(tid)
         return {"total": len(records), "records": records}
 
     class AdoptProposalReq(BaseModel):
