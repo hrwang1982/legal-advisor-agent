@@ -1984,12 +1984,12 @@
           <textarea class="json-editor" id="ruleJsonTextarea" style="width:100%; height:380px; font-family:Menlo, Monaco, Consolas, monospace; font-size:13px; line-height:1.6; padding:14px; border:1px solid var(--border-color); border-radius:8px; background:#fafbfc; outline:none; resize:vertical;"></textarea>
         </div>
 
-        <!-- 知识飞轮大模型提案卡片 (占满全宽) -->
+        <!-- 知识飞轮规则与知识提案卡片 (占满全宽) -->
         <div class="full-width-card">
           <div class="flex-row" style="justify-content:space-between; margin-bottom:12px;">
             <div>
-              <h3>🔄 知识飞轮 · 大模型兜底成果自动反哺待审池（Rule Proposals）</h3>
-              <div class="card-desc" style="margin-bottom:0;">当用户咨询未收录案由时，大模型推导出的核心要件与补充条文自动沉淀至此，一键采纳合入规则中心。</div>
+              <h3>🔄 知识飞轮 · 规则与知识自动沉淀待审池（Rule Proposals）</h3>
+              <div class="card-desc" style="margin-bottom:0;">汇聚智能问答反哺、新旧法版本对齐推导及图谱抽取生成的待审规则；支持专业法务人员一键审核采纳，实时热生效合入权威规则字典。</div>
             </div>
             <div class="flex-row">
               <button class="btn-tool" onclick="loadRuleProposals()">刷新提案池</button>
@@ -7900,7 +7900,7 @@
         const container = document.getElementById("proposalsListContainer");
         container.innerHTML = "";
         if (list.length === 0) {
-          container.innerHTML = `<div style="font-size:13px; color:var(--text-muted); padding:10px 0;">当前暂无大模型反哺待审提案</div>`;
+          container.innerHTML = `<div style="font-size:13px; color:var(--text-muted); padding:10px 0;">当前暂无待审核的规则与知识提案</div>`;
         } else {
           list.forEach(p => {
             let badgeBg = "#e6f7ff";
