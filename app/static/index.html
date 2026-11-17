@@ -2083,6 +2083,7 @@
               <input type="text" class="filter-input" id="qaFilterUser" style="width:150px;" placeholder="输入用户名/姓名" onkeydown="if(event.key==='Enter')loadQaDetails()" />
               <input type="text" class="filter-input" id="qaFilterKeyword" style="width:190px;" placeholder="输入问题或回答关键词" onkeydown="if(event.key==='Enter')loadQaDetails()" />
               <button class="btn-search" id="btnSearchQaDetails" onclick="loadQaDetails()">搜索</button>
+              <button class="btn-reset" onclick="loadQaDetails()" title="重新拉取数据库最新真实问答与审计流水">🔄 刷新流水</button>
               <button class="btn-tool" onclick="exportQaDetailsToCsv()">导出表格 (CSV)</button>
             </div>
           </div>
@@ -5171,7 +5172,7 @@
       onQaInputChange();
 
       const abortCtrl = new AbortController();
-      const timeoutId = setTimeout(() => abortCtrl.abort(), 25000);
+      const timeoutId = setTimeout(() => abortCtrl.abort(), 120000);
 
       try {
         const res = await fetch("/legal-query", {
@@ -5208,8 +5209,8 @@
         errRow.innerHTML = `
           <div class="chat-avatar ai-avatar">法</div>
           <div class="chat-card-ai" style="border-color:#ffccc7; background:#fff2f0;">
-            <div style="color:#cf1322; font-size:13.5px;">
-              ⚠️ ${e.name === "AbortError" ? "请求响应超时，请检查后端运行状态或网络连通性" : (e.message || "请求失败，请稍后重试")}
+            <div style="color:#cf1322; font-size:13.5px; line-height:1.6;">
+              ⚠️ ${e.name === "AbortError" ? "请求响应超时（已等待 120 秒）。由于知识库多步骤检索、法理分析与「深度思考」耗时较长，后端服务可能仍在后台继续推演并落库，您可稍后前往左侧「数据统计」中查看流水明细与链路追踪。" : (e.message || "请求失败，请稍后重试")}
             </div>
           </div>
         `;
@@ -7980,6 +7981,14 @@
       }
     }
 
+    function getLocalDateString() {
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = String(now.getMonth() + 1).padStart(2, "0");
+      const d = String(now.getDate()).padStart(2, "0");
+      return `${y}-${m}-${d}`;
+    }
+
     function initStatsDateRange() {
       const startInput = document.getElementById("statsStartDate");
       const endInput = document.getElementById("statsEndDate");
@@ -7987,7 +7996,7 @@
         startInput.value = "2026-10-01";
       }
       if (endInput && !endInput.value) {
-        endInput.value = new Date().toISOString().slice(0, 10);
+        endInput.value = getLocalDateString();
       }
     }
 
@@ -8001,7 +8010,7 @@
       const startInput = document.getElementById("statsStartDate");
       const endInput = document.getElementById("statsEndDate");
       if (startInput) startInput.value = "2026-10-01";
-      if (endInput) endInput.value = new Date().toISOString().slice(0, 10);
+      if (endInput) endInput.value = getLocalDateString();
       loadStatsOverview();
     }
 

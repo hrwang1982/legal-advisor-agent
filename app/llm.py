@@ -98,7 +98,7 @@ def _call_openai_compatible_http(
         headers["Authorization"] = f"Bearer {settings.llm_api_key}"
 
     last_exc: Optional[Exception] = None
-    timeout_val = min(float(settings.llm_timeout or 8.0), 8.0)
+    timeout_val = float(settings.llm_timeout or 45.0)
     retries = 1
     for attempt in range(retries):
         try:
@@ -134,7 +134,7 @@ def _call(
             api_key=settings.llm_api_key or "EMPTY",
             model=real_model,
             temperature=settings.llm_temperature,
-            timeout=min(float(settings.llm_timeout or 8.0), 8.0),
+            timeout=float(settings.llm_timeout or 45.0),
         )
         return llm.predict(prompt)
     except ImportError:

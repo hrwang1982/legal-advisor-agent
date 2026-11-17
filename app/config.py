@@ -83,7 +83,7 @@ class Settings:
     )
     llm_model: str = os.getenv("LLM_MODEL", "qwen-plus")
     llm_temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.0"))
-    llm_timeout: float = float(os.getenv("LLM_TIMEOUT", "30.0"))
+    llm_timeout: float = float(os.getenv("LLM_TIMEOUT", "60.0"))
     llm_max_retries: int = int(os.getenv("LLM_MAX_RETRIES", "2"))
 
     # —— 嵌入向量模型（推荐 BAAI/bge-m3，支持 OpenAI /v1/embeddings 兼容接口与本地 bge-m3 特征向量）——
