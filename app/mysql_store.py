@@ -9,7 +9,7 @@ import logging
 import os
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.config import settings
@@ -1763,6 +1763,34 @@ class MySQLStore:
                 return sub
             return t[:max_len] + ("..." if len(t) > max_len else "")
 
+        def _to_beijing_time(dt_str: Optional[str]) -> str:
+            """将会话快照中的时间转换为标准北京时间（东八区 UTC+8）"""
+            if not dt_str:
+                return "-"
+            try:
+                s = str(dt_str).strip()
+                if s.endswith("Z"):
+                    s = s[:-1] + "+00:00"
+                has_tz = False
+                if len(s) > 19:
+                    rest = s[19:]
+                    if "+" in rest or "-" in rest:
+                        has_tz = True
+                elif "+" in s:
+                    has_tz = True
+
+                if has_tz:
+                    dt = datetime.fromisoformat(s)
+                else:
+                    clean_s = s[:19].replace("T", " ")
+                    dt = datetime.strptime(clean_s, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+
+                beijing_tz = timezone(timedelta(hours=8))
+                bj_dt = dt.astimezone(beijing_tz)
+                return bj_dt.strftime("%Y-%m-%d %H:%M:%S")
+            except Exception:
+                return str(dt_str)[:19].replace("T", " ")
+
         # 载入部门体系与映射
         depts = self.get_departments()
         dept_map = {d["dept_id"]: d for d in depts}
@@ -1803,7 +1831,8 @@ class MySQLStore:
         for s in snapshots:
             tid = s["thread_id"]
             up_at = s.get("updated_at") or ""
-            date_str = up_at[:10]
+            bj_time = _to_beijing_time(up_at)
+            date_str = bj_time[:10]
 
             if start_date and date_str < start_date:
                 continue
@@ -1871,11 +1900,9 @@ class MySQLStore:
                 display_status = "已办结"
                 status_tag = "done"
 
-            clean_time = up_at[:19].replace("T", " ") if up_at else "-"
-
             results.append({
                 "thread_id": tid,
-                "time": clean_time,
+                "time": bj_time,
                 "username": raw_u,
                 "user_display": f"{user_display} ({raw_u})" if user_display != raw_u else raw_u,
                 "department": user_dept_name,

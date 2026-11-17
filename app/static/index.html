@@ -2091,7 +2091,7 @@
             <table class="custom-table">
               <thead>
                 <tr>
-                  <th style="width:150px;">时间</th>
+                  <th style="width:160px;">时间 (北京时间)</th>
                   <th style="width:150px;">用户 / 部门</th>
                   <th style="width:85px;">问答范围</th>
                   <th style="min-width:240px;">问题</th>
@@ -8156,7 +8156,7 @@
         showToast("当前无流水数据可供导出");
         return;
       }
-      const headers = ["会话ID", "时间", "用户账号", "真实姓名", "所属部门", "问答范围", "咨询问题", "回答摘要", "复核状态"];
+      const headers = ["会话ID", "时间 (北京时间)", "用户账号", "真实姓名", "所属部门", "问答范围", "咨询问题", "回答摘要", "复核状态"];
       const rows = CURRENT_QA_DETAILS_CACHE.map(r => [
         `"${(r.thread_id || '').replace(/"/g, '""')}"`,
         `"${(r.time || '').replace(/"/g, '""')}"`,
@@ -8172,7 +8172,7 @@
       const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
       const link = document.createElement("a");
       const url = URL.createObjectURL(blob);
-      const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+      const dateStr = getLocalDateString().replace(/-/g, "");
       link.setAttribute("href", url);
       link.setAttribute("download", `AI法盾_真实问答流水明细_${dateStr}.csv`);
       document.body.appendChild(link);

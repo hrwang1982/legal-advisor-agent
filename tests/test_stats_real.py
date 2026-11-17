@@ -88,6 +88,10 @@ class TestStatsReal(unittest.TestCase):
         self.assertIn("answer_summary", first)
         self.assertIn("review_status", first)
 
+        # 验证时间字段必须为合法的北京时间格式 (YYYY-MM-DD HH:MM:SS)
+        import re
+        self.assertTrue(bool(re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$", first["time"])), f"Time is not Beijing format: {first['time']}")
+
         # 状态应当是合法的标签
         self.assertIn(first["review_status"], ("已复核", "待复核", "已驳回", "已办结"))
 
