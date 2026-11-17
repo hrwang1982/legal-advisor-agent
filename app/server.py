@@ -129,7 +129,7 @@ class LLMTestReq(BaseModel):
     llm_api_key: Optional[str] = ""
 
 
-def _snapshot(config, thread_id: str, user_id: Optional[str] = None, kb_scope: Optional[str] = None):
+def _snapshot(config, thread_id: str, user_id: Optional[str] = None, kb_scope: Optional[str] = None, trace_id: Optional[str] = None):
     """读取线程当前状态并同步持久化至数据库。"""
     st = graph.get_state(config)
     fo = st.values.get("final_output")
@@ -155,6 +155,7 @@ def _snapshot(config, thread_id: str, user_id: Optional[str] = None, kb_scope: O
     result["review_payload"] = pending[0] if pending else None
 
     status_str = "needs_review" if result["needs_review"] else "done"
+    real_trace_id = trace_id or st.values.get("trace_id") or ""
     audit_store.save_snapshot(
         thread_id=thread_id,
         status=status_str,
@@ -171,6 +172,7 @@ def _snapshot(config, thread_id: str, user_id: Optional[str] = None, kb_scope: O
             "human_approved": bool(st.values.get("human_approved")),
             "user": {"username": user_id or "admin"},
             "kb_scope": kb_scope or "external",
+            "trace_id": real_trace_id,
         },
     )
     return result
@@ -245,7 +247,7 @@ def handle_legal_query(req: QueryReq, user_id: Optional[str] = None) -> Dict[str
         model=req.model,
     ) as trace_ctx:
         graph.invoke(payload, cfg)
-        snap = _snapshot(cfg, tid, user_id=user_id, kb_scope=req.kb_scope)
+        snap = _snapshot(cfg, tid, user_id=user_id, kb_scope=req.kb_scope, trace_id=trace_ctx["trace_id"])
         fo = snap.get("final_output") or {}
         plan = snap.get("rule_plan") or {}
         audit_rec = audit_store.record_audit_event(
@@ -580,8 +582,13 @@ if _HAS_FASTAPI:
         )
         for r in records:
             tid = r.get("thread_id")
-            if tid:
-                r["phoenix_url"] = obs.get_phoenix_trace_url(tid)
+            t_id = r.get("trace_id")
+            if not t_id and tid:
+                snap = audit_store.get_snapshot(tid)
+                if snap and isinstance(snap.get("state_data"), dict):
+                    t_id = snap["state_data"].get("trace_id")
+            r["trace_id"] = t_id or ""
+            r["phoenix_url"] = obs.get_phoenix_trace_url(t_id or "")
         return {"total": len(records), "records": records}
 
     class AdoptProposalReq(BaseModel):

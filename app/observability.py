@@ -138,13 +138,21 @@ class ObservabilityManager:
             self.tracer = None
             return False
 
-    def get_phoenix_trace_url(self, trace_id: Optional[str]) -> str:
-        """根据当前配置生成一键直达 Phoenix 控制台对应 Trace 详情的 URL。"""
-        if not trace_id:
-            return ""
+    def get_phoenix_trace_url(self, trace_id: Optional[str] = None) -> str:
+        """根据当前配置生成 Arize Phoenix 官方标准的直达/重定向 URL（遵循官方 /redirects/ 规范，杜绝 Unknown node 错误）。
+        1. 针对具有 32 位标准十六进制 Trace ID 的问答：返回 /redirects/traces/{trace_id}，Phoenix 服务端会自动解析并跳转到具体的 Trace 详情面板；
+        2. 针对历史会话、未采集 Trace 或普通项目跳转：安全回退至 /redirects/projects/{project_name}，打开项目的主监控面板及全量链路列表。
+        """
         base_url = (getattr(settings, "phoenix_ui_base_url", "http://localhost:6006") or "").rstrip("/")
         project = urllib.parse.quote(getattr(settings, "phoenix_project_name", "legal-advisor-prod"))
-        return f"{base_url}/projects/{project}/traces/{trace_id}"
+
+        if trace_id:
+            clean_tid = str(trace_id).replace("-", "").strip()
+            # 标准 OpenTelemetry Trace ID 格式为 32 位十六进制字符串
+            if len(clean_tid) == 32 and re.match(r"^[0-9a-fA-F]{32}$", clean_tid):
+                return f"{base_url}/redirects/traces/{clean_tid}"
+
+        return f"{base_url}/redirects/projects/{project}"
 
     @contextmanager
     def start_span(

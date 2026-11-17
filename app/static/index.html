@@ -5229,7 +5229,7 @@
       const modelTag = data.model_used || selectedModel || "qwen-plus";
       if (data.thread_id) CURRENT_QA_THREAD_ID = data.thread_id;
 
-      const phoenixUrl = data.phoenix_url || (data.trace_id ? `http://localhost:6006/projects/legal-advisor-prod/traces/${data.trace_id}` : '');
+      const phoenixUrl = data.phoenix_url || (data.trace_id ? `http://localhost:6006/redirects/traces/${data.trace_id.replace(/-/g, '')}` : 'http://localhost:6006/redirects/projects/legal-advisor-prod');
       const phoenixBtnHtml = phoenixUrl ? `
         <a href="${phoenixUrl}" target="_blank" class="chat-btn-copy" style="text-decoration:none; color:#722ed1; border-color:#d3adf7; background:#f9f0ff; margin-right:6px; display:inline-flex; align-items:center; gap:3px;" title="在 Arize Phoenix 中查看本条问答的完整调用链路与 RAG 检索细节">
           <span>⚡</span><span>Phoenix 监控</span>
@@ -8126,7 +8126,7 @@
             <td>${statusBadge}</td>
             <td>
               <span style="color:#1890ff; cursor:pointer; font-size:12px; text-decoration:underline;" onclick="traceAuditLog('${r.thread_id}')">审计追溯</span>
-              ${(r.phoenix_url || r.thread_id) ? `<a href="${r.phoenix_url || ('http://localhost:6006/projects/legal-advisor-prod/traces/' + r.thread_id)}" target="_blank" style="color:#722ed1; font-size:12px; margin-left:8px; text-decoration:underline;" title="在 Arize Phoenix 中查看该条问答调用链路与指标">链路追踪</a>` : ''}
+              <a href="${r.phoenix_url || (r.trace_id ? ('http://localhost:6006/redirects/traces/' + r.trace_id.replace(/-/g, '')) : 'http://localhost:6006/redirects/projects/legal-advisor-prod')}" target="_blank" style="color:#722ed1; font-size:12px; margin-left:8px; text-decoration:underline;" title="在 Arize Phoenix 中查看该条问答调用链路与指标">链路追踪</a>
             </td>
           `;
           tbody.appendChild(tr);

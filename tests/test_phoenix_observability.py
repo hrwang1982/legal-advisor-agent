@@ -32,13 +32,15 @@ def test_noop_degradation():
 
 
 def test_phoenix_url_generation():
-    """测试 Phoenix 直达 URL 构造。"""
+    """测试 Phoenix 直达 URL 构造（符合官方 /redirects/ 规范）。"""
     tid = "abcdef1234567890abcdef1234567890"
-    url = obs.get_phoenix_trace_url(tid)
-    assert "legal-advisor-prod" in url
-    assert tid in url
-    assert url.startswith("http://")
-    print(f"✅ 2. Phoenix 详情 URL 构造验证通过: {url}")
+    url_trace = obs.get_phoenix_trace_url(tid)
+    assert "/redirects/traces/" in url_trace
+    assert tid in url_trace
+
+    url_proj = obs.get_phoenix_trace_url("")
+    assert "/redirects/projects/legal-advisor-prod" in url_proj
+    print(f"✅ 2. Phoenix 官方重定向 URL 构造验证通过: {url_trace}")
 
 
 def test_deterministic_metrics_computation():
