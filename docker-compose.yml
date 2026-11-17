@@ -166,6 +166,9 @@ services:
       PHOENIX_PORT: "6006"
       PHOENIX_GRPC_PORT: "4317"
       PHOENIX_SQL_DATABASE_URL: "postgresql://phoenix:phoenix_password@phoenix-postgres:5432/phoenix"
+      # 免密访问配置：设为 false 可跳过登录界面，点击「链路追踪」一键直达 Trace 详情页
+      # 若需开启多用户鉴权，可设为 true，默认初始管理员凭据为：admin@localhost / admin
+      PHOENIX_ENABLE_AUTH: "false"
     volumes:
       - phoenix_data:/mnt/data
     healthcheck:
