@@ -588,7 +588,7 @@ if _HAS_FASTAPI:
                 if snap and isinstance(snap.get("state_data"), dict):
                     t_id = snap["state_data"].get("trace_id")
             r["trace_id"] = t_id or ""
-            r["phoenix_url"] = obs.get_phoenix_trace_url(t_id or "")
+            r["phoenix_url"] = obs.get_phoenix_trace_url(t_id or "", check_enabled=True)
         return {"total": len(records), "records": records}
 
     class AdoptProposalReq(BaseModel):

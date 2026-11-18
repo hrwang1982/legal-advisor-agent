@@ -129,6 +129,18 @@ class ObservabilityManager:
 
             # 执行系统核心链路函数级无侵入挂钩
             self._auto_instrument_system()
+
+            # 提前向 Phoenix 注册合法项目 Node，杜绝未采集时访问项目 Unknown node 报错
+            try:
+                with self.tracer.start_as_current_span("legal_advisor.system_init") as init_span:
+                    init_span.set_attribute("service.name", "legal-advisor-agent")
+                    init_span.set_attribute("project.name", project_name)
+                    init_span.set_attribute("init.status", "connected")
+                if hasattr(tracer_provider, "force_flush"):
+                    tracer_provider.force_flush(timeout_millis=2000)
+            except Exception as e:
+                logger.debug(f"[Observability] 发送初始化项目注册 Span 提示: {e}")
+
             return True
         except Exception as e:
             logger.warning(
@@ -138,11 +150,15 @@ class ObservabilityManager:
             self.tracer = None
             return False
 
-    def get_phoenix_trace_url(self, trace_id: Optional[str] = None) -> str:
+    def get_phoenix_trace_url(self, trace_id: Optional[str] = None, check_enabled: bool = False) -> str:
         """根据当前配置生成 Arize Phoenix 官方标准的直达/重定向 URL（遵循官方 /redirects/ 规范，杜绝 Unknown node 错误）。
-        1. 针对具有 32 位标准十六进制 Trace ID 的问答：返回 /redirects/traces/{trace_id}，Phoenix 服务端会自动解析并跳转到具体的 Trace 详情面板；
-        2. 针对历史会话、未采集 Trace 或普通项目跳转：安全回退至 /redirects/projects/{project_name}，打开项目的主监控面板及全量链路列表。
+        1. 若 check_enabled=True 且 self.enabled=False：直接返回空字符串，避免前端在未启用监控时生成无效/报错跳转死链；
+        2. 针对具有 32 位标准十六进制 Trace ID 的问答：返回 /redirects/traces/{trace_id}；
+        3. 针对无 TraceID 问答：安全回退至项目看板 /redirects/projects/{project_name}。
         """
+        if check_enabled and not self.enabled:
+            return ""
+
         base_url = (getattr(settings, "phoenix_ui_base_url", "http://localhost:6006") or "").rstrip("/")
         project = urllib.parse.quote(getattr(settings, "phoenix_project_name", "legal-advisor-prod"))
 
@@ -280,6 +296,13 @@ class ObservabilityManager:
                 trigger_reason=trigger_reason,
             )
 
+        # 3. 实时强刷盘：立即将本轮产生的 Span 同步发送给 Phoenix，杜绝异步批量时差导致前端立刻点击报找不到 Trace
+        if self._tracer_provider and hasattr(self._tracer_provider, "force_flush"):
+            try:
+                self._tracer_provider.force_flush(timeout_millis=2000)
+            except Exception as e:
+                logger.debug(f"[Observability] force_flush 提示: {e}")
+
     def record_lawyer_review_feedback(
         self,
         thread_id: str,
@@ -325,6 +348,11 @@ class ObservabilityManager:
         # 若 Phoenix 启用，异步向 Phoenix HTTP API 上报标注
         if self.enabled:
             _EVAL_EXECUTOR.submit(self._push_annotation_to_phoenix, annotation_payload)
+            if self._tracer_provider and hasattr(self._tracer_provider, "force_flush"):
+                try:
+                    self._tracer_provider.force_flush(timeout_millis=2000)
+                except Exception as e:
+                    logger.debug(f"[Observability] force_flush 提示: {e}")
 
         # 用户明确要求：执业律师驳回或改稿（revise / re_retrieve / has_diff）时自动触发深度评测
         if clean_dec in ("revise", "re_retrieve") or bool(diff_str):

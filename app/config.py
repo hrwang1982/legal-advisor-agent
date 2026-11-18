@@ -113,7 +113,7 @@ class Settings:
     kb_db_path: str = os.getenv("KB_DB_PATH", "app/data/kb_vectors.db")
 
     # —— 生产级可观测性监控 (Arize Phoenix & OpenTelemetry) ——
-    phoenix_enabled: bool = _bool(os.getenv("PHOENIX_ENABLED", "false"), False)
+    phoenix_enabled: bool = _bool(os.getenv("PHOENIX_ENABLED", "true"), True)
     phoenix_collector_endpoint: str = os.getenv(
         "PHOENIX_COLLECTOR_ENDPOINT", "http://localhost:6006/v1/traces"
     )
