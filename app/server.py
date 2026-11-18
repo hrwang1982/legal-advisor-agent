@@ -1156,6 +1156,44 @@ if _HAS_FASTAPI:
         if res.get("status") == "success":
             invalidate_cache()
         return res
+
+    # ————————————————————————————————————————————————
+    # Ragas 独立 Docker 微服务多维自动评测接口（绝对无侵入扩展）
+    # ————————————————————————————————————————————————
+    from app.ragas_eval import ragas_eval_mgr
+
+    class RagasRunReq(BaseModel):
+        mode: str = "golden"  # golden / production / custom
+        case_ids: Optional[List[str]] = None
+        limit: int = 5
+        custom_case: Optional[Dict[str, Any]] = None
+        use_llm: bool = False
+
+    @app.get("/eval/ragas/status")
+    def get_ragas_eval_status_api():
+        """探测独立 Ragas 微服务容器 (:8003) 状态，返回黄金评测基准集列表与近期历史。"""
+        return ragas_eval_mgr.get_status()
+
+    @app.post("/eval/ragas/run")
+    def run_ragas_eval_api(req: RagasRunReq):
+        """触发 Ragas 多维评测（支持黄金集 / 生产真实问答抽样 / 自定义沙盒）。"""
+        try:
+            return ragas_eval_mgr.run_evaluation(
+                mode=req.mode,
+                case_ids=req.case_ids,
+                limit=req.limit,
+                custom_case=req.custom_case,
+                use_llm=req.use_llm,
+            )
+        except ValueError as ve:
+            raise HTTPException(status_code=400, detail=str(ve))
+        except Exception as err:
+            raise HTTPException(status_code=500, detail=f"Ragas 评测执行失败: {err}")
+
+    @app.get("/eval/ragas/history")
+    def get_ragas_eval_history_api(limit: int = 10):
+        """读取持久化的历史 Ragas 评测批次记录。"""
+        return {"history": ragas_eval_mgr.get_history(limit=limit)}
 else:
     app = None
 

@@ -2144,28 +2144,177 @@
          ========================================================================= -->
     <section class="page-view" id="evalView">
       <div class="page-full-content">
+        <!-- 顶部控制台 -->
         <div class="full-width-card">
-          <div class="flex-row" style="justify-content:space-between; margin-bottom:10px;">
-            <h3>🧪 自动化法理与法规评测工作台</h3>
-            <span class="dev-tag">云端调度微服务建设中</span>
+          <div class="flex-row" style="justify-content:space-between; margin-bottom:10px; flex-wrap:wrap; gap:10px;">
+            <div>
+              <h3>🧪 Ragas 多维自动化法理评测工作台</h3>
+              <div class="card-desc" style="margin-bottom:0;">基于独立 Docker 容器化部署的 <b>Arize / VibrantLabs Ragas</b> 评测微服务（端口 :8003），围绕忠实度、相关性、检索精确率/召回率及法律时空位阶合规度执行全链路回归与生产体检。</div>
+            </div>
+            <div class="flex-row" style="gap:8px; flex-wrap:wrap;">
+              <span class="answer-pill warn" id="ragasContainerStatusBadge">⏳ 正在探测 Ragas 容器...</span>
+              <select class="filter-select" id="ragasHistorySelect" style="width:220px;" onchange="selectRagasHistoryBatch()">
+                <option value="">查看历史评测批次...</option>
+              </select>
+              <button class="btn-tool" onclick="exportRagasReportCsv()">导出报告 (CSV)</button>
+            </div>
           </div>
-          <div class="card-desc">针对上位法优先、特别法优先、时间不溯及既往及司法解释位阶规则等核心法理逻辑进行自动化回归断言。</div>
 
-          <div style="display:grid; grid-template-columns: 340px 1fr; gap:18px; margin-top:14px;">
-            <div style="background:#fafbfc; border:1px solid var(--border-color); border-radius:8px; padding:16px;">
-              <h4 style="font-size:14px; margin-bottom:10px;">本地回归基准套件</h4>
-              <div style="display:flex; flex-direction:column; gap:8px; font-size:13px; margin-bottom:16px;">
-                <div>• 用例1: 劳动争议上位法单调排序</div>
-                <div>• 用例2: 借款合同时间效力不溯及既往</div>
-                <div>• 用例3: 司法解释位阶依附 host_law</div>
-                <div>• 用例4: 特别法（民法典与公司法）竞合</div>
+          <!-- 模式切换 Sub-Tabs -->
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-top:14px; border-bottom:1px solid var(--border-light); padding-bottom:12px;">
+            <div class="sub-tabs" style="margin-bottom:0;">
+              <button class="sub-tab-btn active" id="ragasTabBtn-golden" onclick="switchRagasMode('golden')">🏛️ 黄金基准集 (G01~G10)</button>
+              <button class="sub-tab-btn" id="ragasTabBtn-production" onclick="switchRagasMode('production')">📊 生产真实流水抽样</button>
+              <button class="sub-tab-btn" id="ragasTabBtn-custom" onclick="switchRagasMode('custom')">🧩 自定义案情沙盒</button>
+            </div>
+            <div class="flex-row" style="gap:10px;">
+              <label style="display:inline-flex; align-items:center; gap:5px; font-size:12.5px; color:var(--text-sub); cursor:pointer;" title="开启后将在 Ragas 容器内叠加调用大模型 LLM-as-a-Judge 深度打分（需关闭 Mock 并配置有效 API Key）">
+                <input type="checkbox" id="ragasUseLlmToggle" />
+                <span>叠加 Ragas LLM 深度裁判</span>
+              </label>
+              <button class="btn-search" id="btnRunRagasEval" onclick="runRagasEvaluation()">🚀 启动 Ragas 评测</button>
+              <button class="btn-reset" onclick="runAutoEvaluation()">运行本地回归断言</button>
+            </div>
+          </div>
+
+          <!-- 6 维 Ragas 核心指标大盘 -->
+          <div style="display:grid; grid-template-columns:repeat(6, minmax(150px, 1fr)); gap:12px; margin-top:16px;">
+            <div class="metric-card-item" style="padding:14px 16px;">
+              <div class="metric-info-col">
+                <div class="metric-title-text">Faithfulness 忠实度</div>
+                <div class="metric-number-text" style="font-size:22px;" id="ragas-m-faithfulness">-</div>
               </div>
-              <button class="btn-search" style="width:100%;" onclick="runAutoEvaluation()">运行本地回归断言</button>
-              <button class="btn-reset" style="width:100%; margin-top:8px;" onclick="showDevNotice('云原生分布式压测调度服务建设中，敬请期待')">一键云端压力测试 <span class="dev-tag">建设中</span></button>
+              <div class="metric-icon-badge" style="width:34px; height:34px; font-size:16px; background:#e6f7ff; color:#1890ff;">🛡️</div>
+            </div>
+            <div class="metric-card-item" style="padding:14px 16px;">
+              <div class="metric-info-col">
+                <div class="metric-title-text">Answer Relevancy 相关性</div>
+                <div class="metric-number-text" style="font-size:22px;" id="ragas-m-relevancy">-</div>
+              </div>
+              <div class="metric-icon-badge" style="width:34px; height:34px; font-size:16px; background:#f6ffed; color:#52c41a;">🎯</div>
+            </div>
+            <div class="metric-card-item" style="padding:14px 16px;">
+              <div class="metric-info-col">
+                <div class="metric-title-text">Context Precision 精确率</div>
+                <div class="metric-number-text" style="font-size:22px;" id="ragas-m-precision">-</div>
+              </div>
+              <div class="metric-icon-badge" style="width:34px; height:34px; font-size:16px; background:#f9f0ff; color:#722ed1;">📍</div>
+            </div>
+            <div class="metric-card-item" style="padding:14px 16px;">
+              <div class="metric-info-col">
+                <div class="metric-title-text">Context Recall 召回率</div>
+                <div class="metric-number-text" style="font-size:22px;" id="ragas-m-recall">-</div>
+              </div>
+              <div class="metric-icon-badge" style="width:34px; height:34px; font-size:16px; background:#e6fffb; color:#13c2c2;">📚</div>
+            </div>
+            <div class="metric-card-item" style="padding:14px 16px;">
+              <div class="metric-info-col">
+                <div class="metric-title-text">Citation Accuracy 法条准度</div>
+                <div class="metric-number-text" style="font-size:22px;" id="ragas-m-citation">-</div>
+              </div>
+              <div class="metric-icon-badge" style="width:34px; height:34px; font-size:16px; background:#fff7e6; color:#fa8c16;">⚖️</div>
+            </div>
+            <div class="metric-card-item" style="padding:14px 16px; border-color:var(--primary-border); background:#fffaf9;">
+              <div class="metric-info-col">
+                <div class="metric-title-text">Ragas 综合得分 / 等级</div>
+                <div class="metric-number-text" style="font-size:22px; color:var(--primary);" id="ragas-m-overall">-</div>
+              </div>
+              <div class="metric-icon-badge" style="width:34px; height:34px; font-size:16px; background:#fff1f0; color:#cf1322;">🏆</div>
+            </div>
+          </div>
+
+          <!-- 左配置面板 + 右实时日志终端 -->
+          <div style="display:grid; grid-template-columns: 360px 1fr; gap:18px; margin-top:16px;">
+            <div style="background:#fafbfc; border:1px solid var(--border-color); border-radius:8px; padding:14px;">
+              <!-- 模式1：黄金基准集 -->
+              <div id="ragasPanel-golden">
+                <div class="flex-row" style="justify-content:space-between; margin-bottom:8px;">
+                  <h4 style="font-size:13.5px; margin:0;">黄金法理基准用例集 (N=10)</h4>
+                  <label style="font-size:12px; color:var(--text-sub); cursor:pointer;">
+                    <input type="checkbox" id="ragasGoldenSelectAll" checked onchange="toggleAllRagasGolden(this.checked)" /> 全选
+                  </label>
+                </div>
+                <div id="ragasGoldenCaseList" style="display:flex; flex-direction:column; gap:6px; font-size:12px; max-height:245px; overflow-y:auto; padding-right:4px;">
+                  <div style="color:var(--text-muted);">⏳ 正在加载黄金基准集...</div>
+                </div>
+              </div>
+
+              <!-- 模式2：生产真实流水抽样 -->
+              <div id="ragasPanel-production" style="display:none;">
+                <h4 style="font-size:13.5px; margin-bottom:10px;">生产在线问答流水抽样配置</h4>
+                <div style="font-size:12px; color:var(--text-sub); line-height:1.6; margin-bottom:12px;">
+                  从系统真实持久化数据库 <code>session_snapshots</code> 抽取最新问答记录，利用 Ragas 评估真实用户场景下的忠实度、句子溯源覆盖率、无幻觉闭包与时空位阶合规度。
+                </div>
+                <div style="margin-bottom:12px;">
+                  <label style="font-size:12px; font-weight:600; display:block; margin-bottom:6px;">抽取最近真实问答条数：</label>
+                  <select class="filter-select" id="ragasProdSampleLimit" style="width:100%;">
+                    <option value="3">最近 3 条真实问答</option>
+                    <option value="5" selected>最近 5 条真实问答</option>
+                    <option value="10">最近 10 条真实问答</option>
+                    <option value="20">最近 20 条真实问答</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- 模式3：自定义案情沙盒 -->
+              <div id="ragasPanel-custom" style="display:none;">
+                <h4 style="font-size:13.5px; margin-bottom:8px;">单条自定义案情现场评测</h4>
+                <div style="display:flex; flex-direction:column; gap:8px;">
+                  <div>
+                    <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">法律咨询问题 *</label>
+                    <textarea id="ragasCustomQuery" rows="3" class="filter-input" style="width:100%; box-sizing:border-box; padding:8px;" placeholder="例如：员工送货途中开车撞伤行人怎么赔偿？"></textarea>
+                  </div>
+                  <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                    <div>
+                      <label style="font-size:11.5px; color:var(--text-sub); display:block; margin-bottom:3px;">行为发生日（可选）</label>
+                      <input type="text" id="ragasCustomActDate" class="filter-input" style="width:100%; box-sizing:border-box;" placeholder="2025-05-01" />
+                    </div>
+                    <div>
+                      <label style="font-size:11.5px; color:var(--text-sub); display:block; margin-bottom:3px;">适用地域（可选）</label>
+                      <input type="text" id="ragasCustomRegion" class="filter-input" style="width:100%; box-sizing:border-box;" placeholder="北京 / 上海" />
+                    </div>
+                  </div>
+                  <div>
+                    <label style="font-size:11.5px; color:var(--text-sub); display:block; margin-bottom:3px;">标准参考答案 / 要件 (Ground Truth，可选)</label>
+                    <textarea id="ragasCustomGroundTruth" rows="2" class="filter-input" style="width:100%; box-sizing:border-box; padding:6px;" placeholder="输入期望援引法条及关键法律要件以计算精确 Context Recall"></textarea>
+                  </div>
+                </div>
+              </div>
             </div>
             <div>
-              <pre id="evalOutputBox" style="width:100%; height:280px; background:#1e1e1e; color:#52c41a; padding:16px; border-radius:8px; font-family:Menlo, Monaco, monospace; font-size:12.5px; overflow-y:auto; box-sizing:border-box;">点击左侧按钮启动回归评测断言套件...</pre>
+              <pre id="evalOutputBox" style="width:100%; height:290px; background:#1e1e1e; color:#52c41a; padding:16px; border-radius:8px; font-family:Menlo, Monaco, monospace; font-size:12.5px; overflow-y:auto; box-sizing:border-box; margin:0;">点击上方「启动 Ragas 评测」或「运行本地回归断言」开始自动化评估...</pre>
             </div>
+          </div>
+        </div>
+
+        <!-- 逐题 Ragas 评测明细表格 -->
+        <div class="full-width-card">
+          <div class="flex-row" style="justify-content:space-between; margin-bottom:12px;">
+            <div class="flex-row">
+              <h3>📋 Ragas 逐样本六维评测明细与诊断报告</h3>
+              <span style="font-size:12px; color:var(--text-muted); margin-left:8px;" id="ragasRunMetaBadge">暂无已执行评测批次</span>
+            </div>
+          </div>
+          <div style="overflow-x:auto;">
+            <table class="custom-table">
+              <thead>
+                <tr>
+                  <th style="width:150px;">用例 / 类别</th>
+                  <th style="min-width:200px;">咨询问题与核心召回法条</th>
+                  <th style="width:72px;">忠实度</th>
+                  <th style="width:72px;">相关性</th>
+                  <th style="width:72px;">精确率</th>
+                  <th style="width:72px;">召回率</th>
+                  <th style="width:72px;">法条准度</th>
+                  <th style="width:72px;">时空位阶</th>
+                  <th style="width:85px;">综合 / 等级</th>
+                  <th style="min-width:190px;">Ragas 诊断评语</th>
+                </tr>
+              </thead>
+              <tbody id="ragasDetailTableBody">
+                <tr><td colspan="10" style="text-align:center; color:var(--text-muted); padding:28px;">请点击上方「启动 Ragas 评测」执行评测并生成明细报告</td></tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
@@ -3288,7 +3437,7 @@
           div.id = `sidebarItem-${m.id}`;
           div.onclick = () => switchMenuById(m.id, m.name);
 
-          const isDev = m.id === "menu:eval";
+          const isDev = false;
           div.innerHTML = `
             <span class="menu-icon">${m.icon}</span>
             <span class="menu-text">${m.name}</span>
@@ -3342,6 +3491,7 @@
       if (viewId === "statsView") loadStatsOverview();
       if (viewId === "auditView") loadAuditTrail();
       if (viewId === "rulesView") { loadRuleConfigSection(); loadRuleProposals(); }
+      if (viewId === "evalView") loadRagasEvalWorkspace();
       if (viewId === "userView") renderRbacTables();
     }
 
@@ -8243,7 +8393,298 @@
       box.textContent += "  ✅ 2025年行为适用现行《民法典》第577条: 验证通过\n\n";
       box.textContent += "[用例4] 司法解释位阶依附（民法典时间效力解释）\n";
       box.textContent += "  ✅ 司法解释位阶高于行政法规、低于法律: 验证通过\n\n";
-      box.textContent += "🎉 全部 4 项核心法理断言通过率 100%！(云端在线自动化调度套件建设中)";
+      box.textContent += "🎉 全部 4 项核心法理断言通过率 100%！";
+    }
+
+    // =========================================================
+    // Ragas 独立容器自动评测前端调度引擎
+    // =========================================================
+    const RAGAS_STATE = {
+      mode: "golden",
+      goldenCases: [],
+      historyList: [],
+      currentReport: null,
+    };
+
+    function _escRagasHtml(str) {
+      return String(str || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    async function loadRagasEvalWorkspace() {
+      const badge = document.getElementById("ragasContainerStatusBadge");
+      try {
+        const res = await fetch("/eval/ragas/status");
+        const st = await res.json();
+        if (badge) {
+          if (st.docker_connected) {
+            badge.className = "answer-pill done";
+            badge.textContent = `● Ragas 容器在线 (${st.ragas_sdk_ready ? 'SDK v' + st.ragas_version : '公式引擎'})`;
+          } else {
+            badge.className = "answer-pill warn";
+            badge.textContent = "● Ragas 容器未启动 · 自动启用本地 Ragas 公式引擎";
+          }
+        }
+        RAGAS_STATE.goldenCases = st.golden_cases || [];
+        renderRagasGoldenChecklist();
+
+        const hRes = await fetch("/eval/ragas/history?limit=15");
+        const hData = await hRes.json();
+        RAGAS_STATE.historyList = hData.history || [];
+        renderRagasHistorySelect();
+
+        if (!RAGAS_STATE.currentReport && st.latest_run) {
+          renderRagasReport(st.latest_run);
+        }
+      } catch (e) {
+        console.error("加载 Ragas 工作台状态失败:", e);
+        if (badge) {
+          badge.className = "answer-pill warn";
+          badge.textContent = "⚠️ 探测 Ragas 状态异常";
+        }
+      }
+    }
+
+    function renderRagasGoldenChecklist() {
+      const listEl = document.getElementById("ragasGoldenCaseList");
+      if (!listEl) return;
+      if (!RAGAS_STATE.goldenCases.length) {
+        listEl.innerHTML = `<div style="color:var(--text-muted);">未配置黄金基准用例</div>`;
+        return;
+      }
+      listEl.innerHTML = RAGAS_STATE.goldenCases.map(c => `
+        <label style="display:flex; align-items:flex-start; gap:6px; padding:6px 8px; background:#fff; border:1px solid #eceff4; border-radius:6px; cursor:pointer;">
+          <input type="checkbox" class="ragas-golden-chk" value="${_escRagasHtml(c.id)}" checked style="margin-top:2px;" />
+          <div style="flex:1; min-width:0;">
+            <div style="font-weight:600; color:var(--text-title); font-size:12px;">${_escRagasHtml(c.id)}</div>
+            <div style="font-size:11.5px; color:var(--text-sub); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${_escRagasHtml(c.query)}">${_escRagasHtml(c.title)}</div>
+          </div>
+          <span style="font-size:10.5px; color:#722ed1; background:#f9f0ff; padding:1px 6px; border-radius:4px; white-space:nowrap;">${_escRagasHtml((c.category || '').split('·')[0].trim())}</span>
+        </label>
+      `).join("");
+    }
+
+    function toggleAllRagasGolden(checked) {
+      document.querySelectorAll(".ragas-golden-chk").forEach(chk => { chk.checked = checked; });
+    }
+
+    function switchRagasMode(mode) {
+      RAGAS_STATE.mode = mode;
+      ["golden", "production", "custom"].forEach(m => {
+        const btn = document.getElementById(`ragasTabBtn-${m}`);
+        const panel = document.getElementById(`ragasPanel-${m}`);
+        if (btn) btn.classList.toggle("active", m === mode);
+        if (panel) panel.style.display = m === mode ? "block" : "none";
+      });
+    }
+
+    function renderRagasHistorySelect() {
+      const sel = document.getElementById("ragasHistorySelect");
+      if (!sel) return;
+      sel.innerHTML = `<option value="">选择历史评测批次 (${RAGAS_STATE.historyList.length})</option>`;
+      RAGAS_STATE.historyList.forEach(h => {
+        const opt = document.createElement("option");
+        opt.value = h.run_id;
+        const score = h.summary && h.summary.overall_score != null ? `${(h.summary.overall_score * 100).toFixed(1)}% [${h.summary.grade || '-'}]` : "-";
+        opt.textContent = `${h.timestamp} · ${h.mode} · ${score}`;
+        sel.appendChild(opt);
+      });
+    }
+
+    function selectRagasHistoryBatch() {
+      const sel = document.getElementById("ragasHistorySelect");
+      if (!sel || !sel.value) return;
+      const found = RAGAS_STATE.historyList.find(h => h.run_id === sel.value);
+      if (found) renderRagasReport(found);
+    }
+
+    async function runRagasEvaluation() {
+      const btn = document.getElementById("btnRunRagasEval");
+      const box = document.getElementById("evalOutputBox");
+      const useLlm = document.getElementById("ragasUseLlmToggle") ? document.getElementById("ragasUseLlmToggle").checked : false;
+
+      const reqBody = { mode: RAGAS_STATE.mode, use_llm: useLlm };
+      if (RAGAS_STATE.mode === "golden") {
+        const selectedIds = Array.from(document.querySelectorAll(".ragas-golden-chk:checked")).map(el => el.value);
+        if (selectedIds.length === 0) {
+          showToast("请至少勾选 1 条黄金基准用例！");
+          return;
+        }
+        reqBody.case_ids = selectedIds;
+      } else if (RAGAS_STATE.mode === "production") {
+        const lim = document.getElementById("ragasProdSampleLimit");
+        reqBody.limit = lim ? parseInt(lim.value, 10) : 5;
+      } else if (RAGAS_STATE.mode === "custom") {
+        const q = document.getElementById("ragasCustomQuery") ? document.getElementById("ragasCustomQuery").value.trim() : "";
+        if (!q) {
+          showToast("请输入自定义案情咨询问题！");
+          return;
+        }
+        reqBody.custom_case = {
+          query: q,
+          act_date: document.getElementById("ragasCustomActDate") ? document.getElementById("ragasCustomActDate").value.trim() : "",
+          region: document.getElementById("ragasCustomRegion") ? document.getElementById("ragasCustomRegion").value.trim() : "",
+          ground_truth: document.getElementById("ragasCustomGroundTruth") ? document.getElementById("ragasCustomGroundTruth").value.trim() : "",
+        };
+      }
+
+      if (btn) { btn.disabled = true; btn.textContent = "⏳ Ragas 评测运行中..."; }
+      box.textContent = `=== 正在调度 Ragas 评测工作台 [模式: ${RAGAS_STATE.mode}] ===\n`;
+      box.textContent += `• 目标引擎: 优先调度独立 Ragas Docker 容器 (:8003/evaluate)，自动兼容本地公式引擎\n`;
+      box.textContent += `• 叠加 LLM 深度裁判: ${useLlm ? '已开启 (LLM-as-a-Judge)' : '已关闭 (纯数学/确定性高速评测)'}\n`;
+      box.textContent += "⏳ 正在执行全链路 RAG 推理与六维指标打分，请稍候...\n\n";
+
+      try {
+        const res = await fetch("/eval/ragas/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(reqBody),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.detail || `HTTP ${res.status}`);
+        }
+        renderRagasReport(data);
+        // 刷新历史列表
+        const hRes = await fetch("/eval/ragas/history?limit=15");
+        const hData = await hRes.json();
+        RAGAS_STATE.historyList = hData.history || [];
+        renderRagasHistorySelect();
+        showToast(`Ragas 评测完成！综合得分 ${(data.summary.overall_score * 100).toFixed(1)}% (${data.summary.grade}级)`);
+      } catch (err) {
+        console.error("Ragas 评测异常:", err);
+        box.textContent += `\n❌ 评测执行失败: ${err.message}`;
+        showToast("⚠️ Ragas 评测异常: " + err.message);
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = "🚀 启动 Ragas 评测"; }
+      }
+    }
+
+    function _fmtPct(val) {
+      if (val == null || isNaN(val)) return "-";
+      return `${(Number(val) * 100).toFixed(1)}%`;
+    }
+
+    function _scoreBadgeHtml(val) {
+      const num = Number(val || 0);
+      const pct = `${(num * 100).toFixed(1)}%`;
+      const color = num >= 0.85 ? "#389e0d" : (num >= 0.65 ? "#d46b08" : "#cf1322");
+      const bg = num >= 0.85 ? "#f6ffed" : (num >= 0.65 ? "#fff7e6" : "#fff1f0");
+      return `<span style="display:inline-block; padding:2px 7px; border-radius:4px; font-size:12px; font-weight:600; color:${color}; background:${bg};">${pct}</span>`;
+    }
+
+    function renderRagasReport(report) {
+      if (!report) return;
+      RAGAS_STATE.currentReport = report;
+      const sum = report.summary || {};
+
+      document.getElementById("ragas-m-faithfulness").textContent = _fmtPct(sum.faithfulness);
+      document.getElementById("ragas-m-relevancy").textContent = _fmtPct(sum.answer_relevancy);
+      document.getElementById("ragas-m-precision").textContent = _fmtPct(sum.context_precision);
+      document.getElementById("ragas-m-recall").textContent = _fmtPct(sum.context_recall);
+      document.getElementById("ragas-m-citation").textContent = _fmtPct(sum.citation_accuracy);
+      document.getElementById("ragas-m-overall").textContent = `${_fmtPct(sum.overall_score)} (${sum.grade || '-'})`;
+
+      const metaBadge = document.getElementById("ragasRunMetaBadge");
+      if (metaBadge) {
+        metaBadge.textContent = `批次 ${report.run_id} · ${report.timestamp} · 通过 ${report.pass_count}/${report.sample_count} (${_fmtPct(report.pass_rate)}) · 引擎: ${report.container_used ? 'Ragas Docker 容器' : '本地 Ragas 公式引擎'}`;
+      }
+
+      const box = document.getElementById("evalOutputBox");
+      if (box) {
+        let logTxt = `=== Ragas 自动评测完成 [批次: ${report.run_id}] ===\n`;
+        logTxt += `时间: ${report.timestamp} | 模式: ${report.mode} | 耗时: ${report.elapse_ms}ms\n`;
+        logTxt += `引擎: ${report.engine} (${report.container_used ? '✅ 独立 Docker 容器' : '⚡ 本地公式引擎兜底'})\n`;
+        logTxt += `通过率: ${report.pass_count}/${report.sample_count} (${_fmtPct(report.pass_rate)}) | 综合得分: ${_fmtPct(sum.overall_score)} [${sum.grade}]\n`;
+        logTxt += `------------------------------------------------------------\n`;
+        (report.results || []).forEach((r, idx) => {
+          const icon = r.passed ? "✅" : "⚠️";
+          logTxt += `${icon} [${idx + 1}] ${r.case_id} | 总分=${_fmtPct(r.overall_score)} (${r.grade}) | `;
+          logTxt += `F=${_fmtPct(r.metrics.faithfulness)} R=${_fmtPct(r.metrics.answer_relevancy)} P=${_fmtPct(r.metrics.context_precision)} Rec=${_fmtPct(r.metrics.context_recall)} Cit=${_fmtPct(r.metrics.citation_accuracy)}\n`;
+          if (!r.passed || (r.critique && !r.critique.includes("优良"))) {
+            logTxt += `     ↳ 诊断: ${r.critique}\n`;
+          }
+        });
+        logTxt += `\n🎉 报告已同步生成至下方明细表与历史快照！`;
+        box.textContent = logTxt;
+      }
+
+      const tbody = document.getElementById("ragasDetailTableBody");
+      if (!tbody) return;
+      const rows = report.results || [];
+      if (rows.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; color:var(--text-muted); padding:28px;">暂无样本数据</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = rows.map(r => {
+        const m = r.metrics || {};
+        const citsHtml = (r.citations_preview || []).map(c =>
+          `<span style="display:inline-block; background:#f0f5ff; color:#2f54eb; padding:1px 6px; border-radius:4px; font-size:11px; margin:2px 4px 0 0;">${_escRagasHtml(c)}</span>`
+        ).join("");
+        const gradeColor = r.passed ? "#52c41a" : "#fa8c16";
+        return `
+          <tr>
+            <td>
+              <div style="font-weight:600; font-size:12.5px;">${_escRagasHtml(r.case_id)}</div>
+              <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">${_escRagasHtml(r.category || '-')}</div>
+            </td>
+            <td style="white-space:normal;">
+              <div style="font-size:12.5px; color:var(--text-title); font-weight:500;">${_escRagasHtml(r.question)}</div>
+              <div style="margin-top:4px;">${citsHtml || '<span style="font-size:11px; color:#999;">无引用记录</span>'}</div>
+            </td>
+            <td>${_scoreBadgeHtml(m.faithfulness)}</td>
+            <td>${_scoreBadgeHtml(m.answer_relevancy)}</td>
+            <td>${_scoreBadgeHtml(m.context_precision)}</td>
+            <td>${_scoreBadgeHtml(m.context_recall)}</td>
+            <td>${_scoreBadgeHtml(m.citation_accuracy)}</td>
+            <td>${_scoreBadgeHtml(m.temporal_hierarchy_compliance)}</td>
+            <td>
+              <strong style="color:${gradeColor}; font-size:13px;">${_fmtPct(r.overall_score)} (${_escRagasHtml(r.grade)})</strong>
+              <div style="font-size:11px; color:${gradeColor};">${r.passed ? '✓ 通过' : '✕ 待优化'}</div>
+            </td>
+            <td style="white-space:normal; font-size:12px; color:#555; line-height:1.45;">${_escRagasHtml(r.critique)}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    function exportRagasReportCsv() {
+      const rep = RAGAS_STATE.currentReport;
+      if (!rep || !rep.results || rep.results.length === 0) {
+        showToast("当前暂无 Ragas 评测结果可导出");
+        return;
+      }
+      const headers = ["批次ID", "用例编号", "类别", "咨询问题", "忠实度", "相关性", "精确率", "召回率", "法条准度", "时空位阶", "综合得分", "等级", "诊断评语"];
+      const rows = rep.results.map(r => {
+        const m = r.metrics || {};
+        return [
+          `"${rep.run_id}"`,
+          `"${(r.case_id || '').replace(/"/g, '""')}"`,
+          `"${(r.category || '').replace(/"/g, '""')}"`,
+          `"${(r.question || '').replace(/"/g, '""')}"`,
+          m.faithfulness ?? 0,
+          m.answer_relevancy ?? 0,
+          m.context_precision ?? 0,
+          m.context_recall ?? 0,
+          m.citation_accuracy ?? 0,
+          m.temporal_hierarchy_compliance ?? 0,
+          r.overall_score ?? 0,
+          `"${r.grade || '-'}"`,
+          `"${(r.critique || '').replace(/"/g, '""')}"`
+        ];
+      });
+      const csvContent = "\uFEFF" + [headers.join(","), ...rows.map(e => e.join(","))].join("\r\n");
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const link = document.createElement("a");
+      link.setAttribute("href", URL.createObjectURL(blob));
+      link.setAttribute("download", `AI法盾_Ragas评测报告_${getLocalDateString().replace(/-/g, "")}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      showToast(`已成功导出 Ragas 评测报告（${rep.results.length} 条）！`);
     }
 
     function toggleSidebarCollapse() {

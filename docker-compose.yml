@@ -79,6 +79,9 @@ services:
       # —— 独立 Docling 深度文档解析微服务连接 ——
       DOCLING_SERVICE_URL: "http://docling:8002/parse"
 
+      # —— 独立 Ragas RAG 自动评测微服务连接 ——
+      RAGAS_SERVICE_URL: "http://ragas:8003/evaluate"
+
       # —— Arize Phoenix 生产可观测性监控配置 ——
       PHOENIX_ENABLED: "true"
       PHOENIX_COLLECTOR_ENDPOINT: "http://phoenix:6006/v1/traces"
@@ -174,6 +177,25 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:6006/healthz')\" || exit 1"]
       interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # —— 8. 独立 Ragas RAG 多维自动评测微服务容器（vibrantlabsai/ragas 隔离环境）——
+  ragas:
+    build:
+      context: ./docker/ragas
+      dockerfile: Dockerfile
+    image: legal-advisor-ragas:latest
+    container_name: legal-advisor-ragas
+    restart: unless-stopped
+    ports:
+      - "8003:8003"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8003
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8003/health || exit 1"]
+      interval: 15s
       timeout: 5s
       retries: 5
 

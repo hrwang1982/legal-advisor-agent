@@ -121,6 +121,10 @@ class Settings:
     phoenix_ui_base_url: str = os.getenv("PHOENIX_UI_BASE_URL", "http://localhost:6006")
     phoenix_eval_sample_rate: float = float(os.getenv("PHOENIX_EVAL_SAMPLE_RATE", "1.0"))
 
+    # —— 独立 Ragas RAG 多维自动评测微服务配置 ——
+    ragas_service_url: str = os.getenv("RAGAS_SERVICE_URL", "http://localhost:8003/evaluate")
+    ragas_timeout: float = float(os.getenv("RAGAS_TIMEOUT", "60.0"))
+
     # —— 存储引擎扩展（MySQL + Elasticsearch 8.x 选配，缺省自动使用内置 SQLite + 内存 BM25+BGE-M3）——
     storage_backend: str = os.getenv("STORAGE_BACKEND", "sqlite")  # mysql / sqlite
     mysql_host: str = os.getenv("MYSQL_HOST", "localhost")
@@ -359,6 +363,8 @@ class Settings:
             "phoenix_project_name": self.phoenix_project_name,
             "phoenix_ui_base_url": self.phoenix_ui_base_url,
             "phoenix_eval_sample_rate": self.phoenix_eval_sample_rate,
+            "ragas_service_url": self.ragas_service_url,
+            "ragas_timeout": self.ragas_timeout,
         }
 
     def save_to_disk(self) -> None:

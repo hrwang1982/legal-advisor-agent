@@ -1,0 +1,268 @@
+[
+  {
+    "run_id": "ragas_5202278064",
+    "timestamp": "2026-11-19 00:29:24",
+    "mode": "golden",
+    "engine": "local_ragas_formula_fallback",
+    "container_used": false,
+    "llm_judge_used": false,
+    "elapse_ms": 4895.63,
+    "sample_count": 10,
+    "pass_count": 8,
+    "pass_rate": 0.8,
+    "summary": {
+      "faithfulness": 0.3482,
+      "answer_relevancy": 0.9192,
+      "context_precision": 0.8583,
+      "context_recall": 0.8454,
+      "citation_accuracy": 0.9,
+      "temporal_hierarchy_compliance": 1.0,
+      "overall_score": 0.7826,
+      "grade": "A"
+    },
+    "results": [
+      {
+        "case_id": "G01_现行合同违约与引致扩展",
+        "question": "对方不履行合同义务造成我方损失，我可以要求继续履行并赔偿损失吗？",
+        "metrics": {
+          "faithfulness": 0.0,
+          "answer_relevancy": 1.0,
+          "context_precision": 1.0,
+          "context_recall": 1.0,
+          "citation_accuracy": 1.0,
+          "temporal_hierarchy_compliance": 1.0
+        },
+        "overall_score": 0.78,
+        "grade": "A",
+        "passed": true,
+        "critique": "存在未检索支撑的法条引用: 《民法典》第188条, 《民法典》第148条",
+        "title": "现行合同违约继续履行与损害赔偿",
+        "category": "合同违约 · 现行法",
+        "citations_preview": [
+          "《中华人民共和国民法典》第577条",
+          "《中华人民共和国民法典》第584条",
+          "《最高人民法院关于适用〈中华人民共和国民法典〉时间效力的若干规定》第6条"
+        ],
+        "answer_preview": "【一、争议焦点与事实前提】 · 时间效力基准：按法律事实发生日 2025-05-01 定位有效适用规范。 · 争议焦点 1：对方不履行合同义务造成我方损失，我可以要求继续履行并赔偿损失吗  【二、适用法规与效力要旨（大前提）】 · 《中华人民共和国民法典》第577条（法律·现行有"
+      },
+      {
+        "case_id": "G02_民法典施行前历史合同纠纷",
+        "question": "对方不履行合同义务，我可以要求继续履行并赔偿损失吗？",
+        "metrics": {
+          "faithfulness": 0.0,
+          "answer_relevancy": 1.0,
+          "context_precision": 1.0,
+          "context_recall": 0.8566,
+          "citation_accuracy": 1.0,
+          "temporal_hierarchy_compliance": 1.0
+        },
+        "overall_score": 0.7585,
+        "grade": "B",
+        "passed": true,
+        "critique": "存在未检索支撑的法条引用: 《民法典》第188条, 《民法典》第148条",
+        "title": "2020 年历史违约行为不溯及既往",
+        "category": "时间效力 · 不溯及既往",
+        "citations_preview": [
+          "《中华人民共和国合同法》第107条"
+        ],
+        "answer_preview": "【一、争议焦点与事实前提】 · 时间效力基准：按法律事实发生日 2020-06-01 定位有效适用规范。 · 争议焦点 1：对方不履行合同义务，我可以要求继续履行并赔偿损失吗  【二、适用法规与效力要旨（大前提）】 · 《中华人民共和国合同法》第107条（法律·已废止）：当事人一"
+      },
+      {
+        "case_id": "G03_新法词问旧案_公司五年实缴回填2018旧法",
+        "question": "有限责任公司全体股东认缴的出资额必须在五年内缴足吗？",
+        "metrics": {
+          "faithfulness": 0.2223,
+          "answer_relevancy": 1.0,
+          "context_precision": 1.0,
+          "context_recall": 0.8231,
+          "citation_accuracy": 1.0,
+          "temporal_hierarchy_compliance": 1.0
+        },
+        "overall_score": 0.8024,
+        "grade": "A",
+        "passed": true,
+        "critique": "存在未检索支撑的法条引用: 《公司法》第54条",
+        "title": "2023 年公司出资期限回填 2018 旧公司法",
+        "category": "新旧法衔接 · 语义回填",
+        "citations_preview": [
+          "《中华人民共和国公司法（2018年修正）》第26条"
+        ],
+        "answer_preview": "【一、争议焦点与事实前提】 · 时间效力基准：按法律事实发生日 2023-05-01 定位有效适用规范。 · 争议焦点 1：有限责任公司全体股东认缴的出资额必须在五年内缴足吗  【二、适用法规与效力要旨（大前提）】 · 《中华人民共和国公司法（2018年修正）》第26条（法律·已"
+      },
+      {
+        "case_id": "G04_口语多争点_炒鱿鱼赔偿与买假货退一赔三",
+        "question": "我被老板无故炒鱿鱼了，能拿多少赔偿？另外在商场买到假货能退一赔三吗？",
+        "metrics": {
+          "faithfulness": 0.7841,
+          "answer_relevancy": 1.0,
+          "context_precision": 0.9167,
+          "context_recall": 1.0,
+          "citation_accuracy": 1.0,
+          "temporal_hierarchy_compliance": 1.0
+        },
+        "overall_score": 0.94,
+        "grade": "S",
+        "passed": true,
+        "critique": "各项指标优良，符合 Ragas 忠实度与法理时空位阶约束",
+        "title": "多争点拆解：违法解雇 2N 与消保退一赔三",
+        "category": "多争点拆解 · 语义改写",
+        "citations_preview": [
+          "《中华人民共和国消费者权益保护法》第55条",
+          "《中华人民共和国劳动合同法》第87条",
+          "《中华人民共和国劳动合同法》第46条",
+          "《中华人民共和国劳动合同法》第47条"
+        ],
+        "answer_preview": "【一、争议焦点与事实前提】 · 时间效力基准：按法律事实发生日 2025-05-01 定位有效适用规范。 · 争议焦点 1：我被老板无故炒鱿鱼了，能拿多少赔偿 · 争议焦点 2：另外在商场买到假货能退一赔三吗  【二、适用法规与效力要旨（大前提）】 · 《中华人民共和国消费者权益"
+      },
+      {
+        "case_id": "G05_特别法vs新一般法_机动车交通事故责任与民法典侵权",
+        "question": "员工开车执行工作任务发生机动车交通事故撞伤行人，侵权赔偿责任如何承担？",
+        "metrics": {
+          "faithfulness": 0.3508,
+          "answer_relevancy": 1.0,
+          "context_precision": 1.0,
+          "context_recall": 0.9884,
+          "citation_accuracy": 1.0,
+          "temporal_hierarchy_compliance": 1.0
+        },
+        "overall_score": 0.8554,
+        "grade": "A",
+        "passed": true,
+        "critique": "存在未检索支撑的法条引用: 《劳动争议调解仲裁法》第5条, 《劳动争议调解仲裁法》第27条",
+        "title": "职务送货交通事故侵权与特别法优先",
+        "category": "特别法优先 · 侵权竞合",
+        "citations_preview": [
+          "《中华人民共和国民法典》第1191条",
+          "《中华人民共和国道路交通安全法》第76条",
+          "《中华人民共和国民法典》第1165条",
+          "《最高人民法院关于审理劳动争议案件适用法律问题的解释（一）》第44条"
+        ],
+        "answer_preview": "【一、争议焦点与事实前提】 · 时间效力基准：按法律事实发生日 2025-05-01 定位有效适用规范。 · 争议焦点 1：员工开车执行工作任务发生机动车交通事故撞伤行人，侵权赔偿责任如何承担  【二、适用法规与效力要旨（大前提）】 · 《中华人民共和国民法典》第1191条（法律"
+      },
+      {
+        "case_id": "G06_地域管辖核验_北京劳动纠纷排除上海地方性法规",
+        "question": "我在北京一家公司上班，用人单位违法解除劳动合同，劳动合同条例或劳动合同法如何规定赔偿金？",
+        "metrics": {
+          "faithfulness": 0.4137,
+          "answer_relevancy": 1.0,
+          "context_precision": 1.0,
+          "context_recall": 0.8556,
+          "citation_accuracy": 1.0,
+          "temporal_hierarchy_compliance": 1.0
+        },
+        "overall_score": 0.8494,
+        "grade": "A",
+        "passed": true,
+        "critique": "存在未检索支撑的法条引用: 《劳动争议调解仲裁法》第5条, 《劳动争议调解仲裁法》第27条",
+        "title": "北京劳动争议自动排除异地上海法规",
+        "category": "地域效力 · 跨省隔离",
+        "citations_preview": [
+          "《中华人民共和国劳动合同法》第87条",
+          "《中华人民共和国劳动合同法》第46条",
+          "《中华人民共和国劳动合同法》第38条",
+          "《中华人民共和国劳动合同法》第47条"
+        ],
+        "answer_preview": "【一、争议焦点与事实前提】 · 时间效力基准：按法律事实发生日 2025-05-01 定位有效适用规范。 · 争议焦点 1：我在北京一家公司上班，用人单位违法解除劳动合同，劳动合同条例或劳动合同法如何规定赔偿金  【二、适用法规与效力要旨（大前提）】 · 《中华人民共和国劳动合同"
+      },
+      {
+        "case_id": "G07_跨民法典施行日持续性违约事实_按结束日适用新法",
+        "question": "对方从2020年5月1日开始持续不履行合同义务，一直持续到2021年3月1日，我能否要求违约损害赔偿？",
+        "metrics": {
+          "faithfulness": 0.0,
+          "answer_relevancy": 1.0,
+          "context_precision": 0.8333,
+          "context_recall": 0.9175,
+          "citation_accuracy": 1.0,
+          "temporal_hierarchy_compliance": 1.0
+        },
+        "overall_score": 0.7426,
+        "grade": "B",
+        "passed": false,
+        "critique": "存在未检索支撑的法条引用: 《民法典》第188条, 《民法典》第148条",
+        "title": "跨越 2021-01-01 持续性违约行为适用新法",
+        "category": "时间效力 · 持续行为",
+        "citations_preview": [
+          "《中华人民共和国民法典》第577条",
+          "《中华人民共和国民法典》第584条",
+          "《最高人民法院关于适用〈中华人民共和国民法典〉时间效力的若干规定》第6条"
+        ],
+        "answer_preview": "【一、争议焦点与事实前提】 · 时间效力基准：按法律事实发生日 2020-05-01 定位有效适用规范。 · 争议焦点 1：对方从2020年5月1日开始持续不履行合同义务，一直持续到2021年3月1日，我能否要求违约损害赔偿  【二、适用法规与效力要旨（大前提）】 · 《中华人民"
+      },
+      {
+        "case_id": "G08_诉讼时效期间与劳动争议仲裁时效区分",
+        "question": "向人民法院请求保护民事权利的三年诉讼时效期间怎么起算？劳动争议申请仲裁的时效期间是多久？",
+        "metrics": {
+          "faithfulness": 0.9755,
+          "answer_relevancy": 1.0,
+          "context_precision": 1.0,
+          "context_recall": 1.0,
+          "citation_accuracy": 1.0,
+          "temporal_hierarchy_compliance": 1.0
+        },
+        "overall_score": 0.9946,
+        "grade": "S",
+        "passed": true,
+        "critique": "各项指标优良，符合 Ragas 忠实度与法理时空位阶约束",
+        "title": "三年民事诉讼时效与一年劳动仲裁时效辨析",
+        "category": "程序红线 · 时效区分",
+        "citations_preview": [
+          "《中华人民共和国民法典》第188条",
+          "《中华人民共和国劳动争议调解仲裁法》第27条",
+          "《中华人民共和国消费者权益保护法》第39条",
+          "《中华人民共和国民事诉讼法》第67条"
+        ],
+        "answer_preview": "【一、争议焦点与事实前提】 · 时间效力基准：按法律事实发生日 2025-05-01 定位有效适用规范。 · 争议焦点 1：向人民法院请求保护民事权利的三年诉讼时效期间怎么起算 · 争议焦点 2：劳动争议申请仲裁的时效期间是多久  【二、适用法规与效力要旨（大前提）】 · 《中华"
+      },
+      {
+        "case_id": "G09_新公司法出资加速到期与引致五年认缴",
+        "question": "公司不能清偿到期债务，债权人能否要求未届出资期限的股东提前缴纳出资？",
+        "metrics": {
+          "faithfulness": 0.7322,
+          "answer_relevancy": 1.0,
+          "context_precision": 0.8333,
+          "context_recall": 1.0,
+          "citation_accuracy": 1.0,
+          "temporal_hierarchy_compliance": 1.0
+        },
+        "overall_score": 0.9161,
+        "grade": "S",
+        "passed": true,
+        "critique": "各项指标优良，符合 Ragas 忠实度与法理时空位阶约束",
+        "title": "新《公司法》出资加速到期与图谱引致扩展",
+        "category": "引致图谱 · 新公司法",
+        "citations_preview": [
+          "《中华人民共和国公司法》第54条",
+          "《中华人民共和国公司法》第3条",
+          "《中华人民共和国公司法》第47条",
+          "《中华人民共和国公司法》第210条"
+        ],
+        "answer_preview": "【一、争议焦点与事实前提】 · 时间效力基准：按法律事实发生日 2025-05-01 定位有效适用规范。 · 争议焦点 1：公司不能清偿到期债务，债权人能否要求未届出资期限的股东提前缴纳出资  【二、适用法规与效力要旨（大前提）】 · 《中华人民共和国公司法》第54条（法律·现行"
+      },
+      {
+        "case_id": "G10_未传日期高危场景_强制降级置信度与人工必审",
+        "question": "对方违约不履行合同义务，我能否要求继续履行并赔偿损失？",
+        "metrics": {
+          "faithfulness": 0.0032,
+          "answer_relevancy": 0.1924,
+          "context_precision": 0.0,
+          "context_recall": 0.0127,
+          "citation_accuracy": 0.0,
+          "temporal_hierarchy_compliance": 1.0
+        },
+        "overall_score": 0.1872,
+        "grade": "C",
+        "passed": false,
+        "critique": "存在未检索支撑的法条引用: 《立法法》第103条, 《民法典》第11条；核心必备法条漏召回 (1 条)",
+        "title": "未提供事实日期高危案情强制降级必审",
+        "category": "合规防错 · 高危校准",
+        "citations_preview": [
+          "《中华人民共和国公司法》第6条",
+          "《中华人民共和国劳动合同法》第6条",
+          "《中华人民共和国民法典》第6条",
+          "《中华人民共和国民法典》第584条"
+        ],
+        "answer_preview": "【规则判定：需法定机关或执业律师人工裁决，本系统不出具实体结论】 原因：当事人未提供法律事实发生日期，暂按当前日期（2026-11-19）定位现行有效法；若系历史纠纷，适用依据可能不同；同一行为发生日命中多个版本，版本时间线互相重叠；行为发生日 2026-11-19 不早于施行日"
+      }
+    ]
+  }
+]
