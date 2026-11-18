@@ -118,6 +118,91 @@ def test_conditional_deep_eval_triggering():
     print(f"✅ 5. 低置信度与律师驳回条件触发深度评测（已捕获 {len(latest)} 条记录）验证通过")
 
 
+def test_otel_trace_id_alignment_and_flush_order():
+    """测试 OTel 模式下 trace_id 真实对齐及 Root Span end() 之后的 force_flush 时序。"""
+    from contextlib import contextmanager
+
+    events = []
+    expected_int_tid = 0x11223344556677889900AABBCCDDEEFF
+    expected_hex_tid = "11223344556677889900aabbccddeeff"
+
+    class _FakeSpanCtx:
+        trace_id = expected_int_tid
+
+    class _FakeOtelSpan:
+        def __init__(self):
+            self.attributes = {}
+
+        def get_span_context(self):
+            return _FakeSpanCtx()
+
+        def set_attribute(self, k, v):
+            self.attributes[k] = v
+
+    class _FakeTracer:
+        @contextmanager
+        def start_as_current_span(self, name, kind=None):
+            events.append("span_enter")
+            try:
+                yield _FakeOtelSpan()
+            finally:
+                events.append("span_exit")
+
+    class _FakeProvider:
+        def force_flush(self, timeout_millis=2000):
+            events.append("force_flush")
+            return True
+
+    mgr = ObservabilityManager()
+    mgr.enabled = True
+    mgr.tracer = _FakeTracer()
+    mgr._tracer_provider = _FakeProvider()
+
+    # 覆盖 start_span 使之不强依赖 opentelemetry.trace.SpanKind（沙箱无 otel 依赖时也能测）
+    @contextmanager
+    def _fake_start_span(name, span_kind="CHAIN", attributes=None):
+        with mgr.tracer.start_as_current_span(name) as sp:
+            yield sp
+
+    mgr.start_span = _fake_start_span  # type: ignore
+
+    with mgr.trace_legal_query(query="测试对齐", thread_id="t-align-001") as ctx:
+        assert ctx["trace_id"] == expected_hex_tid, f"期望对齐后的 trace_id={expected_hex_tid}，实际={ctx['trace_id']}"
+        assert expected_hex_tid in ctx["phoenix_url"]
+        events.append("inside_query")
+
+    assert events == ["span_enter", "inside_query", "span_exit", "force_flush"], f"执行时序不符: {events}"
+    print("✅ 6. OTel 真实 TraceID 对齐与 Root Span 结束后强刷盘时序验证通过")
+
+
+def test_rest_fallback_span_tree_collection():
+    """测试无 OTel SDK 时零依赖 REST 兜底模式：收集完整父子 Span 树并在退出时批量上报。"""
+    captured_batches = []
+    mgr = ObservabilityManager()
+    mgr.enabled = False
+    mgr.rest_fallback_enabled = True
+    mgr._push_spans_via_rest = lambda spans, timeout=1.5: captured_batches.append(spans) or True  # type: ignore
+
+    with mgr.trace_legal_query(query="送货撞人赔偿", thread_id="t-rest-001") as ctx:
+        root_tid = ctx["trace_id"]
+        with mgr.start_span("retriever.hybrid", span_kind="RETRIEVER", attributes={"input.value": "撞人"}) as child_span:
+            child_span.set_attribute("retrieval.hit_count", 3)
+
+    assert len(captured_batches) == 1
+    spans = captured_batches[0]
+    assert len(spans) == 2
+    child, root = spans[0], spans[1]
+    assert child["name"] == "retriever.hybrid"
+    assert root["name"] == "legal_advisor.query"
+    assert child["context"]["trace_id"] == root_tid
+    assert root["context"]["trace_id"] == root_tid
+    assert child["parent_id"] == root["context"]["span_id"]
+    assert root["parent_id"] is None
+    assert child["end_time"] >= child["start_time"]
+    assert root["end_time"] >= root["start_time"]
+    print("✅ 7. 零依赖 REST 兜底模式 Span 树收集与父子链路关联验证通过")
+
+
 if __name__ == "__main__":
     print("=== 开始运行 Arize Phoenix 生产可观测性专项测试 ===")
     test_noop_degradation()
@@ -125,4 +210,6 @@ if __name__ == "__main__":
     test_deterministic_metrics_computation()
     test_query_pipeline_trace_injection()
     test_conditional_deep_eval_triggering()
+    test_otel_trace_id_alignment_and_flush_order()
+    test_rest_fallback_span_tree_collection()
     print("=== 全部 Phoenix 可观测性测试用例执行通过 ✅ ===")

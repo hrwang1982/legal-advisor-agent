@@ -20,22 +20,28 @@ import urllib.parse
 import urllib.request
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# 线程与协程安全的当前 Trace ID 与 Span 上下文变量
+# 线程与协程安全的当前 Trace ID、Span ID、Span 上下文与本轮收集列表
 _CURRENT_TRACE_ID: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
     "_CURRENT_TRACE_ID", default=None
+)
+_CURRENT_SPAN_ID: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "_CURRENT_SPAN_ID", default=None
 )
 _CURRENT_ROOT_SPAN: contextvars.ContextVar[Optional[Any]] = contextvars.ContextVar(
     "_CURRENT_ROOT_SPAN", default=None
 )
 _CURRENT_LLM_USAGE: contextvars.ContextVar[Optional[Dict[str, int]]] = contextvars.ContextVar(
     "_CURRENT_LLM_USAGE", default=None
+)
+_CURRENT_COLLECTED_SPANS: contextvars.ContextVar[Optional[List[Dict[str, Any]]]] = contextvars.ContextVar(
+    "_CURRENT_COLLECTED_SPANS", default=None
 )
 
 # 异步评测线程池（守护线程，任务完成前不阻塞服务正常退出）
@@ -46,41 +52,104 @@ _EVAL_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
 # 最近上报记录缓存（用于本地回显或离线调试）
 _LOCAL_EVAL_RECORDS: List[Dict[str, Any]] = []
 _LOCAL_EVAL_LOCK = threading.Lock()
+_GLOBAL_INSTRUMENT_LOCK = threading.Lock()
+_GLOBAL_INSTRUMENTED = False
 
 
 class _NoOpSpan:
-    """轻量级空操作 Span（在无 Phoenix 运行环境或降级模式下使用，API 100% 兼容 OpenTelemetry Span）。"""
+    """轻量级本地 Span（在无 OTel SDK 或降级模式下使用，API 100% 兼容 OpenTelemetry Span 且支持序列化为 Phoenix REST 数据）。"""
 
-    def __init__(self, trace_id: Optional[str] = None, name: str = "noop"):
+    def __init__(
+        self,
+        trace_id: Optional[str] = None,
+        name: str = "noop",
+        span_kind: str = "CHAIN",
+        parent_id: Optional[str] = None,
+    ):
         self.trace_id = trace_id or uuid.uuid4().hex
         self.span_id = uuid.uuid4().hex[:16]
+        self.parent_id = parent_id
         self.name = name
-        self.attributes: Dict[str, Any] = {}
+        self.span_kind = (span_kind or "CHAIN").upper()
+        self.start_time = datetime.now(timezone.utc)
+        self.end_time: Optional[datetime] = None
+        self.status_code = "OK"
+        self.status_message: Optional[str] = None
+        self.attributes: Dict[str, Any] = {
+            "openinference.span.kind": self.span_kind,
+        }
+        self.events: List[Dict[str, Any]] = []
 
     def set_attribute(self, key: str, value: Any) -> None:
-        self.attributes[key] = value
+        if value is not None:
+            self.attributes[key] = value
 
     def set_attributes(self, attributes: Dict[str, Any]) -> None:
         if attributes:
-            self.attributes.update(attributes)
+            for k, v in attributes.items():
+                if v is not None:
+                    self.attributes[k] = v
 
     def add_event(self, name: str, attributes: Optional[Dict[str, Any]] = None) -> None:
-        pass
+        self.events.append({
+            "name": name,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "attributes": attributes or {},
+        })
 
     def set_status(self, status: Any, description: Optional[str] = None) -> None:
-        pass
+        s_str = str(status).upper()
+        self.status_code = "ERROR" if "ERROR" in s_str else "OK"
+        if description:
+            self.status_message = description
 
     def record_exception(self, exception: BaseException) -> None:
-        pass
+        self.status_code = "ERROR"
+        self.status_message = str(exception)
+        self.add_event(
+            "exception",
+            {
+                "exception.type": type(exception).__name__,
+                "exception.message": str(exception),
+            },
+        )
 
     def end(self) -> None:
-        pass
+        if self.end_time is None:
+            now = datetime.now(timezone.utc)
+            if now <= self.start_time:
+                now = self.start_time + timedelta(milliseconds=1)
+            self.end_time = now
+
+    def to_phoenix_dict(self) -> Dict[str, Any]:
+        """转换为 Phoenix REST API (/v1/projects/{project}/spans) 所需的标准 Span 结构。"""
+        self.end()
+        payload: Dict[str, Any] = {
+            "name": self.name,
+            "span_kind": self.span_kind,
+            "context": {
+                "trace_id": self.trace_id,
+                "span_id": self.span_id,
+            },
+            "parent_id": self.parent_id,
+            "start_time": self.start_time.isoformat(),
+            "end_time": (self.end_time or datetime.now(timezone.utc)).isoformat(),
+            "status_code": self.status_code,
+            "attributes": self.attributes,
+        }
+        if self.status_message:
+            payload["status_message"] = self.status_message
+        if self.events:
+            payload["events"] = self.events
+        return payload
 
     def __enter__(self) -> "_NoOpSpan":
         return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        pass
+        if exc_val is not None:
+            self.record_exception(exc_val)
+        self.end()
 
 
 class ObservabilityManager:
@@ -88,15 +157,156 @@ class ObservabilityManager:
 
     def __init__(self) -> None:
         self.enabled: bool = False
+        self.rest_fallback_enabled: bool = False
         self.tracer: Any = None
         self._tracer_provider: Any = None
         self._instrumented: bool = False
 
+    def _get_phoenix_api_base(self) -> str:
+        """从采集端或 UI 配置解析 Phoenix 服务 HTTP 根地址（兼容宿主机 localhost 与容器 phoenix 主机名）。"""
+        collector = (getattr(settings, "phoenix_collector_endpoint", "") or "").strip()
+        if collector:
+            if "/v1/" in collector:
+                return collector.split("/v1/")[0].rstrip("/")
+            return collector.rstrip("/")
+        return (getattr(settings, "phoenix_ui_base_url", "http://localhost:6006") or "http://localhost:6006").rstrip("/")
+
+    def _push_spans_via_rest(self, spans: List[Dict[str, Any]], timeout: float = 1.5) -> bool:
+        """通过 Phoenix 官方 REST API (POST /v1/projects/{project}/spans) 零依赖直推 Span 树。"""
+        if not spans:
+            return False
+        try:
+            api_base = self._get_phoenix_api_base()
+            project = urllib.parse.quote(
+                getattr(settings, "phoenix_project_name", "legal-advisor-prod") or "legal-advisor-prod"
+            )
+            url = f"{api_base}/v1/projects/{project}/spans"
+            payload = json.dumps({"data": spans}, ensure_ascii=False, default=str).encode("utf-8")
+            req = urllib.request.Request(
+                url,
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return 200 <= getattr(resp, "status", 200) < 300
+        except Exception as e:
+            logger.debug(f"[Observability] REST 上报 Span 至 Phoenix 未连通或跳过: {e}")
+            return False
+
+    def sync_recent_snapshots_to_phoenix(self, limit: int = 20) -> int:
+        """后台异步补偿：将数据库中最近已有 trace_id 但尚未落盘至 Phoenix 的问答快照同步写入 Phoenix。"""
+        if not getattr(settings, "phoenix_enabled", False):
+            return 0
+        try:
+            from app.mysql_store import mysql_store
+
+            rows = mysql_store.query(
+                "SELECT thread_id, updated_at, status, query, state_json FROM session_snapshots ORDER BY updated_at DESC LIMIT ?",
+                (limit,),
+            )
+        except Exception as e:
+            logger.debug(f"[Observability] 读取 session_snapshots 进行历史补偿失败: {e}")
+            return 0
+
+        if not rows:
+            return 0
+
+        # 检查 Phoenix 服务是否连通并拉取已有 span 避免无效重复
+        api_base = self._get_phoenix_api_base()
+        project = urllib.parse.quote(
+            getattr(settings, "phoenix_project_name", "legal-advisor-prod") or "legal-advisor-prod"
+        )
+        existing_trace_ids = set()
+        try:
+            check_url = f"{api_base}/v1/projects/{project}/spans?limit=200"
+            req = urllib.request.Request(check_url, method="GET")
+            with urllib.request.urlopen(req, timeout=1.5) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+                for item in body.get("data") or []:
+                    ctx = item.get("context") or {}
+                    if ctx.get("trace_id"):
+                        existing_trace_ids.add(str(ctx["trace_id"]).lower())
+        except urllib.error.HTTPError as he:
+            # 项目尚未创建时可能返回 404，此时说明暂无任何已有 trace，可直接继续推送建档
+            if he.code != 404:
+                logger.debug(f"[Observability] 查询 Phoenix 已有 Span 提示: HTTP {he.code}")
+                return 0
+        except Exception as e:
+            logger.debug(f"[Observability] Phoenix 服务暂不可达，跳过历史 Trace 补偿: {e}")
+            return 0
+
+        synced = 0
+        for row in rows:
+            try:
+                st_data = json.loads(row.get("state_json") or "{}")
+            except Exception:
+                st_data = {}
+            raw_tid = st_data.get("trace_id") or ""
+            clean_tid = str(raw_tid).replace("-", "").strip().lower()
+            if len(clean_tid) != 32 or not re.match(r"^[0-9a-f]{32}$", clean_tid):
+                continue
+            if clean_tid in existing_trace_ids:
+                continue
+
+            # 解析时间，保证 end_time > start_time
+            up_at = row.get("updated_at") or ""
+            try:
+                s_ts = str(up_at).strip()
+                if s_ts.endswith("Z"):
+                    s_ts = s_ts[:-1] + "+00:00"
+                end_dt = datetime.fromisoformat(s_ts)
+                if end_dt.tzinfo is None:
+                    end_dt = end_dt.replace(tzinfo=timezone.utc)
+            except Exception:
+                end_dt = datetime.now(timezone.utc)
+            start_dt = end_dt - timedelta(seconds=1)
+
+            fo = st_data.get("final_output") or {}
+            ans_text = fo.get("answer", "") if isinstance(fo, dict) else ""
+            u_info = st_data.get("user") or {}
+            username = u_info.get("username", "admin") if isinstance(u_info, dict) else "admin"
+
+            span_dict = {
+                "name": "legal_advisor.query",
+                "span_kind": "CHAIN",
+                "context": {
+                    "trace_id": clean_tid,
+                    "span_id": clean_tid[:16],
+                },
+                "parent_id": None,
+                "start_time": start_dt.isoformat(),
+                "end_time": end_dt.isoformat(),
+                "status_code": "OK",
+                "attributes": {
+                    "openinference.span.kind": "CHAIN",
+                    "session.id": row.get("thread_id") or "",
+                    "user.id": username,
+                    "input.value": (row.get("query") or "")[:2000],
+                    "input.mime_type": "text/plain",
+                    "output.value": (ans_text or "")[:4000],
+                    "output.mime_type": "text/plain",
+                    "legal.kb_scope": st_data.get("kb_scope") or "all",
+                    "legal.answer_confidence": st_data.get("answer_confidence") or "B",
+                    "legal.status": row.get("status") or "needs_review",
+                    "legal.trace_id": clean_tid,
+                    "legal.backfilled_from_snapshot": True,
+                },
+            }
+            if self._push_spans_via_rest([span_dict], timeout=1.5):
+                synced += 1
+                existing_trace_ids.add(clean_tid)
+
+        if synced > 0:
+            logger.info(f"[Observability] 已向 Phoenix 自动补偿同步 {synced} 条历史问答 Trace")
+        return synced
+
     def init_observability(self, app: Any = None) -> bool:
-        """初始化 OpenTelemetry & Arize Phoenix 采集器。"""
+        """初始化 OpenTelemetry & Arize Phoenix 采集器；无 OTel SDK 时自动启用零依赖 HTTP REST 兜底通道。"""
         if not getattr(settings, "phoenix_enabled", False):
             logger.info("Phoenix 生产监控已禁用 (PHOENIX_ENABLED=false)，运行于 No-Op 降级模式。")
             self.enabled = False
+            self.rest_fallback_enabled = False
             return False
 
         try:
@@ -116,6 +326,7 @@ class ObservabilityManager:
             self._tracer_provider = tracer_provider
             self.tracer = tracer_provider.get_tracer("legal-advisor-agent")
             self.enabled = True
+            self.rest_fallback_enabled = False
             logger.info(
                 f"Arize Phoenix 监控已成功挂载 (Project: {project_name}, Collector: {collector_url})"
             )
@@ -141,22 +352,27 @@ class ObservabilityManager:
             except Exception as e:
                 logger.debug(f"[Observability] 发送初始化项目注册 Span 提示: {e}")
 
+            threading.Thread(target=self.sync_recent_snapshots_to_phoenix, daemon=True).start()
             return True
         except Exception as e:
             logger.warning(
-                f"Phoenix 监控初始化异常，已自动静默降级为本地轻量运行模式: {e}"
+                f"Phoenix OTel SDK 未就绪 ({e})，自动启用零依赖 HTTP REST 上报与本地轻量兼容模式"
             )
             self.enabled = False
             self.tracer = None
+            self.rest_fallback_enabled = True
+            self._auto_instrument_system()
+            # 异步补传历史快照（含先前已生成但未上报 Phoenix 的 trace_id），避免阻塞启动与单元测试
+            threading.Thread(target=self.sync_recent_snapshots_to_phoenix, daemon=True).start()
             return False
 
     def get_phoenix_trace_url(self, trace_id: Optional[str] = None, check_enabled: bool = False) -> str:
         """根据当前配置生成 Arize Phoenix 官方标准的直达/重定向 URL（遵循官方 /redirects/ 规范，杜绝 Unknown node 错误）。
-        1. 若 check_enabled=True 且 self.enabled=False：直接返回空字符串，避免前端在未启用监控时生成无效/报错跳转死链；
+        1. 若 check_enabled=True 且 OTel 与 REST 通道均未开启：直接返回空字符串，避免前端在禁用监控时生成无效死链；
         2. 针对具有 32 位标准十六进制 Trace ID 的问答：返回 /redirects/traces/{trace_id}；
         3. 针对无 TraceID 问答：安全回退至项目看板 /redirects/projects/{project_name}。
         """
-        if check_enabled and not self.enabled:
+        if check_enabled and not (self.enabled or self.rest_fallback_enabled):
             return ""
 
         base_url = (getattr(settings, "phoenix_ui_base_url", "http://localhost:6006") or "").rstrip("/")
@@ -177,13 +393,32 @@ class ObservabilityManager:
         span_kind: str = "CHAIN",
         attributes: Optional[Dict[str, Any]] = None,
     ):
-        """统一上下文管理器：在 Phoenix 可用时创建 OTel Span，不可用时返回兼容 NoOpSpan。"""
+        """统一上下文管理器：在 Phoenix OTel 可用时创建 OTel Span，否则创建结构化本地 Span 并支持 REST 直推。"""
         current_trace_id = _CURRENT_TRACE_ID.get()
+        parent_span_id = _CURRENT_SPAN_ID.get()
         if not self.enabled or self.tracer is None:
-            span = _NoOpSpan(trace_id=current_trace_id, name=name)
+            span = _NoOpSpan(
+                trace_id=current_trace_id,
+                name=name,
+                span_kind=span_kind or "CHAIN",
+                parent_id=parent_span_id,
+            )
             if attributes:
-                span.set_attributes(attributes)
-            yield span
+                for k, v in attributes.items():
+                    if v is not None:
+                        span.set_attribute(k, self._format_attribute_value(v))
+            span_token = _CURRENT_SPAN_ID.set(span.span_id)
+            try:
+                yield span
+            except BaseException as exc:
+                span.record_exception(exc)
+                raise
+            finally:
+                _CURRENT_SPAN_ID.reset(span_token)
+                span.end()
+                collected = _CURRENT_COLLECTED_SPANS.get()
+                if collected is not None:
+                    collected.append(span.to_phoenix_dict())
             return
 
         try:
@@ -208,7 +443,17 @@ class ObservabilityManager:
                 yield otel_span
         except Exception as e:
             logger.debug(f"Span 上下文异常已降级: {e}")
-            yield _NoOpSpan(trace_id=current_trace_id, name=name)
+            span = _NoOpSpan(
+                trace_id=current_trace_id,
+                name=name,
+                span_kind=span_kind or "CHAIN",
+                parent_id=parent_span_id,
+            )
+            if attributes:
+                for k, v in attributes.items():
+                    if v is not None:
+                        span.set_attribute(k, self._format_attribute_value(v))
+            yield span
 
     @contextmanager
     def trace_legal_query(
@@ -220,9 +465,11 @@ class ObservabilityManager:
         model: Optional[str] = None,
     ):
         """问答全链路 Root Span 追踪。"""
-        # 生成规范 32 字符的十六进制 Trace ID
+        # 生成默认 32 字符十六进制 Trace ID；若挂载了 OTel SDK 则在进入 Root Span 后立即对齐其真实 trace_id
         trace_id = uuid.uuid4().hex
-        _CURRENT_TRACE_ID.set(trace_id)
+        tid_token = _CURRENT_TRACE_ID.set(trace_id)
+        collected_spans: List[Dict[str, Any]] = []
+        spans_token = _CURRENT_COLLECTED_SPANS.set(collected_spans)
 
         clean_user = user_id or "admin"
         root_attrs = {
@@ -235,17 +482,45 @@ class ObservabilityManager:
             "legal.trace_id": trace_id,
         }
 
-        with self.start_span("legal_advisor.query", span_kind="CHAIN", attributes=root_attrs) as span:
-            _CURRENT_ROOT_SPAN.set(span)
-            span_res = {
-                "trace_id": trace_id,
-                "phoenix_url": self.get_phoenix_trace_url(trace_id),
-                "span": span,
-            }
-            try:
-                yield span_res
-            finally:
-                _CURRENT_ROOT_SPAN.set(None)
+        try:
+            with self.start_span("legal_advisor.query", span_kind="CHAIN", attributes=root_attrs) as span:
+                # 若使用真实 OpenTelemetry Span，提取 OTel 实际分配的 128-bit Trace ID 覆盖默认随机值，
+                # 保证前端跳转 URL 与写入 Phoenix 的 Trace ID 100% 一致
+                if hasattr(span, "get_span_context"):
+                    try:
+                        ctx = span.get_span_context()
+                        otel_tid = getattr(ctx, "trace_id", 0)
+                        if otel_tid:
+                            real_tid = format(otel_tid, "032x")
+                            if real_tid and real_tid != trace_id:
+                                trace_id = real_tid
+                                _CURRENT_TRACE_ID.set(real_tid)
+                                span.set_attribute("legal.trace_id", real_tid)
+                    except Exception as e:
+                        logger.debug(f"[Observability] 提取 OTel 真实 trace_id 提示: {e}")
+
+                root_token = _CURRENT_ROOT_SPAN.set(span)
+                span_res = {
+                    "trace_id": trace_id,
+                    "phoenix_url": self.get_phoenix_trace_url(trace_id),
+                    "span": span,
+                }
+                try:
+                    yield span_res
+                finally:
+                    _CURRENT_ROOT_SPAN.reset(root_token)
+
+            # 必须在退出 with self.start_span(...) 完成 Root Span.end() 之后再刷盘或发送，否则 Root Span 未入队
+            if self.enabled and self._tracer_provider and hasattr(self._tracer_provider, "force_flush"):
+                try:
+                    self._tracer_provider.force_flush(timeout_millis=2000)
+                except Exception as e:
+                    logger.debug(f"[Observability] Root span exit force_flush 提示: {e}")
+            elif (not self.enabled) and self.rest_fallback_enabled and collected_spans:
+                self._push_spans_via_rest(collected_spans)
+        finally:
+            _CURRENT_COLLECTED_SPANS.reset(spans_token)
+            _CURRENT_TRACE_ID.reset(tid_token)
 
     def record_query_completion(
         self,
@@ -287,9 +562,11 @@ class ObservabilityManager:
         is_rule_issue = plan.get("status") in ("PARTIAL", "MISS", "CONFLICT")
         if is_low_confidence or is_rule_issue:
             trigger_reason = f"问答置信度为 [{conf}] / 规则状态 [{plan.get('status')}]，自动触发深度评测"
+            span_attrs = getattr(span, "attributes", None)
+            span_query = span_attrs.get("input.value", "") if isinstance(span_attrs, dict) else ""
             self.trigger_deep_eval_async(
                 trace_id=trace_id,
-                query=output_payload.get("query") or span.attributes.get("input.value", ""),
+                query=output_payload.get("query") or span_query,
                 answer=ans_text,
                 citations=cites,
                 rule_plan=plan,
@@ -345,8 +622,8 @@ class ObservabilityManager:
             active_span.set_attribute("annotation.lawyer_review.score", score_val)
             active_span.set_attribute("annotation.lawyer_review.reviewer", reviewer_name)
 
-        # 若 Phoenix 启用，异步向 Phoenix HTTP API 上报标注
-        if self.enabled:
+        # 若 Phoenix 启用（OTel 或 REST 兜底通道），异步向 Phoenix HTTP API 上报标注
+        if self.enabled or self.rest_fallback_enabled:
             _EVAL_EXECUTOR.submit(self._push_annotation_to_phoenix, annotation_payload)
             if self._tracer_provider and hasattr(self._tracer_provider, "force_flush"):
                 try:
@@ -513,7 +790,7 @@ class ObservabilityManager:
                     _LOCAL_EVAL_RECORDS.pop(0)
 
             # 向 Phoenix 异步推送评测得分
-            if self.enabled:
+            if self.enabled or self.rest_fallback_enabled:
                 self._push_evaluation_to_phoenix(eval_result)
 
             logger.info(
@@ -579,13 +856,19 @@ class ObservabilityManager:
             pass
 
     def _auto_instrument_system(self) -> None:
-        """无侵入挂钩：对系统各节点与底层组件执行透明方法拦截与度量上报。"""
+        """无侵入挂钩：对系统各节点与底层组件执行透明方法拦截与度量上报（全局幂等防重复套娃）。"""
+        global _GLOBAL_INSTRUMENTED
         if self._instrumented:
             return
-        self._instrument_rag_retrieval()
-        self._instrument_llm_channel()
-        self._instrument_embedder()
-        self._instrumented = True
+        with _GLOBAL_INSTRUMENT_LOCK:
+            if _GLOBAL_INSTRUMENTED:
+                self._instrumented = True
+                return
+            self._instrument_rag_retrieval()
+            self._instrument_llm_channel()
+            self._instrument_embedder()
+            _GLOBAL_INSTRUMENTED = True
+            self._instrumented = True
 
     def _instrument_rag_retrieval(self) -> None:
         """对 RAG 混合检索与重排链路执行无侵入包装。"""
