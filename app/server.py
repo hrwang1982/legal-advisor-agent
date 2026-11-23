@@ -129,7 +129,14 @@ class LLMTestReq(BaseModel):
     llm_api_key: Optional[str] = ""
 
 
-def _snapshot(config, thread_id: str, user_id: Optional[str] = None, kb_scope: Optional[str] = None, trace_id: Optional[str] = None):
+def _snapshot(
+    config,
+    thread_id: str,
+    user_id: Optional[str] = None,
+    kb_scope: Optional[str] = None,
+    trace_id: Optional[str] = None,
+    span_id: Optional[str] = None,
+):
     """读取线程当前状态并同步持久化至数据库。"""
     st = graph.get_state(config)
     fo = st.values.get("final_output")
@@ -156,6 +163,7 @@ def _snapshot(config, thread_id: str, user_id: Optional[str] = None, kb_scope: O
 
     status_str = "needs_review" if result["needs_review"] else "done"
     real_trace_id = trace_id or st.values.get("trace_id") or ""
+    real_span_id = span_id or st.values.get("span_id") or ""
     audit_store.save_snapshot(
         thread_id=thread_id,
         status=status_str,
@@ -173,6 +181,7 @@ def _snapshot(config, thread_id: str, user_id: Optional[str] = None, kb_scope: O
             "user": {"username": user_id or "admin"},
             "kb_scope": kb_scope or "external",
             "trace_id": real_trace_id,
+            "span_id": real_span_id,
         },
     )
     return result
@@ -247,7 +256,14 @@ def handle_legal_query(req: QueryReq, user_id: Optional[str] = None) -> Dict[str
         model=req.model,
     ) as trace_ctx:
         graph.invoke(payload, cfg)
-        snap = _snapshot(cfg, tid, user_id=user_id, kb_scope=req.kb_scope, trace_id=trace_ctx["trace_id"])
+        snap = _snapshot(
+            cfg,
+            tid,
+            user_id=user_id,
+            kb_scope=req.kb_scope,
+            trace_id=trace_ctx["trace_id"],
+            span_id=trace_ctx.get("span_id"),
+        )
         fo = snap.get("final_output") or {}
         plan = snap.get("rule_plan") or {}
         audit_rec = audit_store.record_audit_event(
@@ -580,15 +596,49 @@ if _HAS_FASTAPI:
             end_date=end_date,
             limit=limit,
         )
+        valid_tids: List[str] = []
         for r in records:
             tid = r.get("thread_id")
-            t_id = r.get("trace_id")
-            if not t_id and tid:
+            t_id = r.get("trace_id") or ""
+            s_id = r.get("span_id") or ""
+            if (not t_id or not s_id) and tid:
                 snap = audit_store.get_snapshot(tid)
-                if snap and isinstance(snap.get("state_data"), dict):
-                    t_id = snap["state_data"].get("trace_id")
-            r["trace_id"] = t_id or ""
-            r["phoenix_url"] = obs.get_phoenix_trace_url(t_id or "", check_enabled=True)
+                snap_state = (snap.get("state") or snap.get("state_data")) if isinstance(snap, dict) else None
+                if isinstance(snap_state, dict):
+                    t_id = t_id or snap_state.get("trace_id") or ""
+                    s_id = s_id or snap_state.get("span_id") or ""
+            r["trace_id"] = t_id
+            r["span_id"] = s_id
+            if t_id:
+                valid_tids.append(t_id)
+
+        resolved_urls = obs.resolve_phoenix_span_urls(valid_tids) if valid_tids else {}
+        missing_records = [
+            r for r in records
+            if r.get("trace_id")
+            and len(str(r["trace_id"]).replace("-", "").strip()) == 32
+            and str(r["trace_id"]).replace("-", "").strip().lower() not in resolved_urls
+        ][:10]
+        if missing_records:
+            synced = obs.backfill_traces_to_phoenix([r["thread_id"] for r in missing_records if r.get("thread_id")])
+            if synced > 0:
+                resolved_urls.update(obs.resolve_phoenix_span_urls([r["trace_id"] for r in missing_records]))
+
+        for r in records:
+            t_id = r.get("trace_id") or ""
+            s_id = r.get("span_id") or ""
+            clean_tid = str(t_id).replace("-", "").strip().lower()
+            if clean_tid and clean_tid in resolved_urls:
+                r["phoenix_url"] = resolved_urls[clean_tid]
+            elif t_id or s_id:
+                r["phoenix_url"] = obs.get_phoenix_trace_url(
+                    t_id or "",
+                    check_enabled=True,
+                    span_id=s_id or "",
+                    allow_project_fallback=False,
+                )
+            else:
+                r["phoenix_url"] = ""
         return {"total": len(records), "records": records}
 
     class AdoptProposalReq(BaseModel):

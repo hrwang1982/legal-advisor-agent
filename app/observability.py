@@ -194,6 +194,96 @@ class ObservabilityManager:
             logger.debug(f"[Observability] REST 上报 Span 至 Phoenix 未连通或跳过: {e}")
             return False
 
+    @staticmethod
+    def _build_backfill_span_from_snapshot(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """将 session_snapshots 数据库行构造为可提交至 Phoenix REST API 的标准 Root Span 字典。"""
+        try:
+            st_data = json.loads(row.get("state_json") or "{}")
+        except Exception:
+            st_data = {}
+        raw_tid = st_data.get("trace_id") or ""
+        clean_tid = str(raw_tid).replace("-", "").strip().lower()
+        if len(clean_tid) != 32 or not re.match(r"^[0-9a-f]{32}$", clean_tid):
+            return None
+
+        raw_sid = st_data.get("span_id") or ""
+        clean_sid = str(raw_sid).replace("-", "").strip().lower()
+        if len(clean_sid) != 16 or not re.match(r"^[0-9a-f]{16}$", clean_sid):
+            clean_sid = clean_tid[:16]
+
+        up_at = row.get("updated_at") or ""
+        try:
+            s_ts = str(up_at).strip()
+            if s_ts.endswith("Z"):
+                s_ts = s_ts[:-1] + "+00:00"
+            end_dt = datetime.fromisoformat(s_ts)
+            if end_dt.tzinfo is None:
+                end_dt = end_dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            end_dt = datetime.now(timezone.utc)
+        start_dt = end_dt - timedelta(seconds=1)
+
+        fo = st_data.get("final_output") or {}
+        ans_text = fo.get("answer", "") if isinstance(fo, dict) else ""
+        u_info = st_data.get("user") or {}
+        username = u_info.get("username", "admin") if isinstance(u_info, dict) else "admin"
+
+        return {
+            "name": "legal_advisor.query",
+            "span_kind": "CHAIN",
+            "context": {
+                "trace_id": clean_tid,
+                "span_id": clean_sid,
+            },
+            "parent_id": None,
+            "start_time": start_dt.isoformat(),
+            "end_time": end_dt.isoformat(),
+            "status_code": "OK",
+            "attributes": {
+                "openinference.span.kind": "CHAIN",
+                "session.id": row.get("thread_id") or "",
+                "user.id": username,
+                "input.value": (row.get("query") or "")[:2000],
+                "input.mime_type": "text/plain",
+                "output.value": (ans_text or "")[:4000],
+                "output.mime_type": "text/plain",
+                "legal.kb_scope": st_data.get("kb_scope") or "all",
+                "legal.answer_confidence": st_data.get("answer_confidence") or "B",
+                "legal.status": row.get("status") or "needs_review",
+                "legal.trace_id": clean_tid,
+                "legal.backfilled_from_snapshot": True,
+            },
+        }
+
+    def backfill_traces_to_phoenix(self, thread_ids: List[str], max_count: int = 10) -> int:
+        """按需同步补偿：针对存在合法 trace_id 但 Phoenix 尚未落盘的特定 thread_id，补推 Root Span。"""
+        if not thread_ids or not getattr(settings, "phoenix_enabled", False):
+            return 0
+        target_ids = [str(t).strip() for t in thread_ids if t][:max_count]
+        if not target_ids:
+            return 0
+
+        try:
+            from app.mysql_store import mysql_store
+
+            placeholders = ",".join("?" for _ in target_ids)
+            rows = mysql_store.query(
+                f"SELECT thread_id, updated_at, status, query, state_json FROM session_snapshots WHERE thread_id IN ({placeholders})",
+                tuple(target_ids),
+            )
+        except Exception as e:
+            logger.debug(f"[Observability] 按需读取 session_snapshots 失败: {e}")
+            return 0
+
+        synced = 0
+        for row in rows or []:
+            span_dict = self._build_backfill_span_from_snapshot(row)
+            if span_dict and self._push_spans_via_rest([span_dict], timeout=1.5):
+                synced += 1
+        if synced > 0:
+            logger.info(f"[Observability] 已按需向 Phoenix 补偿同步 {synced} 条缺失问答 Trace")
+        return synced
+
     def sync_recent_snapshots_to_phoenix(self, limit: int = 20) -> int:
         """后台异步补偿：将数据库中最近已有 trace_id 但尚未落盘至 Phoenix 的问答快照同步写入 Phoenix。"""
         if not getattr(settings, "phoenix_enabled", False):
@@ -238,61 +328,12 @@ class ObservabilityManager:
 
         synced = 0
         for row in rows:
-            try:
-                st_data = json.loads(row.get("state_json") or "{}")
-            except Exception:
-                st_data = {}
-            raw_tid = st_data.get("trace_id") or ""
-            clean_tid = str(raw_tid).replace("-", "").strip().lower()
-            if len(clean_tid) != 32 or not re.match(r"^[0-9a-f]{32}$", clean_tid):
+            span_dict = self._build_backfill_span_from_snapshot(row)
+            if not span_dict:
                 continue
+            clean_tid = span_dict["context"]["trace_id"]
             if clean_tid in existing_trace_ids:
                 continue
-
-            # 解析时间，保证 end_time > start_time
-            up_at = row.get("updated_at") or ""
-            try:
-                s_ts = str(up_at).strip()
-                if s_ts.endswith("Z"):
-                    s_ts = s_ts[:-1] + "+00:00"
-                end_dt = datetime.fromisoformat(s_ts)
-                if end_dt.tzinfo is None:
-                    end_dt = end_dt.replace(tzinfo=timezone.utc)
-            except Exception:
-                end_dt = datetime.now(timezone.utc)
-            start_dt = end_dt - timedelta(seconds=1)
-
-            fo = st_data.get("final_output") or {}
-            ans_text = fo.get("answer", "") if isinstance(fo, dict) else ""
-            u_info = st_data.get("user") or {}
-            username = u_info.get("username", "admin") if isinstance(u_info, dict) else "admin"
-
-            span_dict = {
-                "name": "legal_advisor.query",
-                "span_kind": "CHAIN",
-                "context": {
-                    "trace_id": clean_tid,
-                    "span_id": clean_tid[:16],
-                },
-                "parent_id": None,
-                "start_time": start_dt.isoformat(),
-                "end_time": end_dt.isoformat(),
-                "status_code": "OK",
-                "attributes": {
-                    "openinference.span.kind": "CHAIN",
-                    "session.id": row.get("thread_id") or "",
-                    "user.id": username,
-                    "input.value": (row.get("query") or "")[:2000],
-                    "input.mime_type": "text/plain",
-                    "output.value": (ans_text or "")[:4000],
-                    "output.mime_type": "text/plain",
-                    "legal.kb_scope": st_data.get("kb_scope") or "all",
-                    "legal.answer_confidence": st_data.get("answer_confidence") or "B",
-                    "legal.status": row.get("status") or "needs_review",
-                    "legal.trace_id": clean_tid,
-                    "legal.backfilled_from_snapshot": True,
-                },
-            }
             if self._push_spans_via_rest([span_dict], timeout=1.5):
                 synced += 1
                 existing_trace_ids.add(clean_tid)
@@ -366,11 +407,18 @@ class ObservabilityManager:
             threading.Thread(target=self.sync_recent_snapshots_to_phoenix, daemon=True).start()
             return False
 
-    def get_phoenix_trace_url(self, trace_id: Optional[str] = None, check_enabled: bool = False) -> str:
+    def get_phoenix_trace_url(
+        self,
+        trace_id: Optional[str] = None,
+        check_enabled: bool = False,
+        span_id: Optional[str] = None,
+        allow_project_fallback: bool = True,
+    ) -> str:
         """根据当前配置生成 Arize Phoenix 官方标准的直达/重定向 URL（遵循官方 /redirects/ 规范，杜绝 Unknown node 错误）。
         1. 若 check_enabled=True 且 OTel 与 REST 通道均未开启：直接返回空字符串，避免前端在禁用监控时生成无效死链；
         2. 针对具有 32 位标准十六进制 Trace ID 的问答：返回 /redirects/traces/{trace_id}；
-        3. 针对无 TraceID 问答：安全回退至项目看板 /redirects/projects/{project_name}。
+        3. 若无有效 Trace ID 但有 16 位十六进制 Span ID：返回 /redirects/spans/{span_id}；
+        4. 当 Trace ID 与 Span ID 均为空时：allow_project_fallback=True 回退至项目看板，否则返回空串防止全量列表误跳。
         """
         if check_enabled and not (self.enabled or self.rest_fallback_enabled):
             return ""
@@ -384,7 +432,123 @@ class ObservabilityManager:
             if len(clean_tid) == 32 and re.match(r"^[0-9a-fA-F]{32}$", clean_tid):
                 return f"{base_url}/redirects/traces/{clean_tid}"
 
+        if span_id:
+            clean_sid = str(span_id).replace("-", "").strip()
+            # 标准 OpenTelemetry Span ID 格式为 16 位十六进制字符串
+            if len(clean_sid) == 16 and re.match(r"^[0-9a-fA-F]{16}$", clean_sid):
+                return f"{base_url}/redirects/spans/{clean_sid}"
+
+        if not allow_project_fallback:
+            return ""
+
         return f"{base_url}/redirects/projects/{project}"
+
+    def resolve_phoenix_span_urls(self, trace_ids: List[str], timeout: float = 1.5) -> Dict[str, str]:
+        """批量向 Phoenix 查询每个 trace_id 对应的 Root Span Global ID，构造带 selectedSpanNodeId 的精准详情 URL。"""
+        if not trace_ids or not (self.enabled or self.rest_fallback_enabled or getattr(settings, "phoenix_enabled", False)):
+            return {}
+
+        wanted = []
+        seen = set()
+        for raw in trace_ids:
+            if not raw:
+                continue
+            clean = str(raw).replace("-", "").strip().lower()
+            if len(clean) == 32 and re.match(r"^[0-9a-f]{32}$", clean) and clean not in seen:
+                seen.add(clean)
+                wanted.append(clean)
+        if not wanted:
+            return {}
+
+        wanted_set = set(wanted)
+        api_base = self._get_phoenix_api_base()
+        ui_base = (getattr(settings, "phoenix_ui_base_url", "http://localhost:6006") or "").rstrip("/")
+        project_name = getattr(settings, "phoenix_project_name", "legal-advisor-prod") or "legal-advisor-prod"
+        project_quoted = urllib.parse.quote(project_name)
+
+        project_gid = ""
+        trace_to_span_gid: Dict[str, str] = {}
+
+        # 1. 查询项目 Relay Global ID (如 UHJvamVjdDoy)
+        try:
+            proj_req = urllib.request.Request(f"{api_base}/v1/projects/{project_quoted}", method="GET")
+            with urllib.request.urlopen(proj_req, timeout=timeout) as resp:
+                proj_body = json.loads(resp.read().decode("utf-8"))
+                proj_data = proj_body.get("data") if isinstance(proj_body, dict) and isinstance(proj_body.get("data"), dict) else proj_body
+                if isinstance(proj_data, dict) and proj_data.get("id"):
+                    project_gid = str(proj_data["id"]).strip()
+        except Exception as e:
+            logger.debug(f"[Observability] 查询 Phoenix 项目 Global ID 失败: {e}")
+            return {}
+
+        if not project_gid:
+            return {}
+
+        # 2. 通过 REST 接口获取最新 Spans，提取 Root Span Global ID (优先 parent_id is None)
+        is_root_map: Dict[str, bool] = {}
+        try:
+            spans_req = urllib.request.Request(f"{api_base}/v1/projects/{project_quoted}/spans?limit=200", method="GET")
+            with urllib.request.urlopen(spans_req, timeout=timeout) as resp:
+                spans_body = json.loads(resp.read().decode("utf-8"))
+                for item in spans_body.get("data") or []:
+                    if not isinstance(item, dict):
+                        continue
+                    ctx = item.get("context") or {}
+                    t_id = str(ctx.get("trace_id") or "").replace("-", "").strip().lower()
+                    s_gid = str(item.get("id") or "").strip()
+                    if not t_id or t_id not in wanted_set or not s_gid:
+                        continue
+                    is_root = item.get("parent_id") is None
+                    if t_id not in trace_to_span_gid or (is_root and not is_root_map.get(t_id)):
+                        trace_to_span_gid[t_id] = s_gid
+                        is_root_map[t_id] = is_root
+        except Exception as e:
+            logger.debug(f"[Observability] REST 批量查询 Phoenix Spans 失败: {e}")
+
+        # 3. 若 REST 未返回 id 或仍有历史 trace 未命中，使用 GraphQL 查询最近 200 个 Root Span 补全
+        missing = [t for t in wanted if t not in trace_to_span_gid]
+        if missing:
+            try:
+                gql_query = (
+                    "query($id: ID!) { node(id: $id) { ... on Project { "
+                    "spans(first: 200, filterCondition: \"parent_id is None\") { "
+                    "edges { node { id trace { traceId } } } } } } }"
+                )
+                gql_payload = json.dumps(
+                    {"query": gql_query, "variables": {"id": project_gid}},
+                    ensure_ascii=False,
+                ).encode("utf-8")
+                gql_req = urllib.request.Request(
+                    f"{api_base}/graphql",
+                    data=gql_payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(gql_req, timeout=timeout) as resp:
+                    gql_body = json.loads(resp.read().decode("utf-8"))
+                    edges = (
+                        (((gql_body.get("data") or {}).get("node") or {}).get("spans") or {}).get("edges")
+                        or []
+                    )
+                    missing_set = set(missing)
+                    for edge in edges:
+                        node = (edge or {}).get("node") or {}
+                        s_gid = str(node.get("id") or "").strip()
+                        t_id = str(((node.get("trace") or {}).get("traceId")) or "").replace("-", "").strip().lower()
+                        if t_id in missing_set and s_gid and t_id not in trace_to_span_gid:
+                            trace_to_span_gid[t_id] = s_gid
+            except Exception as e:
+                logger.debug(f"[Observability] GraphQL 补全 Root Span Global ID 失败: {e}")
+
+        proj_gid_quoted = urllib.parse.quote(project_gid, safe="")
+        resolved: Dict[str, str] = {}
+        for tid, span_gid in trace_to_span_gid.items():
+            span_gid_quoted = urllib.parse.quote(span_gid, safe="")
+            resolved[tid] = (
+                f"{ui_base}/projects/{proj_gid_quoted}/spans/{tid}"
+                f"?timeRangeKey=7d&selectedSpanNodeId={span_gid_quoted}"
+            )
+        return resolved
 
     @contextmanager
     def start_span(
@@ -484,25 +648,30 @@ class ObservabilityManager:
 
         try:
             with self.start_span("legal_advisor.query", span_kind="CHAIN", attributes=root_attrs) as span:
-                # 若使用真实 OpenTelemetry Span，提取 OTel 实际分配的 128-bit Trace ID 覆盖默认随机值，
-                # 保证前端跳转 URL 与写入 Phoenix 的 Trace ID 100% 一致
+                # 若使用真实 OpenTelemetry Span，提取 OTel 实际分配的 128-bit Trace ID 与 64-bit Span ID 覆盖默认随机值，
+                # 保证前端跳转 URL 与写入 Phoenix 的 Trace/Span ID 100% 一致
+                span_id = str(getattr(span, "span_id", "") or "")
                 if hasattr(span, "get_span_context"):
                     try:
                         ctx = span.get_span_context()
                         otel_tid = getattr(ctx, "trace_id", 0)
+                        otel_sid = getattr(ctx, "span_id", 0)
                         if otel_tid:
                             real_tid = format(otel_tid, "032x")
                             if real_tid and real_tid != trace_id:
                                 trace_id = real_tid
                                 _CURRENT_TRACE_ID.set(real_tid)
                                 span.set_attribute("legal.trace_id", real_tid)
+                        if otel_sid:
+                            span_id = format(otel_sid, "016x")
                     except Exception as e:
                         logger.debug(f"[Observability] 提取 OTel 真实 trace_id 提示: {e}")
 
                 root_token = _CURRENT_ROOT_SPAN.set(span)
                 span_res = {
                     "trace_id": trace_id,
-                    "phoenix_url": self.get_phoenix_trace_url(trace_id),
+                    "span_id": span_id,
+                    "phoenix_url": self.get_phoenix_trace_url(trace_id, span_id=span_id),
                     "span": span,
                 }
                 try:

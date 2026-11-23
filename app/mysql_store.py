@@ -1912,6 +1912,8 @@ class MySQLStore:
                 "answer_summary": _clean_summary(ans_text, max_len=140, kw=keyword),
                 "review_status": display_status,
                 "status_tag": status_tag,
+                "trace_id": st_data.get("trace_id") or "",
+                "span_id": st_data.get("span_id") or "",
             })
             if len(results) >= limit:
                 break

@@ -68,16 +68,36 @@ def test_deterministic_metrics_computation():
 
 
 def test_query_pipeline_trace_injection():
-    """测试问答主接口 handle_legal_query 中 trace_id 与 phoenix_url 的注入。"""
-    req = QueryReq(query="买到假货商家概不负责怎么办？")
-    res = handle_legal_query(req)
+    """测试问答主接口 handle_legal_query 中 trace_id 与 phoenix_url 的注入（完全隔离真实数据库）。"""
+    from app.audit import audit_store
 
-    assert "trace_id" in res
-    assert len(res["trace_id"]) == 32
-    assert "phoenix_url" in res
-    assert res["trace_id"] in res["phoenix_url"]
-    assert res["status"] in ("needs_review", "done")
-    print(f"✅ 4. 问答全链路 TraceID ({res['trace_id'][:8]}...) 与 Phoenix URL 注入验证通过")
+    saved_snapshots = []
+    recorded_audits = []
+    orig_save_snap = audit_store.save_snapshot
+    orig_record_audit = audit_store.record_audit_event
+    orig_mock = settings.mock
+
+    try:
+        settings.mock = True
+        audit_store.save_snapshot = lambda **kwargs: saved_snapshots.append(kwargs)
+        audit_store.record_audit_event = lambda **kwargs: recorded_audits.append(kwargs) or kwargs
+
+        req = QueryReq(query="买到假货商家概不负责怎么办？")
+        res = handle_legal_query(req)
+
+        assert "trace_id" in res
+        assert len(res["trace_id"]) == 32
+        assert "phoenix_url" in res
+        assert res["trace_id"] in res["phoenix_url"]
+        assert res["status"] in ("needs_review", "done")
+        assert len(saved_snapshots) == 1
+        assert saved_snapshots[0]["state_data"].get("trace_id") == res["trace_id"]
+        assert len(recorded_audits) == 1
+        print(f"✅ 4. 问答全链路 TraceID ({res['trace_id'][:8]}...) 与 Phoenix URL 注入验证通过（零库污染）")
+    finally:
+        settings.mock = orig_mock
+        audit_store.save_snapshot = orig_save_snap
+        audit_store.record_audit_event = orig_record_audit
 
 
 def test_conditional_deep_eval_triggering():
@@ -203,6 +223,127 @@ def test_rest_fallback_span_tree_collection():
     print("✅ 7. 零依赖 REST 兜底模式 Span 树收集与父子链路关联验证通过")
 
 
+def test_qa_details_phoenix_span_direct_url():
+    """测试数据统计流水明细中的 trace_id 提取与带 selectedSpanNodeId 的精准详情 URL 构造。"""
+    import json
+    import urllib.request
+    from io import BytesIO
+    from app.mysql_store import mysql_store
+    from app.audit import audit_store
+
+    # 1. 验证 mysql_store.get_qa_details 与 audit_store.get_snapshot 均能正确读出 trace_id
+    recs = mysql_store.get_qa_details(limit=5)
+    with_trace = [r for r in recs if r.get("trace_id")]
+    if recs:
+        assert "trace_id" in recs[0] and "span_id" in recs[0]
+        if with_trace:
+            sample_tid = with_trace[0]["thread_id"]
+            snap = audit_store.get_snapshot(sample_tid)
+            assert snap and isinstance(snap.get("state"), dict)
+            assert snap["state"].get("trace_id") == with_trace[0]["trace_id"]
+
+    class _FakeResp(BytesIO):
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    target_tid = "88d772ad5281471a9e5cf5467bbaca78"
+    expected_url = (
+        "http://localhost:6006/projects/UHJvamVjdDoy/spans/88d772ad5281471a9e5cf5467bbaca78"
+        "?timeRangeKey=7d&selectedSpanNodeId=U3BhbjoyMg%3D%3D"
+    )
+
+    mgr = ObservabilityManager()
+    mgr.rest_fallback_enabled = True
+
+    orig_urlopen = urllib.request.urlopen
+    try:
+        # 2A. 模拟 Phoenix REST API 返回项目 Global ID 与 Span id 字段
+        def _mock_rest_urlopen(req, timeout=1.5):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if url.endswith("/v1/projects/legal-advisor-prod"):
+                return _FakeResp(json.dumps({"data": {"id": "UHJvamVjdDoy", "name": "legal-advisor-prod"}}).encode("utf-8"))
+            if "/spans?" in url:
+                return _FakeResp(
+                    json.dumps({
+                        "data": [
+                            {
+                                "id": "U3BhbjoyMw==",
+                                "name": "retriever.hybrid",
+                                "parent_id": "1111222233334444",
+                                "context": {"trace_id": target_tid, "span_id": "aaaa222233334444"},
+                            },
+                            {
+                                "id": "U3BhbjoyMg==",
+                                "name": "legal_advisor.query",
+                                "parent_id": None,
+                                "context": {"trace_id": target_tid, "span_id": "1111222233334444"},
+                            },
+                        ]
+                    }).encode("utf-8")
+                )
+            raise RuntimeError(f"Unexpected URL: {url}")
+
+        urllib.request.urlopen = _mock_rest_urlopen
+        resolved_rest = mgr.resolve_phoenix_span_urls([target_tid])
+        assert resolved_rest.get(target_tid) == expected_url, f"REST 解析 URL 不匹配: {resolved_rest}"
+
+        # 2B. 模拟 REST /spans 未带 id 字段时走 GraphQL node(id: project_gid) 兜底
+        def _mock_gql_urlopen(req, timeout=1.5):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if url.endswith("/v1/projects/legal-advisor-prod"):
+                return _FakeResp(json.dumps({"data": {"id": "UHJvamVjdDoy"}}).encode("utf-8"))
+            if "/spans?" in url:
+                return _FakeResp(
+                    json.dumps({
+                        "data": [{"name": "legal_advisor.query", "parent_id": None, "context": {"trace_id": target_tid}}]
+                    }).encode("utf-8")
+                )
+            if url.endswith("/graphql"):
+                return _FakeResp(
+                    json.dumps({
+                        "data": {
+                            "node": {
+                                "spans": {
+                                    "edges": [
+                                        {"node": {"id": "U3BhbjoyMg==", "trace": {"traceId": target_tid}}}
+                                    ]
+                                }
+                            }
+                        }
+                    }).encode("utf-8")
+                )
+            raise RuntimeError(f"Unexpected URL: {url}")
+
+        urllib.request.urlopen = _mock_gql_urlopen
+        resolved_gql = mgr.resolve_phoenix_span_urls([target_tid])
+        assert resolved_gql.get(target_tid) == expected_url, f"GraphQL 解析 URL 不匹配: {resolved_gql}"
+    finally:
+        urllib.request.urlopen = orig_urlopen
+
+    # 3. 验证无 trace_id 禁用全量回退 & 仅 span_id 回退行为
+    assert mgr.get_phoenix_trace_url("", check_enabled=True, allow_project_fallback=False) == ""
+    assert mgr.get_phoenix_trace_url("", check_enabled=True, span_id="1111222233334444", allow_project_fallback=False).endswith("/redirects/spans/1111222233334444")
+    assert mgr.get_phoenix_trace_url(target_tid, check_enabled=True, allow_project_fallback=False).endswith(f"/redirects/traces/{target_tid}")
+
+    # 4. 验证按需补推缺失 Trace 方法 backfill_traces_to_phoenix
+    if with_trace:
+        pushed_batches = []
+        orig_push = mgr._push_spans_via_rest
+        try:
+            mgr._push_spans_via_rest = lambda spans, timeout=1.5: pushed_batches.append(spans) or True  # type: ignore
+            synced = mgr.backfill_traces_to_phoenix([with_trace[0]["thread_id"]])
+            assert synced == 1 and len(pushed_batches) == 1
+            assert pushed_batches[0][0]["context"]["trace_id"] == with_trace[0]["trace_id"].lower()
+        finally:
+            mgr._push_spans_via_rest = orig_push
+    print(f"✅ 8. 问答流水 Phoenix Span 精准直达 URL ({expected_url}) 与按需补推验证通过")
+
+
 if __name__ == "__main__":
     print("=== 开始运行 Arize Phoenix 生产可观测性专项测试 ===")
     test_noop_degradation()
@@ -212,4 +353,5 @@ if __name__ == "__main__":
     test_conditional_deep_eval_triggering()
     test_otel_trace_id_alignment_and_flush_order()
     test_rest_fallback_span_tree_collection()
+    test_qa_details_phoenix_span_direct_url()
     print("=== 全部 Phoenix 可观测性测试用例执行通过 ✅ ===")

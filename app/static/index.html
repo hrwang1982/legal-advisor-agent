@@ -2097,7 +2097,7 @@
                   <th style="min-width:240px;">问题</th>
                   <th style="min-width:320px;">回答摘要</th>
                   <th style="width:85px;">复核状态</th>
-                  <th style="width:80px;">操作</th>
+                  <th style="width:135px;">操作</th>
                 </tr>
               </thead>
               <tbody id="qaDetailTableBody"></tbody>
@@ -8287,7 +8287,7 @@
             <td style="max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:normal; font-size:13px; line-height:1.5;" title="${r.query}">${r.query}</td>
             <td style="max-width:360px; overflow:hidden; text-overflow:ellipsis; white-space:normal; font-size:12px; line-height:1.5; color:#555;" title="${r.answer_summary}">${r.answer_summary}</td>
             <td>${statusBadge}</td>
-            <td>
+            <td style="white-space:nowrap;">
               <span style="color:#1890ff; cursor:pointer; font-size:12px; text-decoration:underline;" onclick="traceAuditLog('${r.thread_id}')">审计追溯</span>
               ${traceLinkHtml}
             </td>
