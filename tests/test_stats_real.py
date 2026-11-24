@@ -110,6 +110,52 @@ class TestStatsReal(unittest.TestCase):
         for item in hq_details:
             self.assertEqual(item["dept_id"], "dept_hq")
 
+    def test_delete_single_and_batch_qa_records(self):
+        """测试单独与批量删除问答流水记录（包含底表数据级联清理与统计概览联动）"""
+        from app.audit import audit_store
+
+        # 1. 构造测试数据
+        tid_1 = "test_qa_mock_001_single"
+        tid_2 = "test_qa_mock_002_batch"
+        tid_3 = "test_qa_mock_003_batch"
+
+        for tid in [tid_1, tid_2, tid_3]:
+            audit_store.save_snapshot(
+                thread_id=tid,
+                status="needs_review",
+                state_data={"query": f"测试问题 {tid}", "answer_summary": "测试回答", "kb_scope": "all"}
+            )
+            audit_store.record_audit_event(
+                thread_id=tid,
+                event_type="query_generated",
+                decision="pending",
+                draft_answer="测试草稿",
+            )
+
+        # 验证已成功写入快照
+        snap1 = audit_store.get_snapshot(tid_1)
+        self.assertIsNotNone(snap1)
+        snap2 = audit_store.get_snapshot(tid_2)
+        self.assertIsNotNone(snap2)
+
+        # 2. 单独删除测试 (tid_1)
+        ok = audit_store.delete_snapshot(tid_1)
+        self.assertTrue(ok)
+        self.assertIsNone(audit_store.get_snapshot(tid_1))
+        # 验证关联的 audit_logs 也被级联清理
+        logs1 = audit_store.list_audit_logs(thread_id=tid_1)
+        self.assertEqual(len(logs1), 0)
+
+        # 3. 批量删除测试 (tid_2, tid_3)
+        cnt = audit_store.delete_snapshots([tid_2, tid_3])
+        self.assertEqual(cnt, 2)
+        self.assertIsNone(audit_store.get_snapshot(tid_2))
+        self.assertIsNone(audit_store.get_snapshot(tid_3))
+        logs2 = audit_store.list_audit_logs(thread_id=tid_2)
+        self.assertEqual(len(logs2), 0)
+        logs3 = audit_store.list_audit_logs(thread_id=tid_3)
+        self.assertEqual(len(logs3), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

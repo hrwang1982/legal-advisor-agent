@@ -2085,19 +2085,21 @@
               <button class="btn-search" id="btnSearchQaDetails" onclick="loadQaDetails()">搜索</button>
               <button class="btn-reset" onclick="loadQaDetails()" title="重新拉取数据库最新真实问答与审计流水">🔄 刷新流水</button>
               <button class="btn-tool" onclick="exportQaDetailsToCsv()">导出表格 (CSV)</button>
+              <button class="btn-reset" id="btnBatchDeleteQa" style="color:#ff4d4f; border-color:#ffa39e; background:#fff1f0; padding:6px 14px; font-size:12px; cursor:pointer;" onclick="batchDeleteQaDetails()" title="批量删除选中的问答流水">🗑️ 批量删除 (<span id="qaSelectedCount">0</span>)</button>
             </div>
           </div>
           <div style="overflow-x:auto;">
             <table class="custom-table">
               <thead>
                 <tr>
+                  <th style="width:42px; text-align:center;"><input type="checkbox" id="qaSelectAll" onchange="toggleSelectAllQa(this.checked)" title="全选/全不选" /></th>
                   <th style="width:160px;">时间 (北京时间)</th>
                   <th style="width:150px;">用户 / 部门</th>
                   <th style="width:85px;">问答范围</th>
                   <th style="min-width:240px;">问题</th>
                   <th style="min-width:320px;">回答摘要</th>
                   <th style="width:85px;">复核状态</th>
-                  <th style="width:135px;">操作</th>
+                  <th style="width:170px;">操作</th>
                 </tr>
               </thead>
               <tbody id="qaDetailTableBody"></tbody>
@@ -8224,7 +8226,7 @@
     async function loadQaDetails() {
       const tbody = document.getElementById("qaDetailTableBody");
       if (!tbody) return;
-      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:30px;">⏳ 正在读取真实会话与审计流水...</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--text-muted); padding:30px;">⏳ 正在读取真实会话与审计流水...</td></tr>`;
 
       const deptId = document.getElementById("statsDeptFilter") ? document.getElementById("statsDeptFilter").value : "";
       const startDate = document.getElementById("statsStartDate") ? document.getElementById("statsStartDate").value : "";
@@ -8253,7 +8255,13 @@
         if (badge) badge.textContent = `共 ${records.length} 条真实流水`;
 
         if (records.length === 0) {
-          tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:32px;">暂无符合筛选条件的真实问答流水</td></tr>`;
+          tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--text-muted); padding:32px;">暂无符合筛选条件的真实问答流水</td></tr>`;
+          const selectAll = document.getElementById("qaSelectAll");
+          if (selectAll) {
+            selectAll.checked = false;
+            selectAll.indeterminate = false;
+          }
+          updateQaSelectedCount();
           return;
         }
 
@@ -8278,6 +8286,9 @@
               : `<span style="color:#c0c4cc; font-size:12px; margin-left:8px;" title="未连通 Phoenix 监控或当前会话未采集 Trace">链路追踪</span>`;
 
             tr.innerHTML = `
+            <td style="text-align:center;">
+              <input type="checkbox" class="qa-row-checkbox" value="${r.thread_id}" onchange="onQaRowSelectChange()" />
+            </td>
             <td style="font-size:12px; color:var(--text-muted);">${r.time}</td>
             <td>
               <strong>${r.user_display || r.username}</strong>
@@ -8290,13 +8301,123 @@
             <td style="white-space:nowrap;">
               <span style="color:#1890ff; cursor:pointer; font-size:12px; text-decoration:underline;" onclick="traceAuditLog('${r.thread_id}')">审计追溯</span>
               ${traceLinkHtml}
+              <span style="color:#ff4d4f; cursor:pointer; font-size:12px; text-decoration:underline; margin-left:8px;" onclick="deleteSingleQaDetail('${r.thread_id}')" title="删除该条流水记录">删除</span>
             </td>
           `;
           tbody.appendChild(tr);
         });
+
+        const selectAll = document.getElementById("qaSelectAll");
+        if (selectAll) {
+          selectAll.checked = false;
+          selectAll.indeterminate = false;
+        }
+        updateQaSelectedCount();
       } catch (err) {
         console.error("加载问答明细失败", err);
-        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:#ff4d4f; padding:24px;">加载流水明细异常: ${err.message}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:#ff4d4f; padding:24px;">加载流水明细异常: ${err.message}</td></tr>`;
+      }
+    }
+
+    function getSelectedQaThreadIds() {
+      const checkboxes = document.querySelectorAll(".qa-row-checkbox:checked");
+      return Array.from(checkboxes).map(cb => cb.value).filter(Boolean);
+    }
+
+    function updateQaSelectedCount() {
+      const count = getSelectedQaThreadIds().length;
+      const countSpan = document.getElementById("qaSelectedCount");
+      if (countSpan) countSpan.textContent = count;
+
+      const allCheckboxes = document.querySelectorAll(".qa-row-checkbox");
+      const selectAll = document.getElementById("qaSelectAll");
+      if (selectAll) {
+        if (allCheckboxes.length === 0 || count === 0) {
+          selectAll.checked = false;
+          selectAll.indeterminate = false;
+        } else if (count === allCheckboxes.length) {
+          selectAll.checked = true;
+          selectAll.indeterminate = false;
+        } else {
+          selectAll.checked = false;
+          selectAll.indeterminate = true;
+        }
+      }
+    }
+
+    function toggleSelectAllQa(checked) {
+      const checkboxes = document.querySelectorAll(".qa-row-checkbox");
+      checkboxes.forEach(cb => { cb.checked = checked; });
+      updateQaSelectedCount();
+    }
+
+    function onQaRowSelectChange() {
+      updateQaSelectedCount();
+    }
+
+    async function deleteSingleQaDetail(threadId) {
+      if (!threadId) return;
+      if (!confirm(`确认要删除此条问答流水记录（会话 ID: ${threadId.slice(0, 8)}...）吗？\n删除后不可恢复。`)) {
+        return;
+      }
+      try {
+        const userRole = (typeof RBAC_STATE !== "undefined" && RBAC_STATE.currentUser) ? RBAC_STATE.currentUser : "admin";
+        const res = await fetch(`/stats/qa-details/${encodeURIComponent(threadId)}`, {
+          method: "DELETE",
+          headers: {
+            "X-User-Role": userRole,
+            "X-User-Id": userRole
+          }
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || `HTTP 错误 ${res.status}`);
+        }
+        const data = await res.json();
+        showToast(data.message || "流水记录已成功删除");
+        await Promise.all([
+          loadQaDetails(),
+          typeof loadStatsOverview === "function" ? loadStatsOverview() : Promise.resolve()
+        ]);
+      } catch (e) {
+        console.error("删除流水失败", e);
+        showToast("⚠️ 删除流水记录失败: " + e.message);
+      }
+    }
+
+    async function batchDeleteQaDetails() {
+      const selectedIds = getSelectedQaThreadIds();
+      if (selectedIds.length === 0) {
+        showToast("请先在表格左侧勾选需要删除的问答流水！");
+        return;
+      }
+      if (!confirm(`确定要批量删除选中的 ${selectedIds.length} 条问答流水记录吗？\n删除后将不可恢复。`)) {
+        return;
+      }
+      try {
+        const userRole = (typeof RBAC_STATE !== "undefined" && RBAC_STATE.currentUser) ? RBAC_STATE.currentUser : "admin";
+        const res = await fetch("/stats/qa-details/batch-delete", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-User-Role": userRole,
+            "X-User-Id": userRole
+          },
+          body: JSON.stringify({ thread_ids: selectedIds })
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || `HTTP 错误 ${res.status}`);
+        }
+        const data = await res.json();
+        showToast(data.message || `成功批量删除 ${selectedIds.length} 条流水记录`);
+        await Promise.all([
+          loadQaDetails(),
+          typeof loadStatsOverview === "function" ? loadStatsOverview() : Promise.resolve()
+        ]);
+      } catch (e) {
+        console.error("批量删除流水失败", e);
+        showToast("⚠️ 批量删除流水失败: " + e.message);
       }
     }
 

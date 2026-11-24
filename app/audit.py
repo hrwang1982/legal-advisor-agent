@@ -255,6 +255,33 @@ class AuditStore:
             logger.error(f"[AuditStore] get_snapshot 失败: {e}")
         return None
 
+    def delete_snapshot(self, thread_id: str) -> bool:
+        """按 thread_id 删除会话快照及关联审计记录。"""
+        return self.delete_snapshots([thread_id]) > 0
+
+    def delete_snapshots(self, thread_ids: List[str]) -> int:
+        """批量删除会话快照及关联审计日志。"""
+        clean_ids = [str(t).strip() for t in thread_ids if t and str(t).strip()]
+        if not clean_ids:
+            return 0
+        placeholders = ",".join(["?"] * len(clean_ids))
+        try:
+            if not self.db_path:
+                return mysql_store.delete_qa_flow_records(clean_ids)
+            sql_snap = f"DELETE FROM session_snapshots WHERE thread_id IN ({placeholders})"
+            sql_audit = f"DELETE FROM audit_logs WHERE thread_id IN ({placeholders})"
+            sql_gaps = f"DELETE FROM rule_gaps WHERE thread_id IN ({placeholders})"
+            deleted = self._execute(sql_snap, tuple(clean_ids))
+            try:
+                self._execute(sql_audit, tuple(clean_ids))
+                self._execute(sql_gaps, tuple(clean_ids))
+            except Exception:
+                pass
+            return deleted
+        except Exception as e:
+            logger.error(f"[AuditStore] delete_snapshots 失败: {e}")
+            return 0
+
     def record_audit_event(
         self,
         thread_id: str,

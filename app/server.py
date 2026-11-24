@@ -641,6 +641,37 @@ if _HAS_FASTAPI:
                 r["phoenix_url"] = ""
         return {"total": len(records), "records": records}
 
+    class BatchDeleteQAReq(BaseModel):
+        thread_ids: List[str]
+
+    @app.delete("/stats/qa-details/{thread_id}")
+    def delete_single_qa_detail_api(
+        thread_id: str,
+        x_user_role: Optional[str] = Header(None),
+        x_user_id: Optional[str] = Header(None),
+    ):
+        """单独删除某条问答详情流水记录"""
+        check_admin_permission(x_user_role or x_user_id)
+        clean_id = (thread_id or "").strip()
+        if not clean_id:
+            raise HTTPException(status_code=400, detail="未提供有效的会话标识")
+        deleted = audit_store.delete_snapshots([clean_id])
+        return {"status": "ok", "message": "流水记录已成功删除", "deleted_count": deleted}
+
+    @app.post("/stats/qa-details/batch-delete")
+    def batch_delete_qa_details_api(
+        req: BatchDeleteQAReq,
+        x_user_role: Optional[str] = Header(None),
+        x_user_id: Optional[str] = Header(None),
+    ):
+        """批量删除问答详情流水记录"""
+        check_admin_permission(x_user_role or x_user_id)
+        clean_ids = [str(t).strip() for t in (req.thread_ids or []) if str(t).strip()]
+        if not clean_ids:
+            raise HTTPException(status_code=400, detail="请提供需要删除的流水会话ID列表")
+        deleted = audit_store.delete_snapshots(clean_ids)
+        return {"status": "ok", "message": f"成功批量删除 {deleted} 条流水记录", "deleted_count": deleted}
+
     class AdoptProposalReq(BaseModel):
         reviewer_name: Optional[str] = "执业律师/规则专家"
         notes: Optional[str] = ""

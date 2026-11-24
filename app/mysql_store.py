@@ -1920,6 +1920,40 @@ class MySQLStore:
 
         return results
 
+    def delete_qa_flow_records(self, thread_ids: List[str]) -> int:
+        """从 session_snapshots、audit_logs 及 rule_gaps 批量删除指定会话的问答流水记录。"""
+        clean_ids = [str(t).strip() for t in thread_ids if t and str(t).strip()]
+        if not clean_ids:
+            return 0
+        placeholders = ",".join(["?"] * len(clean_ids))
+        deleted_count = 0
+        try:
+            # 1. 优先删除主表 session_snapshots
+            deleted_count = self.execute(
+                f"DELETE FROM session_snapshots WHERE thread_id IN ({placeholders})",
+                tuple(clean_ids),
+            )
+            # 2. 级联清理相关的 audit_logs 审计记录
+            try:
+                self.execute(
+                    f"DELETE FROM audit_logs WHERE thread_id IN ({placeholders})",
+                    tuple(clean_ids),
+                )
+            except Exception as e_audit:
+                logger.debug(f"[MySQLStore] 清理关联 audit_logs 提示: {e_audit}")
+            # 3. 级联清理相关的 rule_gaps 记录
+            try:
+                self.execute(
+                    f"DELETE FROM rule_gaps WHERE thread_id IN ({placeholders})",
+                    tuple(clean_ids),
+                )
+            except Exception as e_gap:
+                logger.debug(f"[MySQLStore] 清理关联 rule_gaps 提示: {e_gap}")
+            return deleted_count
+        except Exception as e:
+            logger.error(f"[MySQLStore] 删除问答流水明细失败: {e}")
+            return 0
+
 
 # 全局单例
 mysql_store = MySQLStore()
