@@ -110,6 +110,31 @@ class TestStatsReal(unittest.TestCase):
         for item in hq_details:
             self.assertEqual(item["dept_id"], "dept_hq")
 
+    def test_stats_overview_filtering_in_sync_with_qa_details(self):
+        """测试数据概览看板指标与问答详情流水明细 100% 同频联动"""
+        # 1. 过滤不存在流水的日期区间（如 2099-01-01 至 2099-01-02）
+        empty_stats = self.store.get_stats_overview(start_date="2099-01-01", end_date="2099-01-02")
+        empty_details = self.store.get_qa_details(start_date="2099-01-01", end_date="2099-01-02", limit=100)
+        self.assertEqual(empty_stats["session_total"], 0)
+        self.assertEqual(len(empty_details), 0)
+        self.assertEqual(empty_stats["session_total"], len(empty_details))
+        self.assertEqual(empty_stats["qa_total"], 0)
+        self.assertEqual(empty_stats["session_duration"], "0分0秒")
+
+        # 2. 过滤总部部门 (dept_hq)
+        hq_stats = self.store.get_stats_overview(dept_id="dept_hq")
+        hq_details = self.store.get_qa_details(dept_id="dept_hq", limit=1000)
+        self.assertEqual(hq_stats["session_total"], len(hq_details))
+        if len(hq_details) > 0:
+            self.assertGreater(hq_stats["session_total"], 0)
+            self.assertGreater(hq_stats["qa_total"], 0)
+            self.assertIn("秒", hq_stats["session_duration"])
+
+        # 3. 验证金融商事业务部在无流水日期的看板表现
+        biz_stats = self.store.get_stats_overview(dept_id="dept_biz", start_date="2026-11-22", end_date="2026-11-25")
+        biz_details = self.store.get_qa_details(dept_id="dept_biz", start_date="2026-11-22", end_date="2026-11-25")
+        self.assertEqual(biz_stats["session_total"], len(biz_details))
+
     def test_delete_single_and_batch_qa_records(self):
         """测试单独与批量删除问答流水记录（包含底表数据级联清理与统计概览联动）"""
         from app.audit import audit_store

@@ -1639,14 +1639,46 @@ class MySQLStore:
             logger.error(f"[MySQLStore] 更新知识库主责部门失败: {e}")
             return False
 
+    @staticmethod
+    def _to_beijing_time(dt_str: Optional[str]) -> str:
+        """将会话快照中的时间转换为标准北京时间（东八区 UTC+8）"""
+        if not dt_str:
+            return "-"
+        try:
+            s = str(dt_str).strip()
+            if s.endswith("Z"):
+                s = s[:-1] + "+00:00"
+            has_tz = False
+            if len(s) > 19:
+                rest = s[19:]
+                if "+" in rest or "-" in rest:
+                    has_tz = True
+            elif "+" in s:
+                has_tz = True
+
+            if has_tz:
+                dt = datetime.fromisoformat(s)
+            else:
+                clean_s = s[:19].replace("T", " ")
+                dt = datetime.strptime(clean_s, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+
+            beijing_tz = timezone(timedelta(hours=8))
+            bj_dt = dt.astimezone(beijing_tz)
+            return bj_dt.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return str(dt_str)[:19].replace("T", " ")
+
     def get_stats_overview(
         self,
         dept_id: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """获取系统真实运营与知识库数据概览（100% 反映数据库真实记录，无任何伪造基数）。"""
+        """获取系统真实运营与知识库数据概览（100% 反映数据库真实记录，无任何伪造基数）。
+        支持部门与日期范围动态过滤下钻，与问答详情流水明细 100% 同频联动。"""
         import re
+
+        has_filters = bool(dept_id or start_date or end_date)
 
         # 1. 顶层知识库总量 (真实树根节点数)
         kb_res = self.query("SELECT COUNT(*) as c FROM kb_tree_nodes WHERE node_type = 'kb' OR parent_id = ''")
@@ -1663,38 +1695,186 @@ class MySQLStore:
         custom_res = self.query("SELECT COUNT(*) as c FROM law_documents")
         kb_custom = custom_res[0]["c"] if custom_res else 0
 
-        # 4. 问答总量 & 提问总量 & 回答总量 (真实提问事件发生轮次)
-        qa_res = self.query("SELECT COUNT(*) as c FROM audit_logs WHERE event_type = 'query_generated'")
-        qa_total = qa_res[0]["c"] if qa_res else 0
+        # 如果未传入任何过滤条件，走高效的全局汇总（保持对旧用例 100% 兼容）
+        if not has_filters:
+            qa_res = self.query("SELECT COUNT(*) as c FROM audit_logs WHERE event_type = 'query_generated'")
+            qa_total = qa_res[0]["c"] if qa_res else 0
 
-        # 5. 建议总量 (大模型知识飞轮沉淀待审与已采纳提案真实总数)
-        prop_res = self.query("SELECT COUNT(*) as c FROM rule_proposals")
-        prop_total = prop_res[0]["c"] if prop_res else 0
+            prop_res = self.query("SELECT COUNT(*) as c FROM rule_proposals")
+            prop_total = prop_res[0]["c"] if prop_res else 0
 
-        # 6. 点赞总量 (人工复核采纳与审核通过真实总数)
-        like_res = self.query(
-            "SELECT COUNT(*) as c FROM audit_logs WHERE event_type = 'HUMAN_REVIEW_ADOPT' OR decision = 'approved'"
-        )
-        like_total = like_res[0]["c"] if like_res else 0
+            like_res = self.query(
+                "SELECT COUNT(*) as c FROM audit_logs WHERE event_type = 'HUMAN_REVIEW_ADOPT' OR decision = 'approved'"
+            )
+            like_total = like_res[0]["c"] if like_res else 0
 
-        # 7. 点踩总量 (人工复核驳回真实总数)
-        dislike_res = self.query("SELECT COUNT(*) as c FROM audit_logs WHERE decision = 'rejected'")
-        dislike_total = dislike_res[0]["c"] if dislike_res else 0
+            dislike_res = self.query("SELECT COUNT(*) as c FROM audit_logs WHERE decision = 'rejected'")
+            dislike_total = dislike_res[0]["c"] if dislike_res else 0
 
-        # 8. 会话总量 (真实持久化咨询会话快照总数)
-        sess_res = self.query("SELECT COUNT(*) as c FROM session_snapshots")
-        sess_total = sess_res[0]["c"] if sess_res else 0
+            sess_res = self.query("SELECT COUNT(*) as c FROM session_snapshots")
+            sess_total = sess_res[0]["c"] if sess_res else 0
 
-        # 9. 会话总时长 (基于真实各会话发生时间窗口计算连续活动时长)
-        times_rows = self.query("SELECT updated_at FROM session_snapshots ORDER BY updated_at ASC")
+            times_rows = self.query("SELECT updated_at FROM session_snapshots ORDER BY updated_at ASC")
+            times = []
+            for r in times_rows:
+                try:
+                    t = datetime.fromisoformat(r["updated_at"].replace("Z", "+00:00"))
+                    times.append(t)
+                except Exception:
+                    pass
+
+            total_seconds = 0
+            if times:
+                curr_start = times[0]
+                curr_end = times[0]
+                for t in times[1:]:
+                    if (t - curr_end).total_seconds() < 1800:
+                        curr_end = t
+                    else:
+                        total_seconds += max(60, (curr_end - curr_start).total_seconds())
+                        curr_start = t
+                        curr_end = t
+                total_seconds += max(60, (curr_end - curr_start).total_seconds())
+
+            hours = int(total_seconds // 3600)
+            mins = int((total_seconds % 3600) // 60)
+            secs = int(total_seconds % 60)
+            duration_str = f"{hours}小时{mins}分{secs}秒" if hours > 0 else f"{mins}分{secs}秒"
+
+            return {
+                "kb_total": kb_total,
+                "kb_external": kb_ext,
+                "kb_internal": kb_int,
+                "kb_custom": kb_custom,
+                "qa_total": qa_total,
+                "suggestion_total": prop_total,
+                "like_total": like_total,
+                "dislike_total": dislike_total,
+                "query_total": qa_total,
+                "answer_total": qa_total,
+                "session_total": sess_total,
+                "session_duration": duration_str,
+                "session_seconds": total_seconds,
+            }
+
+        # -------------------------------------------------------------
+        # 带条件过滤统计（与 get_qa_details 100% 同频联动）
+        # -------------------------------------------------------------
+        depts = self.get_departments()
+        dept_map = {d["dept_id"]: d for d in depts}
+        target_dept_ids = set()
+        if dept_id:
+            target_node = dept_map.get(dept_id)
+            if target_node:
+                t_path = target_node.get("dept_path") or dept_id
+                for d in depts:
+                    p = d.get("dept_path") or d.get("dept_id")
+                    if p == t_path or p.startswith(t_path + "/") or d["dept_id"] == dept_id:
+                        target_dept_ids.add(d["dept_id"])
+            else:
+                target_dept_ids.add(dept_id)
+
+        # 知识库主责管理过滤（若部门有专属主责知识库，则展示部门知识量；若为共享普通业务部则展示共享可用知识量）
+        if target_dept_ids:
+            placeholders = ",".join(["?"] * len(target_dept_ids))
+            dept_kb_nodes = self.query(
+                f"SELECT node_id FROM kb_tree_nodes WHERE (node_type = 'kb' OR parent_id = '') AND owner_dept_id IN ({placeholders})",
+                tuple(target_dept_ids),
+            )
+            if dept_kb_nodes:
+                kb_total = len(dept_kb_nodes)
+                kb_ids = [r["node_id"] for r in dept_kb_nodes]
+                kb_placeholders = ",".join(["?"] * len(kb_ids))
+                doc_rows = self.query(
+                    f"SELECT kb_type, COUNT(*) as c FROM law_documents WHERE kb_type IN ({kb_placeholders}) GROUP BY kb_type",
+                    tuple(kb_ids),
+                )
+                kb_ext = sum(r["c"] for r in doc_rows if "外规" in r["kb_type"])
+                kb_int = sum(r["c"] for r in doc_rows if "内规" in r["kb_type"])
+                kb_custom = sum(r["c"] for r in doc_rows)
+
+        # 载入用户与所属部门映射
+        users_rows = self.query("SELECT user_id, username, name, department, dept_id FROM sys_rbac_users")
+        user_dept_map = {}
+        for u in users_rows:
+            user_dept_map[u["username"]] = u.get("dept_id") or "dept_hq"
+            if u.get("name"):
+                user_dept_map[u["name"]] = u.get("dept_id") or "dept_hq"
+
+        # 载入快照与审计日志
+        snapshots = self.query("SELECT thread_id, updated_at, status, state_json FROM session_snapshots ORDER BY updated_at ASC")
+        audit_rows = self.query("SELECT thread_id, event_type, decision FROM audit_logs")
+        logs_by_thread = {}
+        for a in audit_rows:
+            tid = a["thread_id"]
+            logs_by_thread.setdefault(tid, []).append(a)
+
+        # 严格过滤
+        filtered_snapshots = []
+        filtered_tids = set()
+        for s in snapshots:
+            up_at = s.get("updated_at") or ""
+            bj_time = self._to_beijing_time(up_at)
+            date_str = bj_time[:10]
+
+            if start_date and date_str < start_date:
+                continue
+            if end_date and date_str > end_date:
+                continue
+
+            st_data = {}
+            if s.get("state_json"):
+                try:
+                    st_data = json.loads(s["state_json"])
+                except Exception:
+                    pass
+
+            u_info = st_data.get("user") or {}
+            raw_u = u_info.get("username") or "admin"
+            user_dept = user_dept_map.get(raw_u, "dept_hq")
+
+            if target_dept_ids and user_dept not in target_dept_ids:
+                continue
+
+            tid = s["thread_id"]
+            filtered_snapshots.append((s, bj_time, logs_by_thread.get(tid, [])))
+            filtered_tids.add(tid)
+
+        sess_total = len(filtered_snapshots)
+        qa_total = 0
+        like_total = 0
+        dislike_total = 0
         times = []
-        for r in times_rows:
+
+        for s, bj_time, related_logs in filtered_snapshots:
             try:
-                t = datetime.fromisoformat(r["updated_at"].replace("Z", "+00:00"))
+                t = datetime.fromisoformat(s["updated_at"].replace("Z", "+00:00"))
                 times.append(t)
             except Exception:
                 pass
 
+            # 问答与提问轮次
+            q_cnt = sum(1 for l in related_logs if l.get("event_type") == "query_generated")
+            qa_total += max(1, q_cnt)
+
+            # 点赞与点踩
+            has_adopt = any(l.get("event_type") == "HUMAN_REVIEW_ADOPT" or l.get("decision") == "approved" for l in related_logs)
+            if has_adopt or s.get("status") in ("approved", "COMPLETED", "done"):
+                like_total += 1
+            elif s.get("status") == "rejected" or any(l.get("decision") == "rejected" for l in related_logs):
+                dislike_total += 1
+
+        # 建议总量（绑定到这些被过滤会话的规则提案）
+        prop_total = 0
+        if filtered_tids:
+            t_placeholders = ",".join(["?"] * len(filtered_tids))
+            prop_res = self.query(
+                f"SELECT COUNT(*) as c FROM rule_proposals WHERE thread_id IN ({t_placeholders})",
+                tuple(filtered_tids),
+            )
+            prop_total = prop_res[0]["c"] if prop_res else 0
+
+        # 计算连续时长
         total_seconds = 0
         if times:
             curr_start = times[0]
@@ -1763,33 +1943,7 @@ class MySQLStore:
                 return sub
             return t[:max_len] + ("..." if len(t) > max_len else "")
 
-        def _to_beijing_time(dt_str: Optional[str]) -> str:
-            """将会话快照中的时间转换为标准北京时间（东八区 UTC+8）"""
-            if not dt_str:
-                return "-"
-            try:
-                s = str(dt_str).strip()
-                if s.endswith("Z"):
-                    s = s[:-1] + "+00:00"
-                has_tz = False
-                if len(s) > 19:
-                    rest = s[19:]
-                    if "+" in rest or "-" in rest:
-                        has_tz = True
-                elif "+" in s:
-                    has_tz = True
-
-                if has_tz:
-                    dt = datetime.fromisoformat(s)
-                else:
-                    clean_s = s[:19].replace("T", " ")
-                    dt = datetime.strptime(clean_s, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-
-                beijing_tz = timezone(timedelta(hours=8))
-                bj_dt = dt.astimezone(beijing_tz)
-                return bj_dt.strftime("%Y-%m-%d %H:%M:%S")
-            except Exception:
-                return str(dt_str)[:19].replace("T", " ")
+        _to_beijing_time = self._to_beijing_time
 
         # 载入部门体系与映射
         depts = self.get_departments()
