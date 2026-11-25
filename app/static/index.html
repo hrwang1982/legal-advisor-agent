@@ -8456,6 +8456,192 @@
       showToast(`已成功导出 ${CURRENT_QA_DETAILS_CACHE.length} 条真实流水为 CSV 表格！`);
     }
 
+    // 格式化规则缺口原因：按四层级法理递进推演结构化呈现
+    function formatRuleGapReason(rawReason, gapIndex) {
+      if (!rawReason || !rawReason.trim()) {
+        return '<div style="font-size:13px; color:var(--text-muted); margin:6px 0;">缺口原因：待人工裁决</div>';
+      }
+      const rawText = rawReason.trim();
+      const parts = rawText.split(/[；;]/).map(s => s.trim()).filter(Boolean);
+
+      // 分类到四个层级及兜底层
+      const layer1 = []; // 第一层：时间效力防错推演
+      const layer2 = []; // 第二层：多版本法条重叠判定
+      const layer3 = []; // 第三层：《立法法》特别法优于一般法（第103条）裁决
+      const layer4 = []; // 第四层：《立法法》上位法优于下位法裁决（效力位阶）
+      const others = []; // 兜底 / 辅助法理与预警审查
+
+      parts.forEach(p => {
+        // 第四层：上位法优于下位法 / 效力位阶 / 司法解释依附
+        if (
+          p.includes('上位法优于下位法') ||
+          p.includes('下位法不得与上位法相抵触') ||
+          p.includes('位阶') ||
+          p.includes('司法解释依附') ||
+          (p.includes('优先于') && (p.includes('（法律）') || p.includes('（司法解释）') || p.includes('（行政法规）') || p.includes('（地方性法规）') || p.includes('（部门规章）')))
+        ) {
+          layer4.push(p);
+        }
+        // 第三层：特别法优于一般法
+        else if (
+          p.includes('特别法优于一般法') ||
+          p.includes('特别规定') ||
+          p.includes('特别法') ||
+          p.includes('补充适用') ||
+          p.includes('第103条') ||
+          p.includes('第105条')
+        ) {
+          layer3.push(p);
+        }
+        // 第一层：时间前提、事实防错与溯及力判定
+        else if (
+          p.includes('未提供法律事实') ||
+          p.includes('未提供事实发生日期') ||
+          p.includes('事实发生日期') ||
+          p.includes('暂按当前日期') ||
+          p.includes('历史纠纷') ||
+          p.includes('适用依据可能不同') ||
+          p.includes('不溯及既往') ||
+          p.includes('从旧兼从轻') ||
+          p.includes('时间前提') ||
+          p.includes('事实防错')
+        ) {
+          layer1.push(p);
+        }
+        // 第二层：多版本法条重叠与时效生命周期比对
+        else if (
+          p.includes('命中多个版本') ||
+          p.includes('多个版本') ||
+          p.includes('版本时间线') ||
+          p.includes('互相重叠') ||
+          p.includes('施行日') ||
+          p.includes('现行有效') ||
+          p.includes('失效') ||
+          p.includes('废止') ||
+          p.includes('尚未施行') ||
+          p.includes('有效区间') ||
+          p.includes('旧法') ||
+          p.includes('司法解释时间效力') ||
+          p.includes('生效后')
+        ) {
+          layer2.push(p);
+        }
+        // 兜底 / 补充
+        else {
+          others.push(p);
+        }
+      });
+
+      const totalCategorized = layer1.length + layer2.length + layer3.length + layer4.length;
+      if (totalCategorized === 0) {
+        return `<div style="font-size:13px; color:var(--text-body); margin:6px 0;"><strong>缺口原因：</strong>${escapeHtml(rawText)}</div>`;
+      }
+
+      // 层级配置定义
+      const layersConfig = [
+        {
+          id: 1,
+          name: "第一层：时间效力防错推演（时间前提与溯及力判定）",
+          shortBadge: "⏱️ 第一层：时间效力防错推演",
+          items: layer1,
+          badgeStyle: "background:#e6f7ff; color:#0958d9; border:1px solid #91caff;",
+          cardBorder: "#bae0ff",
+        },
+        {
+          id: 2,
+          name: "第二层：多版本法条重叠判定（时效生命周期比对）",
+          shortBadge: "🔄 第二层：多版本法条重叠判定",
+          items: layer2,
+          badgeStyle: "background:#f9f0ff; color:#531dab; border:1px solid #d3adf7;",
+          cardBorder: "#efdbff",
+        },
+        {
+          id: 3,
+          name: "第三层：《立法法》特别法优于一般法（第103条）裁决",
+          shortBadge: "⚖️ 第三层：《立法法》特别法优于一般法（第103条）裁决",
+          items: layer3,
+          badgeStyle: "background:#fff7e6; color:#d46b08; border:1px solid #ffd591;",
+          cardBorder: "#ffe7ba",
+        },
+        {
+          id: 4,
+          name: "第四层：《立法法》上位法优于下位法裁决（效力位阶裁决）",
+          shortBadge: "🏛️ 第四层：《立法法》上位法优于下位法裁决",
+          items: layer4,
+          badgeStyle: "background:#fff1f0; color:#cf1322; border:1px solid #ffa39e;",
+          cardBorder: "#ffccc7",
+        },
+        {
+          id: 5,
+          name: "辅助法理审查与预警提示",
+          shortBadge: "📌 辅助法理审查与预警",
+          items: others,
+          badgeStyle: "background:#f6ffed; color:#389e0d; border:1px solid #b7eb8f;",
+          cardBorder: "#d9f7be",
+        }
+      ];
+
+      const rawId = `ruleGapRaw_${gapIndex}`;
+      const treeId = `ruleGapTree_${gapIndex}`;
+
+      let treeHtml = `<div id="${treeId}" style="display:flex; flex-direction:column; gap:6px; margin-top:6px;">`;
+
+      layersConfig.forEach(cfg => {
+        if (cfg.items.length === 0) return;
+        const itemsHtml = cfg.items.map(it => `
+          <div style="display:flex; align-items:flex-start; gap:6px; margin-bottom:2px;">
+            <span style="color:#8c8c8c; font-size:12px; line-height:1.6; flex-shrink:0;">└─►</span>
+            <span style="flex:1; font-size:12.5px; color:#262626; line-height:1.6;">${escapeHtml(it)}</span>
+          </div>
+        `).join("");
+
+        treeHtml += `
+          <div style="background:#ffffff; border:1px solid ${cfg.cardBorder}; border-radius:6px; padding:8px 12px; box-shadow:0 1px 2px rgba(0,0,0,0.02);">
+            <div style="display:inline-block; font-size:11.5px; font-weight:600; padding:2px 8px; border-radius:4px; margin-bottom:6px; ${cfg.badgeStyle}">
+              ${cfg.shortBadge}
+            </div>
+            <div style="padding-left:2px;">
+              ${itemsHtml}
+            </div>
+          </div>
+        `;
+      });
+      treeHtml += `</div>`;
+
+      const rawHtml = `
+        <div id="${rawId}" style="display:none; margin-top:6px; font-size:12.5px; color:#595959; background:#ffffff; border:1px dashed #d9d9d9; border-radius:6px; padding:10px 12px; line-height:1.6; word-break:break-all;">
+          ${escapeHtml(rawText)}
+        </div>
+      `;
+
+      return `
+        <div style="margin:6px 0 10px 0;">
+          <div style="display:flex; justify-content:space-between; align-items:center; padding-bottom:4px; border-bottom:1px dashed #ffe58f;">
+            <span style="font-size:13px; font-weight:600; color:#595959;">⚡ 缺口成因与法理推演层级：</span>
+            <a href="javascript:void(0);" onclick="toggleRuleGapView('${gapIndex}')" id="btnToggle_${gapIndex}" style="font-size:11.5px; color:#1890ff; text-decoration:none;">切换为纯文本</a>
+          </div>
+          ${treeHtml}
+          ${rawHtml}
+        </div>
+      `;
+    }
+
+    function toggleRuleGapView(gapIndex) {
+      const tree = document.getElementById(`ruleGapTree_${gapIndex}`);
+      const raw = document.getElementById(`ruleGapRaw_${gapIndex}`);
+      const btn = document.getElementById(`btnToggle_${gapIndex}`);
+      if (!tree || !raw) return;
+      if (tree.style.display === "none") {
+        tree.style.display = "flex";
+        raw.style.display = "none";
+        if (btn) btn.textContent = "切换为纯文本";
+      } else {
+        tree.style.display = "none";
+        raw.style.display = "block";
+        if (btn) btn.textContent = "切换为四层级";
+      }
+    }
+
     // 审计与缺口
     async function loadAuditTrail() {
       try {
@@ -8479,15 +8665,16 @@
         if (gaps.length === 0) {
           gapsContainer.innerHTML = `<div style="font-size:13px; color:#52c41a; padding:10px 0;">✓ 当前系统未捕获到规则冲突或缺失缺口</div>`;
         } else {
-          gaps.forEach(g => {
+          gaps.forEach((g, idx) => {
+            const reasonHtml = formatRuleGapReason(g.reason, idx);
             gapsContainer.innerHTML += `
               <div style="background:#fffbe6; border:1px solid #ffe58f; border-radius:6px; padding:12px 16px;">
-                <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-                  <strong style="color:#d46b08;">缺口模式: ${g.mode || 'MISS'} (置信度: ${g.confidence || '-'})</strong>
-                  <span style="font-size:11px; color:var(--text-muted);">${g.timestamp || ''}</span>
+                <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+                  <strong style="color:#d46b08;">缺口模式: ${escapeHtml(g.mode || 'MISS')} (置信度: ${escapeHtml(g.confidence || '-')})</strong>
+                  <span style="font-size:11px; color:var(--text-muted);">${escapeHtml(g.timestamp || '')}</span>
                 </div>
-                <div style="font-size:13px; color:var(--text-body); margin-bottom:4px;">缺口原因: ${g.reason || '待人工裁决'}</div>
-                <div style="font-size:12px; color:var(--text-muted);">相关问答: ${g.query || '-'}</div>
+                ${reasonHtml}
+                <div style="font-size:12px; color:var(--text-muted); border-top:1px dashed #ffe58f; padding-top:6px;">相关问答: ${escapeHtml(g.query || '-')}</div>
               </div>
             `;
           });
