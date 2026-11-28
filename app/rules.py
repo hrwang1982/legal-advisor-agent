@@ -293,7 +293,10 @@ def temporal_locate(act_date: str, versions: Sequence[Dict]) -> RuleOutcome:
             review=ReviewLevel.IMMEDIATE,
             llm_allowed=False,
             verify_actions=["修正版本时间线，消除重叠区间后再判定"],
-            detail={"overlapping": [v.get("version") for v in hits]},
+            detail={
+                "overlapping": [v.get("version") for v in hits],
+                "overlapping_versions": [dict(v) for v in hits],
+            },
         )
 
     starts = [s for s in (_parse(v.get("effective_from")) for v in versions) if s]
@@ -566,6 +569,10 @@ def locate_article(
                 "historical": True,
                 "effective_to": str(t),
                 "note": f"适用行为时旧法（该条已于 {t} 失效，现不得以该条主张现行权利）",
+                "gap_reason": (
+                    f"历史条文时效核验：{name}的有效区间为 {f} 至 {t}。"
+                    f"核验日期 {effective_ad} 落在该区间内，规则保留该条作为当时有效的候选依据。"
+                ),
             },
             verify_actions=["确认现行替代依据，并核对新旧法的衔接适用规则"],
         )
@@ -610,7 +617,16 @@ def locate_article(
         confidence=Confidence.A,
         review=ReviewLevel.SAMPLE,
         llm_allowed=False,
-        detail={"applicable": True, "historical": False, "note": "适用：现行有效"},
+        detail={
+            "applicable": True,
+            "historical": False,
+            "note": "适用：现行有效",
+            "gap_reason": (
+                f"条文时效核验通过：{name}（条文施行日 {f}"
+                + (f"，所属法规版本施行日 {law_f}" if law_f and law_f != f else "")
+                + f"）。按 {effective_ad} 核验，该条已施行，时间线未标注失效日。"
+            ),
+        },
     )
 
 

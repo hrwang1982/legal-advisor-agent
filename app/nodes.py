@@ -537,6 +537,18 @@ def rules_node(state: AgentState) -> Dict:
     for law in sorted({c.law_name for c in cites if c.law_name}):
         o = temporal_locate(act_date, timelines.get(law, []))
         if o.status == RuleStatus.CONFLICT:
+            versions = []
+            for v in o.detail["overlapping_versions"]:
+                start = v["effective_from"]
+                end = f"至 {v['effective_to']}" if v.get("effective_to") else "，未标注失效日"
+                version = v.get("version")
+                label = f"{version}（" if version and version != start else "（"
+                validity = f"，库内标记为{v['validity']}" if v.get("validity") else ""
+                versions.append(f"{label}自 {start} 起{end}{validity}）")
+            o.detail["gap_reason"] = (
+                f"版本时间线重叠：《{law}》有 {len(versions)} 条版本记录覆盖核验日期 {act_date}。"
+                f"涉及版本为{'、'.join(versions)}。需人工核对各版的施行日、失效日和衔接规定，确认适用版本。"
+            )
             active_outcomes.append(o)
         if o.status == RuleStatus.HIT:
             ver = o.detail.get("applicable_version")
@@ -724,11 +736,15 @@ def rules_node(state: AgentState) -> Dict:
 
     # P2：自动将非确定性（PARTIAL/MISS/CONFLICT）规则缺口归集至持久化规则缺口表（绑定真实会话 thread_id）
     try:
-        audit_store.record_rule_gap(
-            thread_id=state.get("thread_id") or "rule_engine",
-            plan=plan,
-            query=state.get("masked_query") or state.get("query", ""),
-        )
+        if plan["mode"] != "deterministic":
+            gap_reasons = dict.fromkeys(
+                o.detail.get("gap_reason") or o.reason for o in active_outcomes if o.reason
+            )
+            audit_store.record_rule_gap(
+                thread_id=state.get("thread_id") or "rule_engine",
+                plan={**plan, "reason": "；".join(gap_reasons) or plan["reason"]},
+                query=state.get("masked_query") or state.get("query", ""),
+            )
     except Exception:
         pass
 

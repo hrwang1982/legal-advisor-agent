@@ -8456,6 +8456,95 @@
       showToast(`已成功导出 ${CURRENT_QA_DETAILS_CACHE.length} 条真实流水为 CSV 表格！`);
     }
 
+    // 将规则缺口原始日志分句转化为法务人员易于理解的清晰描述（不改变四层级展示结构）
+    function formatRuleGapItemHtml(rawItem, layerId) {
+      const text = (rawItem || "").trim();
+      if (!text) return "";
+
+      // 第一层：时间效力防错推演
+      if (layerId === 1) {
+        const mToday = text.match(/^当事人未提供法律事实发生日期，暂按当前日期（(.+?)）定位现行有效法$/);
+        if (mToday) {
+          return `<strong style="color:#0958d9;">【基准日假定】</strong>当事人未提供法律事实发生日期，暂以咨询当日（${escapeHtml(mToday[1])}）为推演基准日，检索现行有效法规`;
+        }
+        if (text === "若系历史纠纷，适用依据可能不同") {
+          return `<strong style="color:#0958d9;">【溯及力提示】</strong>若涉案纠纷实际发生于修法之前（历史纠纷），依据“法不溯及既往”原则，应适用行为当时旧法，结论可能不同`;
+        }
+        return `<strong style="color:#0958d9;">【时间前提核查】</strong>${escapeHtml(text)}`;
+      }
+
+      // 第二层：多版本法条重叠判定
+      if (layerId === 2) {
+        if (text.startsWith("版本时间线重叠：")) {
+          return `<strong style="color:#cf1322;">【版本重叠｜待人工核查】</strong>${escapeHtml(text.slice("版本时间线重叠：".length))}`;
+        }
+        if (text.includes("同一行为发生日命中多个版本") || text.includes("版本时间线互相重叠")) {
+          return `<strong style="color:#cf1322;">【版本重叠｜待人工核查】</strong>规则检测到同一法规的多个版本覆盖同一核验日期，需人工确认适用版本。这条历史记录未保存法规名称及重叠版本明细。`;
+        }
+        if (text.startsWith("条文时效核验通过：")) {
+          return `<strong style="color:#389e0d;">【条文时效核验通过】</strong>${escapeHtml(text.slice("条文时效核验通过：".length))}`;
+        }
+        if (text.startsWith("历史条文时效核验：")) {
+          return `<strong style="color:#d46b08;">【历史条文时效核验】</strong>${escapeHtml(text.slice("历史条文时效核验：".length))}`;
+        }
+        const mValid = text.match(/^行为发生日\s*(\S+)\s*不早于施行日\s*(\S+)，且该条现行有效$/);
+        if (mValid) {
+          return `<strong style="color:#389e0d;">【条文时效核验通过】</strong>一条候选条文自 ${escapeHtml(mValid[2])} 起施行，在 ${escapeHtml(mValid[1])} 的时效核验中通过。原记录未保存法规名称及条号。`;
+        }
+        const mHist = text.match(/^行为发生日\s*(\S+)\s*落在该条有效区间（(.+?)）内，适用行为时的旧法$/);
+        if (mHist) {
+          return `<strong style="color:#d46b08;">【历史条文时效核验】</strong>核验日期 ${escapeHtml(mHist[1])} 落在一条候选条文的有效区间（${escapeHtml(mHist[2])}）内。原记录未保存法规名称及条号。`;
+        }
+        if (text.startsWith("司法解释时间效力：")) {
+          return `<strong style="color:#531dab;">【司法解释时效核验】</strong>${escapeHtml(text.replace(/^司法解释时间效力：/, ""))}`;
+        }
+        return `<strong style="color:#531dab;">【版本与时效核验】</strong>${escapeHtml(text)}`;
+      }
+
+      // 第三层：《立法法》特别法优于一般法（第103条）裁决
+      if (layerId === 3) {
+        const mSpec1 = text.match(/^同一机关制定，特别法优于一般法（《立法法》第103条）（(.+?)）：《(.+?)》为特别规定$/);
+        if (mSpec1) {
+          return `<strong style="color:#d46b08;">【特别法优先裁决】</strong>同一机关制定，依《立法法》第103条“特别法优于一般法”：${escapeHtml(mSpec1[1])}，依法优先适用《${escapeHtml(mSpec1[2])}》`;
+        }
+        const mSpec2 = text.match(/^同一机关制定，特别法优于一般法（《立法法》第103条）[；;]?\s*(.+?)：《(.+?)》为特别规定，优先适用$/);
+        if (mSpec2) {
+          return `<strong style="color:#d46b08;">【特别法优先裁决】</strong>同一机关制定，依《立法法》第103条：${escapeHtml(mSpec2[1])}，依法优先适用《${escapeHtml(mSpec2[2])}》`;
+        }
+        return `<strong style="color:#d46b08;">【特别法与一般法裁决】</strong>${escapeHtml(text)}`;
+      }
+
+      // 第四层：《立法法》上位法优于下位法裁决
+      if (layerId === 4) {
+        const mUpper = text.match(/^上位法优于下位法：《(.+?)》（(.+?)）优先于《(.+?)》（(.+?)）$/);
+        if (mUpper) {
+          const [, upperLaw, upperRank, lowerLaw, lowerRank] = mUpper;
+          const upper = `《${escapeHtml(upperLaw)}》（${escapeHtml(upperRank)}）`;
+          const lower = `《${escapeHtml(lowerLaw)}》（${escapeHtml(lowerRank)}）`;
+          if (lowerRank === "司法解释") {
+            const names = [upperLaw, upperLaw.replace(/^中华人民共和国/, "")];
+            if (names.some(name => name && (lowerLaw.includes(`适用〈${name}〉`) || lowerLaw.includes(`适用《${name}》`)))) {
+              const scope = lowerLaw.includes("时间效力")
+                ? "该解释用于核查不同时间发生的法律事实应适用哪一时期的规定。"
+                : "适用相关法律条文时，可结合该解释核查具体适用条件。";
+              return `<strong style="color:#389e0d;">【法律与配套司法解释】</strong>${lower}针对${upper}的适用作出解释。${scope}`;
+            }
+            return `<strong style="color:#389e0d;">【效力位阶比较】</strong>规则将${upper}排在${lower}之前。两者是否适用于本案的同一事项，需结合条文内容和司法解释的适用范围核查。`;
+          }
+          return `<strong style="color:#389e0d;">【效力位阶比较】</strong>规则将${upper}排在${lower}之前。若两者对本案同一事项的规定有抵触，规则优先采用位阶较高的规范。`;
+        }
+        if (text.startsWith("司法解释依附于被解释法律：")) {
+          return `<strong style="color:#389e0d;">【法律与配套司法解释】</strong>${escapeHtml(text.replace(/^司法解释依附于被解释法律：/, ""))}`;
+        }
+        if (text.includes("位阶元数据缺失")) {
+          return `<strong style="color:#cf1322;">【位阶缺口告警】</strong>${escapeHtml(text)}（需人工补齐条文位阶与制定机关元数据）`;
+        }
+        return `<strong style="color:#cf1322;">【效力位阶核查】</strong>${escapeHtml(text)}`;
+      }
+
+      return escapeHtml(text);
+    }
+
     // 格式化规则缺口原因：按四层级法理递进推演结构化呈现
     function formatRuleGapReason(rawReason, gapIndex) {
       if (!rawReason || !rawReason.trim()) {
@@ -8472,8 +8561,11 @@
       const others = []; // 兜底 / 辅助法理与预警审查
 
       parts.forEach(p => {
+        if (p.startsWith('版本时间线重叠：') || p.startsWith('条文时效核验通过：') || p.startsWith('历史条文时效核验：')) {
+          layer2.push(p);
+        }
         // 第四层：上位法优于下位法 / 效力位阶 / 司法解释依附
-        if (
+        else if (
           p.includes('上位法优于下位法') ||
           p.includes('下位法不得与上位法相抵触') ||
           p.includes('位阶') ||
@@ -8591,7 +8683,7 @@
         const itemsHtml = cfg.items.map(it => `
           <div style="display:flex; align-items:flex-start; gap:6px; margin-bottom:2px;">
             <span style="color:#8c8c8c; font-size:12px; line-height:1.6; flex-shrink:0;">└─►</span>
-            <span style="flex:1; font-size:12.5px; color:#262626; line-height:1.6;">${escapeHtml(it)}</span>
+            <span style="flex:1; font-size:12.5px; color:#262626; line-height:1.6;">${formatRuleGapItemHtml(it, cfg.id)}</span>
           </div>
         `).join("");
 
